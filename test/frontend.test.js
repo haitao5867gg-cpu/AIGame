@@ -83,3 +83,25 @@ test('前端：死亡遮罩显示墓志铭、侧面板「前世」区', () => {
   assert.ok(/last\.epitaph/.test(html), '死亡遮罩应显示墓志铭');
   assert.ok(/past-life-item/.test(html), '应有前世条目样式');
 });
+
+test('前端：侧面板「身上的印记」「未解之谜」「已知的事」三区', () => {
+  assert.ok(/身上的印记/.test(html), '应有印记区');
+  assert.ok(/未解之谜/.test(html), '应有未解之谜区');
+  assert.ok(/已知的事/.test(html), '应有已知的事区');
+  assert.ok(/character && s\.character\.marks/.test(html), '应读取 character.marks');
+  assert.ok(/s\.threads/.test(html), '应读取 threads');
+  assert.ok(/s\.facts/.test(html), '应读取 facts');
+  assert.ok(/mark-chip/.test(html), '应有印记条目样式');
+  assert.ok(/thread-item/.test(html), '应有线索条目样式');
+  assert.ok(/fact-item/.test(html), '应有事实条目样式');
+  assert.ok(/collapsible\('已知的事'/.test(html), '「已知的事」应为默认折叠的 details');
+});
+
+test('前端：等待回应时显示已等待秒数', () => {
+  assert.ok(/id=["']pending-secs["']/.test(html), '应有秒数占位元素');
+  assert.ok(/世界在回应…/.test(html));
+  assert.ok(/已等待/.test(html));
+  assert.ok(/Date\.now\(\) - pendingStart/.test(html), '应按起始时间计算秒数');
+  assert.ok(/setInterval\(updatePendingSecs, 1000\)/.test(html), '应每秒刷新');
+  assert.ok(/clearInterval\(pendingTimer\)/.test(html), '结束时应清理计时器');
+});

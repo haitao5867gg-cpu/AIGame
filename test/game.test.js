@@ -248,6 +248,10 @@ test('老存档：缺新字段的 state.json 读取时补默认，不报错', as
   const state = store.loadWorld(dataDir, id);
   delete state.pendingEventTheme;
   delete state.rumors;
+  delete state.facts;
+  delete state.threads;
+  delete state.fadedThreads;
+  delete state.character.marks;
   delete state.location;
   delete state.clock;
   delete state.pastLives;
@@ -257,15 +261,27 @@ test('老存档：缺新字段的 state.json 读取时补默认，不报错', as
   assert.equal('pendingEventTheme' in got, false);
   assert.equal(typeof got.omen, 'boolean');
   assert.ok(Array.isArray(got.rumors), '老存档补出 rumors 默认值');
+  assert.ok(Array.isArray(got.facts), '老存档补出 facts 默认值');
+  assert.ok(Array.isArray(got.threads), '老存档补出 threads 默认值');
+  assert.ok(Array.isArray(got.fadedThreads), '老存档补出 fadedThreads 默认值');
+  assert.ok(Array.isArray(got.character.marks), '老存档补出 character.marks 默认值');
   assert.equal(typeof got.location, 'string', '老存档补出 location 默认值');
   assert.ok(got.clock && typeof got.clock.day === 'number', '老存档补出 clock 默认值');
   assert.ok(Array.isArray(got.pastLives), '老存档补出 pastLives 默认值');
+  assertNoLeak(got);
 
   const res = await g.takeTurn(id, { action: '继续' }); // 老存档能正常推进回合
   assert.equal(res.state.turn, 1);
+  assert.ok(Array.isArray(res.state.facts));
+  assert.ok(Array.isArray(res.state.threads));
+  assertNoLeak(res);
   const internal = store.loadWorld(dataDir, id);
   assert.equal('pendingEventTheme' in internal, true, '读取后补齐字段');
   assert.ok(Array.isArray(internal.rumors));
+  assert.ok(Array.isArray(internal.facts));
+  assert.ok(Array.isArray(internal.threads));
+  assert.ok(Array.isArray(internal.fadedThreads));
+  assert.ok(Array.isArray(internal.character.marks));
 });
 
 test('坊间传闻：mock 回合产生传闻，约每 3 回合一条，公开状态可见', async (t) => {
@@ -281,6 +297,26 @@ test('坊间传闻：mock 回合产生传闻，约每 3 回合一条，公开状
     assert.ok(r.text.length <= 40);
     assert.equal(typeof r.turn, 'number');
   });
+});
+
+test('mock 数据覆盖新字段：回合产出 facts / marks / threads / fadedThreads，且不泄露 apex', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '旅人', appearance: '青衣' });
+  const id = world.id;
+  for (let i = 0; i < 12; i++) await g.takeTurn(id, { action: '继续探查' });
+  const s = await g.getWorld(id);
+  assert.ok(Array.isArray(s.facts) && s.facts.length > 0, 'mock 应产出事实');
+  assert.ok(Array.isArray(s.character.marks) && s.character.marks.length > 0, 'mock 应产出印记');
+  assert.ok(Array.isArray(s.threads) && s.threads.length > 0, 'mock 应产出未解之谜');
+  assert.ok(Array.isArray(s.fadedThreads) && s.fadedThreads.length > 0, 'mock 应产出淡去线索');
+  s.facts.forEach((f) => {
+    assert.equal(typeof f.text, 'string');
+    assert.ok(f.text.length <= 30);
+    assert.equal(typeof f.turn, 'number');
+  });
+  s.character.marks.forEach((m) => assert.ok(m.length <= 16));
+  s.threads.concat(s.fadedThreads).forEach((x) => assert.ok(x.length <= 20));
+  assertNoLeak(s);
 });
 
 test('地点与时间：mock 回合推进时段、偶发移动，公开状态可见', async (t) => {

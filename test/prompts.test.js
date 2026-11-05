@@ -121,6 +121,91 @@ test('回合 prompt：带上当前地点与时间并要求叙事一致；格式�
   assert.match(all, /一致/);
 });
 
+test('回合 prompt：把全部 facts 列为「已确立的事实，叙事必须遵守，不得改写」', () => {
+  const state = makeState();
+  state.facts = [
+    { turn: 1, text: '城门每日戌时落锁' },
+    { turn: 3, text: '顾秋白是76号的人' },
+  ];
+  const [system] = prompts.buildTurnMessages(state, { nextTurn: 4 }, '探查');
+  assert.match(system.content, /【已确立的事实（叙事必须遵守，不得改写）】/);
+  assert.ok(system.content.includes('城门每日戌时落锁'));
+  assert.ok(system.content.includes('顾秋白是76号的人'));
+  assert.match(system.content, /不得矛盾/);
+  assert.match(system.content, /不得改写/);
+});
+
+test('回合 prompt：无 facts 时不出现「已确立的事实」段落', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.equal(/【已确立的事实（叙事必须遵守/.test(system.content), false);
+});
+
+test('回合 prompt：输出格式含 new_facts 及 ≤30 字 / 不得改写说明', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.match(system.content, /"new_facts"/);
+  assert.match(system.content, /≤30 字/);
+  assert.match(system.content, /不得改写/);
+});
+
+test('回合 prompt：把 marks 列为「身上的印记」并要求持续后果、越界留印记', () => {
+  const state = makeState();
+  state.character.marks = ['被76号盯上', '左臂刀伤'];
+  const [system] = prompts.buildTurnMessages(state, { nextTurn: 4 }, '探查');
+  assert.match(system.content, /【身上的印记/);
+  assert.match(system.content, /这些是已经落在角色身上的持久处境/);
+  assert.ok(system.content.includes('被76号盯上'));
+  assert.ok(system.content.includes('左臂刀伤'));
+  assert.match(system.content, /持续/);
+  assert.match(system.content, /越界/);
+  assert.match(system.content, /marks_add/);
+});
+
+test('回合 prompt：输出格式含 marks_add / marks_remove 及 ≤16 字说明', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.match(system.content, /"marks_add"/);
+  assert.match(system.content, /"marks_remove"/);
+  assert.match(system.content, /≤16 字/);
+});
+
+test('回合 prompt：把 threads 列为「未解之谜」，要求约每 5 回合推进/解开一条', () => {
+  const state = makeState();
+  state.threads = ['灰呢帽的报纸数字', '白玫不问去处'];
+  state.fadedThreads = ['已淡去的旧线索'];
+  const [system] = prompts.buildTurnMessages(state, { nextTurn: 6 }, '探查');
+  assert.match(system.content, /【未解之谜】/);
+  assert.match(system.content, /仍悬而未决、需要后续收束的线索/);
+  assert.ok(system.content.includes('灰呢帽的报纸数字'));
+  assert.ok(system.content.includes('已淡去的旧线索'));
+  assert.match(system.content, /每 5 回合/);
+  assert.match(system.content, /不能只埋不收/);
+  assert.match(system.content, /threads_resolve/);
+});
+
+test('回合 prompt：无 threads 时不出现动态「未解之谜」列表', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.equal(system.content.includes('仍悬而未决、需要后续收束的线索'), false);
+});
+
+test('回合 prompt：输出格式含 threads_add / threads_resolve 及 ≤20 字说明', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.match(system.content, /"threads_add"/);
+  assert.match(system.content, /"threads_resolve"/);
+  assert.match(system.content, /≤20 字/);
+});
+
+test('回合 prompt：反重复意象/NPC 小动作、叙事结尾停在玩家决断、suggestions 三条不同方向', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.match(system.content, /不要重复最近回合已用过的意象/);
+  assert.match(system.content, /NPC 小动作/);
+  assert.match(system.content, /擦杯|停手|推牌/);
+  assert.match(system.content, /需要玩家决断的具体局面/);
+  assert.match(system.content, /不要替玩家作决定/);
+  assert.match(system.content, /大胆冒险/);
+  assert.match(system.content, /谨慎稳妥/);
+  assert.ok(system.content.includes('借人/用计'));
+  assert.match(system.content, /三条方向明显不同|方向明显不同/);
+});
+
 test('前世墓志铭：buildEpitaphMessages 用本世经历、要求 ≤80 字、不夹带 apex', () => {
   const state = makeState();
   state.character.name = '初代';

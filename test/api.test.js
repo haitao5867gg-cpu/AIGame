@@ -107,6 +107,10 @@ test('接口层：随机端口测各接口，公开状态不含 apex 与 Key', a
     assert.equal(typeof r.json.location, 'string', '公开状态应含 location');
     assert.ok(r.json.clock && typeof r.json.clock.day === 'number', '公开状态应含 clock');
     assert.ok(Array.isArray(r.json.pastLives), '公开状态应含 pastLives 数组');
+    assert.ok(Array.isArray(r.json.facts), '公开状态应含 facts 数组');
+    assert.ok(Array.isArray(r.json.threads), '公开状态应含 threads 数组');
+    assert.ok(Array.isArray(r.json.fadedThreads), '公开状态应含 fadedThreads 数组');
+    assert.ok(Array.isArray(r.json.character.marks), '公开状态应含 character.marks 数组');
     assert.equal('pendingEventTheme' in r.json, false, '公开状态不得含预选主题');
     assertNoLeak(r.text, r.json);
 

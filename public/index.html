@@ -150,6 +150,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   border:1px solid var(--line);border-radius:12px;padding:3px 9px;display:inline-block;margin:2px 4px 2px 0}
 .rumor-item{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:5px 0;line-height:1.6}
+.mark-chip{font-family:var(--sans);font-size:12px;color:#e6c9a0;background:var(--bg);
+  border:1px solid rgba(224,114,95,.5);border-radius:12px;padding:3px 9px;display:inline-block;margin:2px 4px 2px 0}
+.thread-item,.fact-item{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:5px 0;line-height:1.6}
+.fact-item{color:var(--muted)}
 .muted{font-family:var(--sans);font-size:12px;color:var(--muted)}
 .npc-row{display:flex;justify-content:space-between;font-family:var(--sans);font-size:12px;margin:5px 0}
 .npc-attitude{color:var(--accent-2);letter-spacing:1px}
@@ -244,7 +249,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
             <textarea id="action-input" rows="2" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
             <button id="btn-send" class="btn primary">发送</button>
           </div>
-          <div id="pending" class="pending" hidden>世界在回应…</div>
+          <div id="pending" class="pending" hidden>世界在回应… <span id="pending-secs"></span></div>
         </div>
       </main>
       <aside id="panel" class="panel" data-open="false"></aside>
@@ -286,6 +291,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   var busy = false;
   var typer = null;
   var toastTimer = null;
+  var pendingTimer = null;
+  var pendingStart = 0;
   var alloc = {};
 
   // ---- 网络 ----
@@ -317,6 +324,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
     $('panel').dataset.open = 'false';
     if (typer) typer.skip();
+    clearInterval(pendingTimer);
+    pendingTimer = null;
   }
 
   function route() {
@@ -712,6 +721,27 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     } else rumorSec.appendChild(el('div', 'muted', '（尚无传闻）'));
     panel.appendChild(rumorSec);
 
+    var marks = (s.character && s.character.marks) || [];
+    var markSec = el('div', 'panel-section');
+    markSec.appendChild(el('h4', 'panel-h', '身上的印记'));
+    if (marks.length) marks.forEach(function (m) { markSec.appendChild(el('span', 'mark-chip', m)); });
+    else markSec.appendChild(el('span', 'muted', '（尚无印记）'));
+    panel.appendChild(markSec);
+
+    var threads = s.threads || [];
+    var threadSec = el('div', 'panel-section');
+    threadSec.appendChild(el('h4', 'panel-h', '未解之谜'));
+    if (threads.length) {
+      threads.forEach(function (t) { threadSec.appendChild(el('div', 'thread-item', '· ' + t)); });
+    } else threadSec.appendChild(el('div', 'muted', '（尚无未解之谜）'));
+    panel.appendChild(threadSec);
+
+    var facts = s.facts || [];
+    var factChildren = facts.length
+      ? facts.map(function (f) { return el('div', 'fact-item', '· ' + (f.text || '')); })
+      : [el('div', 'muted', '（尚无已确立的事实）')];
+    panel.appendChild(collapsible('已知的事', factChildren));
+
     var npcSec = el('div', 'panel-section');
     npcSec.appendChild(el('h4', 'panel-h', '认识的人'));
     var npc = s.npcAttitude || {};
@@ -844,10 +874,24 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     }
   }
 
+  function updatePendingSecs() {
+    var secs = Math.floor((Date.now() - pendingStart) / 1000);
+    $('pending-secs').textContent = '已等待 ' + secs + ' 秒';
+  }
+
   function setBusy(b) {
     busy = b;
     $('btn-send').disabled = b;
     $('pending').hidden = !b;
+    clearInterval(pendingTimer);
+    pendingTimer = null;
+    if (b) {
+      pendingStart = Date.now();
+      updatePendingSecs(); // 立刻显示 0 秒
+      pendingTimer = setInterval(updatePendingSecs, 1000);
+    } else {
+      $('pending-secs').textContent = '';
+    }
   }
 
   async function sendAction() {

@@ -152,6 +152,18 @@ test('load: .env 里的额外键原样保留', () => {
   }
 });
 
+test('load: LLM_EXTRA_BODY 默认空串，可由 .env / 环境变量读取', () => {
+  assert.equal(env.load(missingFile(), {}).LLM_EXTRA_BODY, '');
+  const { dir, file } = tmpFile('LLM_EXTRA_BODY={"thinking":{"type":"disabled"}}\n');
+  try {
+    assert.equal(env.load(file, {}).LLM_EXTRA_BODY, '{"thinking":{"type":"disabled"}}');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const fromEnv = env.load(missingFile(), { LLM_EXTRA_BODY: '{"temperature":0.5}' });
+  assert.equal(fromEnv.LLM_EXTRA_BODY, '{"temperature":0.5}');
+});
+
 test('withoutKey: 接口返回里绝不带 Key', () => {
   const cfg = env.load(missingFile(), {});
   cfg.LLM_API_KEY = 'sk-super-secret';

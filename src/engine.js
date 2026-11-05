@@ -49,6 +49,21 @@ const OMEN_MAX_GAP = 2;
 const RUMOR_MAX = 40;
 const RUMORS_MAX = 10;
 
+// 事实账本：本回合新确立的客观事实，[{turn,text}]；单条 ≤30 字，每回合 0~2 条，最多 40 条（丢最旧）。
+const FACT_TEXT_MAX = 30;
+const FACTS_MAX = 40;
+const FACTS_PER_TURN_MAX = 2;
+
+// 印记：落在角色身上的持久处境（被盯上、欠人情、负伤…），单条 ≤16 字，最多 8 条；重生时清空。
+const MARK_TEXT_MAX = 16;
+const MARKS_MAX = 8;
+
+// 未解之谜：state.threads 最多 6 条活跃，超出时最旧的移入 state.fadedThreads；
+// 单条 ≤20 字，解开时文本必须与已有完全一致。fadedThreads 也设上限，避免无限增长。
+const THREAD_TEXT_MAX = 20;
+const THREADS_MAX = 6;
+const FADED_THREADS_MAX = 20;
+
 // 地点与时间：时段依次循环，深夜之后进入次日清晨；单回合推进 0~2 个时段。
 const PERIODS = Object.freeze(['清晨', '午后', '黄昏', '深夜']);
 const MOVE_TO_MAX = 12;
@@ -101,6 +116,30 @@ function normalizeRumor(value) {
   return t.slice(0, RUMOR_MAX);
 }
 
+// 事实校验：非字符串 / 空串忽略，超过 30 字截断，返回可直接入库的文本（无则 ''）。
+function normalizeFact(value) {
+  if (typeof value !== 'string') return '';
+  const t = value.trim();
+  if (!t) return '';
+  return t.slice(0, FACT_TEXT_MAX);
+}
+
+// 印记校验：非字符串 / 空串忽略，超过 16 字截断，返回可直接入库的文本（无则 ''）。
+function normalizeMark(value) {
+  if (typeof value !== 'string') return '';
+  const t = value.trim();
+  if (!t) return '';
+  return t.slice(0, MARK_TEXT_MAX);
+}
+
+// 线索校验：非字符串 / 空串忽略，超过 20 字截断，返回可直接入库的文本（无则 ''）。
+function normalizeThread(value) {
+  if (typeof value !== 'string') return '';
+  const t = value.trim();
+  if (!t) return '';
+  return t.slice(0, THREAD_TEXT_MAX);
+}
+
 // move_to 校验：≤12 字，且必须是 bible.places 里的名字或本回合叙事里新出现的地点名。
 // 返回合法地点名，非法时返回 ''（原地不动）。
 function normalizeMoveTo(state, value, narration) {
@@ -141,6 +180,12 @@ function normalizeState(state) {
   if (typeof s.pendingEventTheme !== 'string' || !s.pendingEventTheme) s.pendingEventTheme = null;
   if (!Array.isArray(s.rumors)) s.rumors = [];
   if (!Array.isArray(s.pastLives)) s.pastLives = [];
+  if (!Array.isArray(s.facts)) s.facts = [];
+  if (!Array.isArray(s.threads)) s.threads = [];
+  if (!Array.isArray(s.fadedThreads)) s.fadedThreads = [];
+  if (s.character && typeof s.character === 'object' && !Array.isArray(s.character.marks)) {
+    s.character.marks = [];
+  }
   if (typeof s.location !== 'string' || !s.location) {
     const start = s.bible && s.bible.start;
     s.location = start && typeof start.place === 'string' ? start.place : '';
@@ -257,6 +302,7 @@ function createWorld(spec, opts) {
       appearance: s.appearance || '',
       attrs: allocateAttrs(s.alloc),
       items: startingItems(bible),
+      marks: [],
       alive: true,
       bornTurn: 0,
     },
@@ -266,6 +312,9 @@ function createWorld(spec, opts) {
     activeEvent: null,
     pendingEventTheme: null, // 提前锁定、开事件时消费的内部主题，绝不进公开状态
     rumors: [],              // 坊间传闻，只保留最近 10 条 [{turn, text}]
+    facts: [],               // 已确立的客观事实 [{turn, text}]，最多 40 条
+    threads: [],             // 活跃未解之谜（文本），最多 6 条
+    fadedThreads: [],        // 已淡去/已解开的线索（文本），不再活跃
     location: (bible.start && typeof bible.start.place === 'string') ? bible.start.place : '',
     clock: { day: 1, period: PERIODS[0] },
     pastLives: [],           // 前世墓志铭 [{life,name,epitaph,turns,cause}]
@@ -567,6 +616,7 @@ function applyDeath(state, reason, turn) {
     appearance: '',
     attrs,
     items: [],
+    marks: [], // 本世结束，印记随角色清空
     alive: false,
     bornTurn: null,
   };
@@ -595,6 +645,7 @@ function rebirth(state, input) {
   s.character.alive = true;
   // 重生给 1 个符合世界观的基础物品（死亡时已清空，这里补上）。
   s.character.items = [baseItem(s.bible)];
+  s.character.marks = []; // 重生清空上一世的所有印记
   s.character.bornTurn = s.turn;
   s.awaitingRebirth = false;
   return { state: s, error: null };
@@ -663,6 +714,7 @@ function resolveTurn(state, input, opts) {
   }
   const applied = validation.applied;
   const rejected = validation.rejected.slice();
+  const prop = data.proposal && typeof data.proposal === 'object' ? data.proposal : {};
 
   // 收益递减：普通回合每个正向 +1 以概率 p=clamp((30-v)/25, 0.1, 1) 生效（用注入的 rng）。
   // 未生效的静默丢弃并记入 rejected（内部原因，不给玩家看）。事件结算绕过此处，不受此限。
@@ -750,18 +802,75 @@ function resolveTurn(state, input, opts) {
   if (s.recent.length > RECENT_MAX) s.recent = s.recent.slice(-RECENT_MAX);
 
   // 坊间传闻：可选字段，校验长度后入库，只留最近 10 条（含 turn）
-  const rumor = normalizeRumor(data.proposal && data.proposal.rumor);
+  const rumor = normalizeRumor(prop.rumor);
   if (rumor) {
     if (!Array.isArray(s.rumors)) s.rumors = [];
     s.rumors.push({ turn: nextTurn, text: rumor });
     if (s.rumors.length > RUMORS_MAX) s.rumors = s.rumors.slice(-RUMORS_MAX);
   }
 
+  // 事实账本：本回合新确立的客观事实（0~2 条，每条 ≤30 字），去重后入库，最多 40 条丢最旧。
+  if (!Array.isArray(s.facts)) s.facts = [];
+  const factInput = Array.isArray(prop.new_facts) ? prop.new_facts : [];
+  let factsAdded = 0;
+  for (const raw of factInput) {
+    if (factsAdded >= FACTS_PER_TURN_MAX) break;
+    const text = normalizeFact(raw);
+    if (!text) continue;
+    if (s.facts.some((f) => f && f.text === text)) continue; // 同一事实不重复入库
+    s.facts.push({ turn: nextTurn, text });
+    factsAdded += 1;
+  }
+  if (s.facts.length > FACTS_MAX) s.facts = s.facts.slice(-FACTS_MAX);
+
+  // 印记：先按完全一致的文本移除已了结的，再追加新印记（每条 ≤16 字，最多 8 条丢最旧）。
+  if (!Array.isArray(s.character.marks)) s.character.marks = [];
+  const markRemove = Array.isArray(prop.marks_remove) ? prop.marks_remove : [];
+  for (const raw of markRemove) {
+    const text = normalizeMark(raw);
+    if (!text) continue;
+    s.character.marks = s.character.marks.filter((m) => m !== text);
+  }
+  const markAdd = Array.isArray(prop.marks_add) ? prop.marks_add : [];
+  for (const raw of markAdd) {
+    const text = normalizeMark(raw);
+    if (!text || s.character.marks.includes(text)) continue;
+    s.character.marks.push(text);
+  }
+  if (s.character.marks.length > MARKS_MAX) {
+    s.character.marks = s.character.marks.slice(-MARKS_MAX);
+  }
+
+  // 未解之谜：先按完全一致的文本解开旧线索，再追加新线索；活跃最多 6 条，超出把最旧移入 fadedThreads。
+  if (!Array.isArray(s.threads)) s.threads = [];
+  if (!Array.isArray(s.fadedThreads)) s.fadedThreads = [];
+  const threadResolve = Array.isArray(prop.threads_resolve) ? prop.threads_resolve : [];
+  for (const raw of threadResolve) {
+    const text = normalizeThread(raw);
+    if (!text) continue;
+    const idx = s.threads.indexOf(text); // 必须与已有文本完全一致
+    if (idx >= 0) {
+      s.threads.splice(idx, 1);
+      s.fadedThreads.push(text); // 已解开，归档不再活跃
+    }
+  }
+  const threadAdd = Array.isArray(prop.threads_add) ? prop.threads_add : [];
+  for (const raw of threadAdd) {
+    const text = normalizeThread(raw);
+    if (!text || s.threads.includes(text)) continue;
+    s.threads.push(text);
+    if (s.threads.length > THREADS_MAX) {
+      s.fadedThreads.push(s.threads.shift()); // 最旧的淡去
+    }
+  }
+  if (s.fadedThreads.length > FADED_THREADS_MAX) {
+    s.fadedThreads = s.fadedThreads.slice(-FADED_THREADS_MAX);
+  }
+
   // 地点与时间：校验 move_to / time_passes 后写入（叙事须与之一致，由 prompt 约束）
-  const p = data.proposal && typeof data.proposal === 'object' ? data.proposal : {};
-  const moveTo = normalizeMoveTo(state, p.move_to, applied.narration);
+  const moveTo = normalizeMoveTo(state, prop.move_to, applied.narration);
   if (moveTo) s.location = moveTo;
-  s.clock = advanceClock(s.clock, normalizeTimePasses(p.time_passes));
+  s.clock = advanceClock(s.clock, normalizeTimePasses(prop.time_passes));
 
   // 编年史：turn % 20 == 0，摘要由 LLM_MODEL_WORLD 生成后从 data.chapterSummary 回传
   let chapter = null;
@@ -842,6 +951,17 @@ module.exports = {
   RUMOR_MAX,
   RUMORS_MAX,
   normalizeRumor,
+  FACT_TEXT_MAX,
+  FACTS_MAX,
+  FACTS_PER_TURN_MAX,
+  normalizeFact,
+  MARK_TEXT_MAX,
+  MARKS_MAX,
+  normalizeMark,
+  THREAD_TEXT_MAX,
+  THREADS_MAX,
+  FADED_THREADS_MAX,
+  normalizeThread,
   PERIODS,
   MOVE_TO_MAX,
   TIME_PASSES_DEFAULT,

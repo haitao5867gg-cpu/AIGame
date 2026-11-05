@@ -627,6 +627,32 @@ test('顶点不泄露：公开状态 / 回合响应里没有 apex 与 Key', () =
   assert.equal(JSON.stringify(out.state).includes('隐秘王冠'), true);
 });
 
+test('新字段不泄露 apex：公开状态/回合结果带 facts/marks/threads 时仍无 apex 与 Key', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  s.LLM_API_KEY = 'sk-leak-test';
+  s.facts = [{ turn: 1, text: '城门每日戌时落锁' }];
+  s.threads = ['灰呢帽的报纸数字'];
+  s.fadedThreads = ['已淡去的旧线索'];
+  s.character.marks = ['被76号盯上'];
+  const out = run(s, { action: 'a', proposal: proposal() });
+  const pubState = e.toPublicState(out.state);
+  const pubResult = e.toPublicTurnResult(out.result, out.state);
+  // 新字段仍对玩家可见
+  assert.equal(pubState.facts[0].text, '城门每日戌时落锁');
+  assert.deepEqual(pubState.character.marks, ['被76号盯上']);
+  assert.deepEqual(pubState.threads, ['灰呢帽的报纸数字']);
+  assert.deepEqual(pubState.fadedThreads, ['已淡去的旧线索']);
+  // apex / Key 绝不因新增字段而泄露
+  const json = JSON.stringify({ pubState, pubResult });
+  assert.equal(json.includes('隐秘王冠'), false);
+  assert.equal(json.includes('北方的钟声'), false);
+  assert.equal(json.includes('sk-leak-test'), false);
+  assert.equal(json.includes('achievedAt'), false);
+  assert.equal(/"apex"\s*:/.test(json), false);
+  assert.equal(JSON.stringify(out.state).includes('隐秘王冠'), true); // 内部仍保留
+});
+
 // ---------- 编年史 / recent ----------
 
 test('编年史：turn % 20 == 0 压一章，≤300 字', () => {
@@ -892,6 +918,10 @@ test('老存档：normalizeState 补齐新字段默认值，不报错也不改�
   const norm = e.normalizeState(old);
   assert.equal(norm.pendingEventTheme, null);
   assert.deepEqual(norm.rumors, []);
+  assert.deepEqual(norm.facts, []);
+  assert.deepEqual(norm.threads, []);
+  assert.deepEqual(norm.fadedThreads, []);
+  assert.deepEqual(norm.character.marks, []);
   assert.equal(JSON.stringify(old), before); // 不改入参
   assert.equal(typeof e.toPublicState(norm).omen, 'boolean');
 });
@@ -1025,4 +1055,208 @@ test('前世墓志铭：applyEpitaph 追加记录、强制 ≤80 字与字段形
 
   const ns2 = e.applyEpitaph(ns, { life: 2, name: '二世', epitaph: '短', turns: 3, cause: '事件殒命' });
   assert.equal(ns2.pastLives.length, 2); // 多世累积
+});
+
+// ---------- 事实账本（new_facts / facts） ----------
+
+test('事实账本：createWorld 初始化 facts=[]，老存档补默认', () => {
+  assert.deepEqual(makeState().facts, []);
+  assert.deepEqual(e.normalizeState({ turn: 2 }).facts, []);
+  const old = {
+    turn: 3, bible: { title: '旧世界' }, character: { alive: true, attrs: {} },
+  };
+  assert.deepEqual(e.normalizeState(old).facts, []);
+});
+
+test('事实账本：normalizeFact 截 30 字、忽略非字符串/空串', () => {
+  assert.equal(e.normalizeFact('  城门每日戌时落锁  '), '城门每日戌时落锁');
+  assert.equal(e.normalizeFact('长'.repeat(45)).length, 30);
+  assert.equal(e.normalizeFact(''), '');
+  assert.equal(e.normalizeFact('   '), '');
+  assert.equal(e.normalizeFact(null), '');
+  assert.equal(e.normalizeFact(123), '');
+});
+
+test('事实账本：resolveTurn 校验后写入（每回合 0~2 条、≤30 字、含 turn）', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  const out = run(s, {
+    action: 'a',
+    proposal: proposal({
+      new_facts: ['城门每日戌时落锁', '顾秋白是76号的人', '多余的第三条', '长'.repeat(50), '', 123],
+    }),
+  }, () => 0.5, 1);
+  assert.equal(out.state.facts.length, 2);
+  assert.deepEqual(out.state.facts[0], { turn: 1, text: '城门每日戌时落锁' });
+  assert.deepEqual(out.state.facts[1], { turn: 1, text: '顾秋白是76号的人' });
+  assert.ok(out.state.facts.every((f) => f.text.length <= e.FACT_TEXT_MAX));
+});
+
+test('事实账本：同一事实不重复入库、无 new_facts 不写、不修改入参（纯函数）', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  const before = JSON.stringify(s);
+  let cur = run(s, { action: 'a', proposal: proposal({ new_facts: ['城门每日戌时落锁'] }) }).state;
+  cur = run(cur, {
+    action: 'b', proposal: proposal({ new_facts: ['城门每日戌时落锁', '顾秋白是76号的人'] }),
+  }).state;
+  assert.equal(cur.facts.length, 2);
+  const empty = run(makeState(), { action: 'a', proposal: proposal() });
+  assert.deepEqual(empty.state.facts, []);
+  assert.equal(JSON.stringify(s), before);
+});
+
+test('事实账本：最多 40 条，超出丢最旧', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  for (let i = 1; i <= 45; i++) {
+    s = run(s, {
+      action: 'a', proposal: proposal({ new_facts: ['事实' + i] }),
+    }, () => 0.5, i).state;
+  }
+  assert.equal(s.facts.length, e.FACTS_MAX);
+  assert.equal(s.facts[0].text, '事实6');    // 45 条丢掉最旧的 5 条
+  assert.equal(s.facts[39].text, '事实45');
+  assert.ok(s.facts.every((f) => typeof f.turn === 'number' && typeof f.text === 'string'));
+});
+
+// ---------- 印记（marks_add / marks_remove / character.marks） ----------
+
+test('印记：createWorld 初始化 character.marks=[]，老存档补默认', () => {
+  assert.deepEqual(makeState().character.marks, []);
+  const old = { turn: 2, character: { alive: true, attrs: {} } };
+  assert.deepEqual(e.normalizeState(old).character.marks, []);
+});
+
+test('印记：normalizeMark 截 16 字、忽略非字符串/空串', () => {
+  assert.equal(e.normalizeMark('  被76号盯上  '), '被76号盯上');
+  assert.equal(e.normalizeMark('长'.repeat(25)).length, 16);
+  assert.equal(e.normalizeMark(''), '');
+  assert.equal(e.normalizeMark(null), '');
+  assert.equal(e.normalizeMark(7), '');
+});
+
+test('印记：marks_add 校验后写入（≤16 字、去重、忽略非法）', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  const before = JSON.stringify(s);
+  const out = run(s, {
+    action: 'a',
+    proposal: proposal({
+      marks_add: ['被76号盯上', '欠白玫一个人情', '长'.repeat(25), '', 123, '被76号盯上'],
+    }),
+  });
+  assert.deepEqual(out.state.character.marks, ['被76号盯上', '欠白玫一个人情', '长'.repeat(16)]);
+  assert.ok(out.state.character.marks.every((m) => m.length <= e.MARK_TEXT_MAX));
+  assert.equal(JSON.stringify(s), before); // 纯函数，不改入参
+});
+
+test('印记：marks_remove 文本必须与已有完全一致，否则不生效', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  s = run(s, { action: 'a', proposal: proposal({ marks_add: ['被76号盯上', '左臂刀伤'] }) }).state;
+  s = run(s, {
+    action: 'b',
+    proposal: proposal({ marks_remove: ['被76号盯上', '不存在的印记', '被76号'] }),
+  }).state;
+  assert.deepEqual(s.character.marks, ['左臂刀伤']);
+});
+
+test('印记：最多 8 条，超出丢最旧', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  for (let i = 1; i <= 12; i++) {
+    s = run(s, {
+      action: 'a', proposal: proposal({ marks_add: ['印记' + i] }),
+    }, () => 0.5, i).state;
+  }
+  assert.equal(s.character.marks.length, e.MARKS_MAX);
+  assert.equal(s.character.marks[0], '印记5');   // 12 条丢最旧的 4 条
+  assert.equal(s.character.marks[7], '印记12');
+});
+
+test('印记：死亡与重生时清空', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  s.character.marks = ['被76号盯上', '欠白玫一个人情'];
+  s.character.attrs['体魄'] = 2;
+  const dead = run(s, { action: '硬闯', proposal: proposal({ state_diff: { 体魄: -2 } }) });
+  assert.ok(dead.result.death);
+  assert.deepEqual(dead.state.character.marks, []); // applyDeath 已清空
+  const rb = e.rebirth(dead.state, { name: '二世', appearance: '红衣' });
+  assert.deepEqual(rb.state.character.marks, []); // 重生再确保清空
+  assert.equal(rb.state.character.alive, true);
+});
+
+// ---------- 未解之谜（threads_add / threads_resolve / fadedThreads） ----------
+
+test('未解之谜：createWorld 初始化 threads/fadedThreads=[]，老存档补默认', () => {
+  assert.deepEqual(makeState().threads, []);
+  assert.deepEqual(makeState().fadedThreads, []);
+  const old = { turn: 2, character: { attrs: {} } };
+  assert.deepEqual(e.normalizeState(old).threads, []);
+  assert.deepEqual(e.normalizeState(old).fadedThreads, []);
+});
+
+test('未解之谜：normalizeThread 截 20 字、忽略非字符串/空串', () => {
+  assert.equal(e.normalizeThread('  灰呢帽的报纸数字  '), '灰呢帽的报纸数字');
+  assert.equal(e.normalizeThread('长'.repeat(30)).length, 20);
+  assert.equal(e.normalizeThread(''), '');
+  assert.equal(e.normalizeThread(null), '');
+  assert.equal(e.normalizeThread(5), '');
+});
+
+test('未解之谜：threads_add 校验后写入（≤20 字、去重、不改入参）', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  const before = JSON.stringify(s);
+  const out = run(s, {
+    action: 'a',
+    proposal: proposal({
+      threads_add: ['灰呢帽的报纸数字', '第三版招租广告的空括号', '长'.repeat(30), '', 8, '灰呢帽的报纸数字'],
+    }),
+  });
+  assert.deepEqual(out.state.threads, ['灰呢帽的报纸数字', '第三版招租广告的空括号', '长'.repeat(20)]);
+  assert.ok(out.state.threads.every((t) => t.length <= e.THREAD_TEXT_MAX));
+  assert.equal(JSON.stringify(s), before);
+});
+
+test('未解之谜：threads_resolve 必须与已有文本完全一致，解开后归档到 fadedThreads', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  s = run(s, {
+    action: 'a', proposal: proposal({ threads_add: ['灰呢帽的报纸数字', '白玫不问去处'] }),
+  }).state;
+  s = run(s, {
+    action: 'b',
+    proposal: proposal({ threads_resolve: ['灰呢帽的报纸数字', '近似但不完全', '不存在的线索'] }),
+  }).state;
+  assert.deepEqual(s.threads, ['白玫不问去处']);
+  assert.deepEqual(s.fadedThreads, ['灰呢帽的报纸数字']);
+});
+
+test('未解之谜：活跃最多 6 条，超出最旧移入 fadedThreads', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  for (let i = 1; i <= 8; i++) {
+    s = run(s, {
+      action: 'a', proposal: proposal({ threads_add: ['线索' + i] }),
+    }, () => 0.5, i).state;
+  }
+  assert.equal(s.threads.length, e.THREADS_MAX);
+  assert.deepEqual(s.threads, ['线索3', '线索4', '线索5', '线索6', '线索7', '线索8']);
+  assert.deepEqual(s.fadedThreads, ['线索1', '线索2']);
+});
+
+test('未解之谜：fadedThreads 不无限增长', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  for (let i = 1; i <= 30; i++) {
+    s = run(s, {
+      action: 'a', proposal: proposal({ threads_add: ['线索' + i] }),
+    }, () => 0.5, i).state;
+  }
+  assert.equal(s.threads.length, e.THREADS_MAX);
+  assert.equal(s.fadedThreads.length, e.FADED_THREADS_MAX);
+  assert.equal(s.fadedThreads[s.fadedThreads.length - 1], '线索' + (30 - e.THREADS_MAX));
 });

@@ -17,6 +17,7 @@ const DEFAULTS = Object.freeze({
   LLM_MOCK: '0',
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
+  LLM_EXTRA_BODY: '', // JSON 字符串，合并进 LLM 请求体；解析失败忽略并告警
   PORT: '8787',
   HOST: '0.0.0.0',
   DATA_DIR: './data',

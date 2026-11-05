@@ -9,6 +9,14 @@ function section(title, body) {
   return `【${title}】\n${body}`;
 }
 
+// 把字符串数组排成无序列表；忽略空项。用于把动态状态（事实 / 印记 / 线索）列进 prompt。
+function bulletList(items) {
+  return (Array.isArray(items) ? items : [])
+    .filter((x) => typeof x === 'string' && x.trim())
+    .map((x) => `- ${x.trim()}`)
+    .join('\n');
+}
+
 const CONSTITUTION = [
   '你是「无限世界」的叙事引擎，只负责写第二人称叙事与提议状态变化。',
   '铁律：',
@@ -31,6 +39,19 @@ const TURN_RULES = [
   '  每回合都要有至少一处看得见的变化。',
   '- 每个 NPC 都有自己的欲望与立场（见世界设定里的「想要」），对同一件事的反应要有差异、会主动趋利避害，',
   '  不能只轮流充当信息出口或沉默旁观。',
+  '- 已确立的事实（见【已确立的事实】）是客观真理，叙事必须遵守，不得与之矛盾、改写或重新解释；',
+  '  本回合若新确立了客观事实（时间/地点规则、人物身份、已发生且不可更改之事），用 new_facts 记录（0~2 条，每条 ≤30 字）。',
+  '- 身上的印记（见【身上的印记】）必须持续产生后果：被盯上就被监视盘查、欠人情就被讨还、带伤就行动受限、被记档就寸步难行；',
+  '  不要这一回合写过、下一回合就当没发生。玩家每次越界（宣称不存在的神力/宝物、动粗、强闯、冒犯势力）都要用 marks_add 留下一枚新印记；',
+  '  印记已了结时用 marks_remove 移除（文本须与已有完全一致）。',
+  '- 未解之谜（见【未解之谜】）大约每 5 回合要推进或解开其中一条：给出新信息、指向具体的人或地点、或用 threads_resolve 收束，',
+  '  不能只埋不收，也不要让同一条线索反复原地打转；已淡去/已解开的线索不要再重新埋设。',
+  '- 不要重复最近回合已用过的意象、环境描写和 NPC 小动作（擦杯、停手、正花、推牌、压低声音、沉默打量等），',
+  '  每回合换新的细节；也不要把同一条线索反复「重新发现一次」，或把同一个「欠一笔/别问」话术换个 NPC 再说一遍。',
+  '- 每段叙事结尾必须停在一个需要玩家决断的具体局面：有人等你回话、两条路只能选一条、手里的东西要不要交出去、',
+  '  要不要当场相信某个人；不要替玩家作决定，也不要用总结、抒情或「你陷入沉思」收尾，别让玩家只是被动听完一段对话。',
+  '- suggestions 必须给 3 条方向明显不同的行动：一条大胆冒险、一条谨慎稳妥、一条借人/用计',
+  '  （拉拢、交易、设局、借某人的立场），不要三条都只是「继续打听」的不同说法。',
 ].join('\n');
 
 const TURN_OUTPUT_FORMAT = [
@@ -41,12 +62,23 @@ const TURN_OUTPUT_FORMAT = [
   ' "npc_attitude":{"某人":1},',
   ' "persona_tags":["冒险"],',
   ' "suggestions":["可选项一","可选项二","可选项三"],',
+  ' "new_facts":["本回合新确立的客观事实，≤30 字（可选，0~2 条）"],',
+  ' "marks_add":["本回合新留下的印记（可选）"],"marks_remove":["要移除的印记（可选）"],',
+  ' "threads_add":["本回合新埋下的线索（可选，≤20 字）"],"threads_resolve":["要解开的已有线索（可选）"],',
   ' "rumor":"一句 ≤40 字的坊间传闻（可选）",',
   ' "move_to":"≤12 字的地点名（可选）",',
   ' "time_passes":1,',
   ' "event":{"title":"事件标题","desc":"事件描述"},',
   ' "event_check":{"attr":"体魄","response_quality":2}}',
   '说明：',
+  '- suggestions 固定给 3 条方向明显不同的行动：一条大胆冒险、一条谨慎稳妥、一条借人/用计（拉拢、交易、设局）；',
+  '  不要三条都在打听同一件事。',
+  '- new_facts 记录本回合新确立的客观事实（≤30 字，0~2 条）：如「城门每日戌时落锁」「顾秋白是76号的人」；',
+  '  已确立的事实见【已确立的事实】段落，叙事必须遵守、不得改写；没有新事实就省略该字段，不要复述旧事实。',
+  '- marks_add / marks_remove 每条 ≤16 字：如「被76号盯上」「欠白玫一个人情」「左臂刀伤」；',
+  '  越界行为必留印记（marks_add）；已了结的印记用 marks_remove 移除，文本必须与【身上的印记】里某一条完全一致。',
+  '- threads_add 每条 ≤20 字，本回合新埋下的未解之谜；threads_resolve 解开已有线索，文本必须与【未解之谜】里某一条完全一致；',
+  '  大约每 5 回合就要推进或解开其中一条，不能只埋不收。',
   '- rumor 是可选的坊间流言（≤40 字），约每三回合给一条即可，不要每回合都给；',
   '  内容可是对隐晦线索的侧面暗示、其他势力的风声，或真假难辨的闲话，写成听来的口吻。',
   '- move_to 是本回合去往的地点：必须是世界设定「地点」里已有的名字，或本回合叙事里新出现的地点名；',
@@ -139,6 +171,46 @@ function buildTurnMessages(state, plan, action) {
   sys.push(section('时与地（叙事一致性）',
     '叙事里的所处地点、白昼/黑夜、所在日子必须与【时与地】一致，不要凭空跳到别处或别的时段；' +
     '时间只随回合缓慢推进，不可一夜之间改换季节。'));
+
+  // 已确立的事实：把全部 facts 列为叙事必须遵守、不得改写的客观真理（动态列表，最多 40 条）。
+  const factTexts = (state && Array.isArray(state.facts))
+    ? state.facts.map((f) => (f && typeof f.text === 'string' ? f.text : ''))
+    : [];
+  if (factTexts.length) {
+    sys.push(section('已确立的事实（叙事必须遵守，不得改写）',
+      bulletList(factTexts) +
+      '\n以上均为本世界已经确立的客观事实，叙事必须与之保持一致：不得矛盾、不得改写、不得重新解释、' +
+      '也不得把它们当作新发现重新宣布一遍。本回合新确立的事实才用 new_facts 记录。'));
+  }
+
+  // 身上的印记：必须持续产生后果；越界行为要留下新印记。
+  const markTexts = (state && state.character && Array.isArray(state.character.marks))
+    ? state.character.marks
+    : [];
+  if (markTexts.length) {
+    sys.push(section('身上的印记（持续生效，不得无视）',
+      bulletList(markTexts) +
+      '\n这些是已经落在角色身上的持久处境，本回合及之后的叙事里必须持续产生可见后果，不能写过一次就当没发生；' +
+      '玩家本回合若越界（宣称不存在的神力/宝物、动粗、强闯、冒犯势力），必须用 marks_add 留下一枚新印记；' +
+      '印记已了结时用 marks_remove 移除（文本须与上面某条完全一致）。'));
+  }
+
+  // 未解之谜：活跃线索要推进/收束，已淡去/已解开的不要重新提起。
+  const threadTexts = (state && Array.isArray(state.threads)) ? state.threads : [];
+  const fadedTexts = (state && Array.isArray(state.fadedThreads)) ? state.fadedThreads : [];
+  if (threadTexts.length || fadedTexts.length) {
+    let body = '';
+    if (threadTexts.length) {
+      body += '仍悬而未决、需要后续收束的线索：\n' + bulletList(threadTexts) + '\n';
+    }
+    if (fadedTexts.length) {
+      body += '已淡去/已解开的线索（不要再重新提起、不要重新埋设）：\n' + bulletList(fadedTexts) + '\n';
+    }
+    body += '大约每 5 回合要推进或解开其中一条：给出新信息、让线索指向具体的人或地点、或用 threads_resolve 收束它；' +
+      '不能只埋不收，也不要让同一条线索反复原地打转。新埋线索用 threads_add（每条 ≤20 字），' +
+      '解开用 threads_resolve（文本须与上面某条完全一致）。';
+    sys.push(section('未解之谜', body));
+  }
 
   // 隐晦提示：apex.hint，只要求通过传闻 / 机会 / NPC 态度暗示，绝不点破。
   const hint = state.apex && state.apex.hint;

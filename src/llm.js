@@ -6,6 +6,8 @@
 // - 当日 token 用量达到上限时拒绝调用（抛出带 status / expose 的中文错误）。
 // - LLM_MOCK=1：完全离线，按 purpose 返回确定性假 JSON：
 //   建世界(world)、普通回合(turn)、事件开启/结算(turn 变体)、编年史(chapter)、新顶点(apex)。
+// - LLM_EXTRA_BODY：JSON 字符串，解析成对象后合并进请求体（如 {"thinking":{"type":"disabled"}} 提速）；
+//   解析失败或非 JSON 对象时忽略并告警。
 
 const store = require('./store.js');
 
@@ -31,6 +33,21 @@ function hash(s) {
 function clip(s, n) {
   const t = String(s == null ? '' : s);
   return t.length > n ? t.slice(0, n) : t;
+}
+
+// 解析 LLM_EXTRA_BODY：空值静默返回 {}；非 JSON 对象或解析失败时忽略并告警。
+// 单独导出，便于单测解析与告警行为。
+function parseExtraBody(raw) {
+  const text = raw == null ? '' : String(raw).trim();
+  if (!text) return {};
+  try {
+    const v = JSON.parse(text);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+    console.warn('[llm] LLM_EXTRA_BODY 不是 JSON 对象，已忽略');
+  } catch (_) {
+    console.warn('[llm] LLM_EXTRA_BODY 解析失败（不是合法 JSON），已忽略');
+  }
+  return {};
 }
 
 // ---- 确定性假数据 ----
@@ -87,6 +104,16 @@ function mockTurn(m) {
     persona_tags: ['冒险'],
     suggestions: ['继续沿旧道探查', '向守夜人打听钟声', '先去枯井集市补给'],
   };
+  // 事实账本：约每 5 回合确立一条客观事实（≤30 字），覆盖 new_facts 字段。
+  if (turn % 5 === 1) {
+    out.new_facts = ['第' + turn + '回合：钟楼在黄昏敲三下'];
+  }
+  // 印记：每 4 回合留下一枚（≤16 字），每 8 回合了结一枚（文本须与已有完全一致）。
+  if (turn % 4 === 0) out.marks_add = ['印记' + turn];
+  if (turn % 8 === 0) out.marks_remove = ['印记' + (turn - 4)];
+  // 未解之谜：每 3 回合埋一条（文本可预测），每 6 回合解开第 turn-3 回合埋的那条（完全一致）。
+  if (turn % 3 === 0) out.threads_add = ['线索第' + turn + '条'];
+  if (turn % 6 === 0) out.threads_resolve = ['线索第' + (turn - 3) + '条'];
   // 坊间传闻：约每 3 回合给一条（≤40 字），内容真假难辨、可作侧面暗示。
   if (turn % 3 === 0) {
     const rumors = [
@@ -188,6 +215,7 @@ function createClient(cfg, dataDir) {
   const dailyLimit = Number(cfg.LLM_DAILY_TOKEN_LIMIT) || 0;
   const base = String(cfg.LLM_BASE || '').replace(/\/+$/, '');
   const apiKey = String(cfg.LLM_API_KEY || '');
+  const extraBody = parseExtraBody(cfg.LLM_EXTRA_BODY);
 
   function rows() {
     return store.readJsonl(store.usagePath(dataDir));
@@ -228,11 +256,12 @@ function createClient(cfg, dataDir) {
       err.expose = true;
       throw err;
     }
-    const payload = {
+    // extraBody 的键合并进请求体；model/messages/response_format 由本层决定，不被外部覆盖。
+    const payload = Object.assign({}, extraBody, {
       model,
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
-    };
+    });
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
     const controller = new AbortController();
@@ -346,4 +375,4 @@ function createClient(cfg, dataDir) {
   return { complete, summarizeUsage, mock, PURPOSES };
 }
 
-module.exports = { createClient, PURPOSES };
+module.exports = { createClient, PURPOSES, parseExtraBody };
