@@ -126,3 +126,21 @@ test('mock 模式不发起网络请求，parseExtraBody 仍可用', async (t) =>
   assert.equal(typeof res.content, 'string');
   assert.deepEqual(llm.parseExtraBody('{"a":1}'), { a: 1 });
 });
+
+test('mock 数据覆盖新字段：mockWorld 带 start.facts、mockTurn 带 overstep 布尔', async (t) => {
+  const cfg = baseCfg({ LLM_MOCK: true });
+  const client = llm.createClient(cfg, tmpDir(t));
+  const w = await client.complete({
+    purpose: 'world', model: 'm', messages: [], mock: { seed: '满月诅咒的王国' },
+  });
+  const wb = JSON.parse(w.content).bible;
+  assert.ok(Array.isArray(wb.start.facts), 'start.facts 应为数组');
+  assert.ok(wb.start.facts.length >= 2 && wb.start.facts.length <= 3, '给 2~3 条开局事实');
+  assert.ok(wb.start.facts.every((f) => typeof f === 'string' && f.length > 0 && f.length <= 30));
+  assert.ok(wb.start.facts.some((f) => f.includes('满月')), '应含关键时间事实（满月）');
+
+  const t7 = await client.complete({ purpose: 'turn', model: 'm', messages: [], mock: { turn: 7 } });
+  assert.equal(JSON.parse(t7.content).overstep, true, '约每 7 回合模拟一次越界');
+  const t8 = await client.complete({ purpose: 'turn', model: 'm', messages: [], mock: { turn: 8 } });
+  assert.equal(JSON.parse(t8.content).overstep, false);
+});

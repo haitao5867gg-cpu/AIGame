@@ -105,3 +105,21 @@ test('前端：等待回应时显示已等待秒数', () => {
   assert.ok(/setInterval\(updatePendingSecs, 1000\)/.test(html), '应每秒刷新');
   assert.ok(/clearInterval\(pendingTimer\)/.test(html), '结束时应清理计时器');
 });
+
+test('前端：首页玩法简介（无世界醒目 / 有世界在列表下方小字）', () => {
+  assert.ok(/id=["']home-intro["']/.test(html), '应有玩法简介元素');
+  // 简介文案覆盖玩法要点
+  assert.ok(/一句话/.test(html), '一句话开世界');
+  assert.ok(/自由输入/.test(html), '自由输入行动');
+  assert.ok(/没有任务/.test(html) && /没有结局/.test(html), '没有任务没有结局');
+  assert.ok(/死亡只是一世/.test(html), '死亡只是一世结束');
+  assert.ok(/记得你/.test(html), '世界会记得你');
+  // 未在列表下方用小字，无世界时用大字
+  assert.ok(/HOME_INTRO/.test(html));
+  assert.ok(/home-intro small/.test(html) && /home-intro big/.test(html));
+  assert.ok(/\.home-intro\.small\{[^}]*font-size:12px/.test(html), '有世界时用小字');
+  assert.ok(/intro\.className = list\.length \? 'home-intro small' : 'home-intro big'/.test(html),
+    '按是否有世界切换小字/大字');
+  // 简介元素位于 world-list 之后（列表下方）
+  assert.ok(html.indexOf('id="home-intro"') > html.indexOf('id="world-list"'));
+});

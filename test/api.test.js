@@ -21,8 +21,14 @@ function assertNoLeak(text, json) {
   assert.equal(text.includes(SECRET), false, '响应不应含 API Key 值');
   assert.equal(text.includes('LLM_API_KEY'), false, '响应不应含 Key 字段');
   assert.equal(/"apex"\s*:/.test(text), false, '响应不应含 apex 字段');
+  // 导演转折只进 events.jsonl，绝不出现在任何公开响应里。
+  assert.equal(/"twist"\s*:/.test(text), false, '响应不应含 twist 字段');
+  for (const tw of ['闯入者', '意外发现', '背叛', '环境突变', '旧识出现', '时机错过', '交易反转']) {
+    assert.equal(text.includes(tw), false, `响应不应泄露转折词「${tw}」`);
+  }
   if (json && typeof json === 'object') {
     assert.equal(containsKey(json, 'apex'), false);
+    assert.equal(containsKey(json, 'twist'), false);
     assert.equal(containsKey(json, 'LLM_API_KEY'), false);
   }
 }

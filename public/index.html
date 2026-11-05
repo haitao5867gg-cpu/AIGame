@@ -54,6 +54,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .world-card .card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
 .world-card .go{font-family:var(--sans);font-size:12px;color:var(--accent-2)}
 .empty{color:var(--muted);text-align:center;font-family:var(--sans);padding:30px 0}
+/* 玩法简介：无世界时略大居中、有世界时在列表下方用小字显示 */
+.home-intro{font-family:var(--sans);text-align:center;line-height:1.95;max-width:660px;
+  margin:24px auto 0;padding:0 12px}
+.home-intro.small{font-size:12px;color:var(--muted)}
+.home-intro.big{font-size:15px;color:var(--ink);margin-top:6px}
 
 /* ---- 新世界 ---- */
 .form{max-width:660px;margin:0 auto;display:flex;flex-direction:column;gap:6px}
@@ -198,6 +203,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     <div class="home-actions"><button id="btn-new" class="btn primary">开新世界</button></div>
     <div id="world-list" class="world-list"></div>
     <p id="world-empty" class="empty" hidden>还没有世界，先开一个吧。</p>
+    <p id="home-intro" class="home-intro" hidden></p>
   </section>
 
   <!-- 新世界 -->
@@ -275,6 +281,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     '被诅咒的中世纪王国：每当钟敲十三下，就有一个人忘记自己的名字',
   ];
   var DEFAULT_SUGGESTIONS = ['环顾四周', '向人打听消息', '查看随身物品'];
+  // 玩法简介：无世界时醒目显示，有世界时在列表下方用小字显示。
+  var HOME_INTRO = '一句话就能开一个世界。自由输入你想做的任何事——没有任务，也没有结局；'
+    + '死亡只是一世的结束，下一世世界仍会记得你。';
 
   function $(id) { return document.getElementById(id); }
 
@@ -347,6 +356,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var box = $('world-list');
     box.textContent = '';
     $('world-empty').hidden = list.length > 0;
+    // 玩法简介：没有世界时用大字醒目介绍，有世界时在列表下方用小字带一句。
+    var intro = $('home-intro');
+    intro.textContent = HOME_INTRO;
+    intro.className = list.length ? 'home-intro small' : 'home-intro big';
+    intro.hidden = false;
     list.forEach(function (w) {
       var card = el('div', 'world-card');
       card.appendChild(el('h3', '', w.title || '未命名世界'));

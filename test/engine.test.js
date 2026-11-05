@@ -1260,3 +1260,188 @@ test('未解之谜：fadedThreads 不无限增长', () => {
   assert.equal(s.fadedThreads.length, e.FADED_THREADS_MAX);
   assert.equal(s.fadedThreads[s.fadedThreads.length - 1], '线索' + (30 - e.THREADS_MAX));
 });
+
+// ---------- 导演机制（sceneStreak / twist / lastTwistTurn） ----------
+
+test('导演机制：createWorld 初始化 sceneStreak/lastTwistTurn/nextTwistTurn/oversteps', () => {
+  const s = makeState();
+  assert.equal(s.sceneStreak, 0);
+  assert.equal(s.lastTwistTurn, 0);
+  assert.equal(s.oversteps, 0);
+  assert.ok(s.nextTwistTurn >= e.TWIST_GAP_MIN
+    && s.nextTwistTurn <= e.TWIST_GAP_MIN + e.TWIST_GAP_SPAN - 1); // 9~14
+  assert.deepEqual(s.facts, []); // makeState 没给 start.facts
+  assert.equal(e.TWISTS.length, 7);
+  for (const t of ['闯入者', '意外发现', '背叛', '环境突变', '旧识出现', '时机错过', '交易反转']) {
+    assert.ok(e.TWISTS.includes(t), `转折列表应含「${t}」`);
+  }
+});
+
+test('导演机制：planTurn 在 sceneStreak>=4 时用 rng 选一个转折', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  s.nextTwistTurn = 999; // 关闭时间型触发，只测绕圈触发
+  s.sceneStreak = e.TWIST_STREAK_THRESHOLD;
+  const plan = e.planTurn(s, { rng: () => 0 });
+  assert.equal(plan.twist, e.TWISTS[0]);
+  assert.ok(e.TWISTS.includes(plan.twist));
+  assert.equal(plan.nextTwistTurn, plan.nextTurn + e.TWIST_GAP_MIN); // rng=0 → 9
+});
+
+test('导演机制：距上次转折 9~14 回合（随机）触发，且只在非事件回合', () => {
+  const s = makeState();
+  s.turn = 8;
+  s.nextEventTurn = 999;
+  s.sceneStreak = 0;
+  s.nextTwistTurn = 9; // nextTurn=9 到点
+  const plan = e.planTurn(s, { rng: () => 0 });
+  assert.ok(plan.twist, '到点且非事件回合应触发转折');
+  assert.ok(e.TWISTS.includes(plan.twist));
+  const gap = plan.nextTwistTurn - plan.nextTurn;
+  assert.ok(gap >= 9 && gap <= 14, `重排间隔应在 9~14，实际 ${gap}`);
+
+  // 若该回合恰为事件开启回合，则不叠加转折
+  const ev = makeState();
+  ev.turn = 8;
+  ev.nextEventTurn = 9; // nextTurn=9 → opening
+  ev.sceneStreak = 0;
+  ev.nextTwistTurn = 9;
+  const evPlan = e.planTurn(ev, { rng: () => 0 });
+  assert.equal(evPlan.opening, true);
+  assert.equal(evPlan.twist, null, '事件回合不注入转折');
+});
+
+test('导演机制：随机间隔的上下界 9 / 14', () => {
+  const mk = () => {
+    const s = makeState();
+    s.turn = 8; s.nextEventTurn = 999; s.sceneStreak = 0; s.nextTwistTurn = 9;
+    return s;
+  };
+  const lo = e.planTurn(mk(), { rng: () => 0 });
+  assert.equal(lo.nextTwistTurn - lo.nextTurn, 9);
+  const hi = e.planTurn(mk(), { rng: () => 0.999999 });
+  assert.equal(hi.nextTwistTurn - hi.nextTurn, 14);
+});
+
+test('导演机制：sceneStreak 按「地点没变且无 new_facts/threads 变化」累计，否则清零', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  s.nextTwistTurn = 999; // 关闭时间型触发，隔离绕圈累计
+  s.bible.places = [{ name: '北岭' }];
+  // 连续两个原地打转回合 → 1、2
+  s = run(s, { action: 'a', proposal: proposal() }).state;
+  assert.equal(s.sceneStreak, 1);
+  s = run(s, { action: 'b', proposal: proposal() }).state;
+  assert.equal(s.sceneStreak, 2);
+  // 新事实 → 清零
+  s = run(s, { action: 'c', proposal: proposal({ new_facts: ['城门戌时落锁'] }) }).state;
+  assert.equal(s.sceneStreak, 0);
+  s = run(s, { action: 'd', proposal: proposal() }).state;
+  assert.equal(s.sceneStreak, 1);
+  // threads 变化 → 清零
+  s = run(s, { action: 'e', proposal: proposal({ threads_add: ['缺角的铜片'] }) }).state;
+  assert.equal(s.sceneStreak, 0);
+  s = run(s, { action: 'f', proposal: proposal() }).state;
+  assert.equal(s.sceneStreak, 1);
+  // 地点变化 → 清零
+  s = run(s, { action: 'g', proposal: proposal({ move_to: '北岭' }) }).state;
+  assert.equal(s.sceneStreak, 0);
+  assert.equal(s.location, '北岭');
+});
+
+test('导演机制：转折回合清零 sceneStreak、记录 lastTwistTurn、重排 nextTwistTurn；twist 不进公开视图', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  s.sceneStreak = e.TWIST_STREAK_THRESHOLD;
+  const plan = e.planTurn(s, { rng: () => 0 });
+  const out = run(s, { action: 'a', proposal: proposal(), plan }, () => 0.5, 777);
+  assert.equal(out.state.sceneStreak, 0);
+  assert.equal(out.state.lastTwistTurn, plan.nextTurn);
+  assert.equal(out.state.nextTwistTurn, plan.nextTwistTurn);
+  assert.equal(out.result.twist, plan.twist);
+  assert.ok(e.TWISTS.includes(out.result.twist));
+  // 转折词/字段绝不进公开状态与公开回合结果，apex 仍不泄露
+  const pubState = e.toPublicState(out.state);
+  const pubResult = e.toPublicTurnResult(out.result, out.state);
+  assert.equal('twist' in pubState, false);
+  assert.equal('twist' in pubResult, false);
+  assert.equal(JSON.stringify({ pubState, pubResult }).includes(plan.twist), false);
+  assert.equal(JSON.stringify(pubResult).includes('隐秘王冠'), false);
+  assert.equal(JSON.stringify(pubResult).includes('北方的钟声'), false);
+
+  // 即便有人误把 twist 写进 state，公开状态也应抹掉
+  const leaky = makeState();
+  leaky.twist = '闯入者';
+  assert.equal('twist' in e.toPublicState(leaky), false);
+});
+
+// ---------- 越界升级（overstep / oversteps） ----------
+
+test('越界升级：overstep:true 累计 oversteps，false / 缺省不变', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  s.nextTwistTurn = 999;
+  s = run(s, { action: 'a', proposal: proposal({ overstep: true }) }).state;
+  assert.equal(s.oversteps, 1);
+  s = run(s, { action: 'b', proposal: proposal({ overstep: false }) }).state;
+  assert.equal(s.oversteps, 1);
+  s = run(s, { action: 'c', proposal: proposal() }).state;
+  assert.equal(s.oversteps, 1);
+  s = run(s, { action: 'd', proposal: proposal({ overstep: true }) }).state;
+  assert.equal(s.oversteps, 2);
+  // 老存档 / 缺字段时按 0 起算
+  assert.equal(e.normalizeState({ turn: 2 }).oversteps, 0);
+});
+
+// ---------- 开局事实（bible.start.facts） ----------
+
+test('开局事实：createWorld 把 bible.start.facts 写入 state.facts（turn=0、≤30 字、去重、≤3 条）', () => {
+  const s = e.createWorld(
+    {
+      id: 'w',
+      bible: {
+        start: {
+          place: '灰烬港',
+          facts: ['满月在三日后', '城门每日戌时落锁', '满月在三日后', '长'.repeat(45), '第四条被丢弃'],
+        },
+      },
+    },
+    { rng: () => 0 },
+  );
+  assert.deepEqual(s.facts, [
+    { turn: 0, text: '满月在三日后' },
+    { turn: 0, text: '城门每日戌时落锁' },
+    { turn: 0, text: '长'.repeat(30) },
+  ]);
+  assert.ok(s.facts.every((f) => f.turn === 0 && f.text.length <= e.FACT_TEXT_MAX));
+});
+
+test('开局事实：startingFacts 忽略非字符串/空串/重复，最多 3 条', () => {
+  assert.deepEqual(e.startingFacts({ start: { facts: [] } }), []);
+  assert.deepEqual(e.startingFacts({}), []);
+  assert.deepEqual(e.startingFacts({ start: { facts: ['甲', '', null, 5, '甲', '乙'] } }), [
+    { turn: 0, text: '甲' }, { turn: 0, text: '乙' },
+  ]);
+});
+
+// ---------- 老存档：导演 / 越界字段补默认 ----------
+
+test('老存档：normalizeState 补 sceneStreak/lastTwistTurn/nextTwistTurn/oversteps 默认值', () => {
+  const old = { turn: 5, bible: {}, character: { alive: true, attrs: {} } };
+  const before = JSON.stringify(old);
+  const norm = e.normalizeState(old);
+  assert.equal(norm.sceneStreak, 0);
+  assert.equal(norm.lastTwistTurn, 0);
+  assert.equal(norm.oversteps, 0);
+  assert.ok(Number.isInteger(norm.nextTwistTurn)
+    && norm.nextTwistTurn >= 5 + e.TWIST_GAP_MIN); // 给一个合理间隔，不立刻触发
+  assert.equal(JSON.stringify(old), before); // 不改入参
+  // 合法值保留
+  const kept = e.normalizeState({
+    turn: 2, sceneStreak: 3, lastTwistTurn: 7, nextTwistTurn: 20, oversteps: 4,
+  });
+  assert.equal(kept.sceneStreak, 3);
+  assert.equal(kept.lastTwistTurn, 7);
+  assert.equal(kept.nextTwistTurn, 20);
+  assert.equal(kept.oversteps, 4);
+});

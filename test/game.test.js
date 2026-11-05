@@ -7,6 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 const env = require('../src/env.js');
 const store = require('../src/store.js');
+const engine = require('../src/engine.js');
+const prompts = require('../src/prompts.js');
 const game = require('../src/game.js');
 
 const SECRET = 'sk-GAME-MOCK-SECRET';
@@ -381,3 +383,112 @@ test('前世墓志铭：死亡回合写入 pastLives，公开可见、≤80 字�
 function WORLD_ID_OK(id) {
   return /^[A-Za-z0-9_-]+$/.test(id);
 }
+
+// ---------- 导演机制 / 越界升级 / 开局事实 / 老存档 / 不泄露 ----------
+
+test('导演机制：mock 30 回合出现转折写入 events.jsonl，公开状态/回合结果/log 均不含 twist', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港与永不熄灭的钟声', name: '旅人', appearance: '青衣' });
+  const id = world.id;
+  for (let i = 0; i < 30; i++) {
+    const before = await g.getWorld(id);
+    if (before.awaitingRebirth) await g.rebirth(id, { name: '新', appearance: '衣' });
+    const res = await g.takeTurn(id, { action: '继续探查钟声的来源' });
+    assert.equal('twist' in res, false, '公开回合结果不得含 twist 字段');
+    assert.equal('twist' in res.state, false, '公开状态不得含 twist 字段');
+    for (const tw of engine.TWISTS) {
+      assert.equal(JSON.stringify(res).includes(tw), false, `公开响应不得泄露转折词「${tw}」`);
+    }
+    assertNoLeak(res);
+  }
+  const events = store.readEvents(dataDir, id);
+  const twistRows = events.filter((x) => x.twist);
+  assert.ok(twistRows.length >= 1, `30 回合内应至少出现一次转折，实际 ${twistRows.length}`);
+  for (const row of twistRows) {
+    assert.ok(engine.TWISTS.includes(row.twist), '转折词必须来自 TWISTS');
+  }
+  // 公开 log 记录不含 twist
+  const log = await g.getWorldLog(id, 50);
+  for (const rec of log) {
+    assert.equal('twist' in rec, false, '公开 log 记录不得含 twist');
+    assertNoLeak(rec);
+  }
+  // 内部状态确实记录了转折回合与绕圈计数
+  const internal = store.loadWorld(dataDir, id);
+  assert.equal(typeof internal.lastTwistTurn, 'number');
+  assert.ok(internal.lastTwistTurn >= 1, '应记录 lastTwistTurn');
+  assert.equal(typeof internal.sceneStreak, 'number');
+});
+
+test('log 公开记录：twist 只进内部日志，绝不出现在公开 log / 公开字段里', () => {
+  const pub = game.toPublicLogRecord({
+    turn: 9, life: 1, action: '探查', narration: '叙事内容。',
+    twist: '闯入者', apex: { achieved: true }, raw: '{}',
+    proposal: {}, applied: {}, rejected: [], usage: {}, ts: 1,
+  });
+  assert.equal('twist' in pub, false);
+  assert.equal(JSON.stringify(pub).includes('闯入者'), false);
+  assert.equal('apex' in pub, false);
+  assert.equal('raw' in pub, false);
+  assert.equal('proposal' in pub, false);
+});
+
+test('越界升级：mock 回合累计 oversteps，overstep 写进 events.jsonl 的 proposal', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '甲', appearance: '乙' });
+  const id = world.id;
+  for (let i = 0; i < 14; i++) await g.takeTurn(id, { action: '继续探查' });
+  const s = await g.getWorld(id);
+  assert.equal(typeof s.oversteps, 'number');
+  assert.ok(s.oversteps >= 1, 'mock 应累计越界次数（约每 7 回合一次）');
+  const events = store.readEvents(dataDir, id);
+  assert.ok(events.every((e) => e.proposal && typeof e.proposal.overstep === 'boolean'),
+    '每回合 proposal 都应带 overstep 布尔');
+  assert.ok(events.some((e) => e.proposal.overstep === true), 'events.jsonl 应记录 overstep:true');
+  assertNoLeak(s);
+});
+
+test('开局事实：mock 建世界把 start.facts 写入 state.facts（turn=0），并进入回合 prompt 的事实段', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '满月诅咒的王国', name: '甲', appearance: '乙' });
+  assert.ok(Array.isArray(world.facts));
+  const opening = world.facts.filter((f) => f.turn === 0);
+  assert.ok(opening.length >= 2 && opening.length <= 3, '开局应写入 2~3 条事实');
+  assert.ok(opening.some((f) => f.text === '满月在三日后'), '应含关键时间事实（满月）');
+  assert.ok(opening.every((f) => f.text.length <= engine.FACT_TEXT_MAX));
+  const internal = store.loadWorld(dataDir, world.id);
+  assert.ok(internal.facts.some((f) => f.text === '满月在三日后'));
+  // 开局事实作为「已确立的事实」进入回合 prompt，供叙事遵守、不得改写
+  const [system] = prompts.buildTurnMessages(internal, { nextTurn: 1 }, '探查');
+  assert.match(system.content, /【已确立的事实（叙事必须遵守，不得改写）】/);
+  assert.ok(system.content.includes('满月在三日后'));
+  assertNoLeak(world);
+});
+
+test('老存档：缺 sceneStreak/lastTwistTurn/nextTwistTurn/oversteps 时读取补默认、能正常推进', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '旧世界', name: '甲', appearance: '乙' });
+  const id = world.id;
+  const state = store.loadWorld(dataDir, id);
+  delete state.sceneStreak;
+  delete state.lastTwistTurn;
+  delete state.nextTwistTurn;
+  delete state.oversteps;
+  store.saveWorld(dataDir, state);
+
+  const got = await g.getWorld(id);
+  assert.equal(got.sceneStreak, 0);
+  assert.equal(got.lastTwistTurn, 0);
+  assert.equal(got.oversteps, 0);
+  assert.equal(typeof got.nextTwistTurn, 'number');
+  assertNoLeak(got);
+
+  const res = await g.takeTurn(id, { action: '继续' });
+  assert.equal(res.state.turn, 1);
+  assert.equal(typeof res.state.sceneStreak, 'number');
+  assertNoLeak(res);
+  const internal = store.loadWorld(dataDir, id);
+  assert.equal(typeof internal.sceneStreak, 'number');
+  assert.equal(typeof internal.oversteps, 'number');
+  assert.equal(typeof internal.nextTwistTurn, 'number');
+});

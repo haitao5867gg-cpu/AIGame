@@ -83,7 +83,7 @@ function badgesFromApplied(applied) {
   return badges;
 }
 
-// events.jsonl 的单条记录 → 只保留公开字段，绝不把 apex / raw / proposal / rejected / usage 带出去。
+// events.jsonl 的单条记录 → 只保留公开字段，绝不把 apex / twist / raw / proposal / rejected / usage 带出去。
 function toPublicLogRecord(rec) {
   const e = rec && typeof rec === 'object' ? rec : {};
   const ev = e.event && typeof e.event === 'object' ? e.event : null;
@@ -295,6 +295,7 @@ function createGame(cfg, dataDir) {
         rumor: out.rumor,
         move_to: out.move_to,
         time_passes: out.time_passes,
+        overstep: out.overstep, // 本回合玩家行为是否越界（引擎据此累计 state.oversteps）
       };
       const data = {
         action,
@@ -378,6 +379,7 @@ function createGame(cfg, dataDir) {
         settlement: resolved.result.settlement || null,
         death: resolved.result.death || null,
         apex: resolved.result.apex || null,
+        twist: resolved.result.twist || null, // 导演转折只进 events.jsonl，不进公开状态 / 公开 log
         usage: usageAgg,
         ts: resolved.result.ts,
       });

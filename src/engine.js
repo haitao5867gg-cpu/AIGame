@@ -28,6 +28,15 @@ const GENERIC_EVENT_THEMES = Object.freeze(
   ['天灾', '瘟疫', '战乱', '权力更迭', '神秘来客', '资源枯竭'],
 );
 
+// 导演机制：当玩家在同一场景/谈判里绕圈，或距上次转折太久，强制本回合出现明显转折。
+// 转折词只进回合 prompt 与 events.jsonl，绝不写进公开状态（见 toPublicState / toPublicTurnResult）。
+const TWISTS = Object.freeze(
+  ['闯入者', '意外发现', '背叛', '环境突变', '旧识出现', '时机错过', '交易反转'],
+);
+const TWIST_STREAK_THRESHOLD = 4; // sceneStreak 达到该值即触发转折
+const TWIST_GAP_MIN = 9;         // 距上次转折的随机间隔下界（含）
+const TWIST_GAP_SPAN = 6;        // 9~14：TWIST_GAP_MIN + floor(unit(rng) * TWIST_GAP_SPAN)
+
 // 内部拒绝原因标记：记入 rejected 供内部日志，但不出现在公开回合结果里（不给玩家看）。
 const INTERNAL_REJECT_TAG = '[internal]';
 
@@ -183,6 +192,14 @@ function normalizeState(state) {
   if (!Array.isArray(s.facts)) s.facts = [];
   if (!Array.isArray(s.threads)) s.threads = [];
   if (!Array.isArray(s.fadedThreads)) s.fadedThreads = [];
+  // 导演机制 / 越界累计：老存档缺字段时补默认，避免 undefined 参与比较或 NaN 扩散。
+  if (!Number.isInteger(s.sceneStreak) || s.sceneStreak < 0) s.sceneStreak = 0;
+  if (!Number.isInteger(s.lastTwistTurn) || s.lastTwistTurn < 0) s.lastTwistTurn = 0;
+  if (!Number.isInteger(s.nextTwistTurn) || s.nextTwistTurn < 0) {
+    const baseTurn = Number.isInteger(s.turn) && s.turn >= 0 ? s.turn : 0;
+    s.nextTwistTurn = baseTurn + TWIST_GAP_MIN + 3; // 老存档给一个合理间隔，不立刻触发
+  }
+  if (!Number.isInteger(s.oversteps) || s.oversteps < 0) s.oversteps = 0;
   if (s.character && typeof s.character === 'object' && !Array.isArray(s.character.marks)) {
     s.character.marks = [];
   }
@@ -231,6 +248,22 @@ function startingItems(bible) {
     const name = it.trim();
     if (!name || name.length > ITEM_NAME_MAX || out.includes(name)) continue;
     out.push(name);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+// 从 bible.start.facts 提取 ≤3 条开局关键时间/规则事实（如「满月在三日后」）。
+// 用与事实账本一致的校验（非空字符串、≤30 字、去重），以 {turn:0, text} 写入 state.facts，
+// 使开局时间线/规则成为叙事必须遵守、不得改写的客观事实。
+function startingFacts(bible) {
+  const start = bible && typeof bible === 'object' ? bible.start : null;
+  const raw = start && Array.isArray(start.facts) ? start.facts : [];
+  const out = [];
+  for (const it of raw) {
+    const text = normalizeFact(it);
+    if (!text || out.some((f) => f.text === text)) continue;
+    out.push({ turn: 0, text });
     if (out.length >= 3) break;
   }
   return out;
@@ -312,9 +345,13 @@ function createWorld(spec, opts) {
     activeEvent: null,
     pendingEventTheme: null, // 提前锁定、开事件时消费的内部主题，绝不进公开状态
     rumors: [],              // 坊间传闻，只保留最近 10 条 [{turn, text}]
-    facts: [],               // 已确立的客观事实 [{turn, text}]，最多 40 条
+    facts: startingFacts(bible), // 开局关键时间/规则事实 + 后续新确立事实 [{turn, text}]，最多 40 条
     threads: [],             // 活跃未解之谜（文本），最多 6 条
     fadedThreads: [],        // 已淡去/已解开的线索（文本），不再活跃
+    sceneStreak: 0,          // 「地点没变且本回合无 new_facts / threads 变化」的连续回合数
+    lastTwistTurn: 0,       // 上次强制转折发生的回合（0 = 尚未发生）
+    nextTwistTurn: TWIST_GAP_MIN + Math.floor(unit(rng) * TWIST_GAP_SPAN), // 到点触发时间型转折
+    oversteps: 0,            // 玩家累计越界次数（用于越界后果升级阶梯）
     location: (bible.start && typeof bible.start.place === 'string') ? bible.start.place : '',
     clock: { day: 1, period: PERIODS[0] },
     pastLives: [],           // 前世墓志铭 [{life,name,epitaph,turns,cause}]
@@ -526,6 +563,25 @@ function planTurn(state, opts) {
   // 开事件用预选主题；老存档没有预选主题时现选一个兜底。
   const theme = opening ? (pendingTheme || themes[Math.floor(unit(rng) * themes.length)]) : null;
 
+  // 导演机制：只在非事件回合介入（事件开启/结算回合已有专门指令，不叠加转折）。
+  // 触发条件二选一：① sceneStreak 达到 4（玩家在同一场景/谈判里连续绕圈）；
+  // ② 距上次转折已过随机 9~14 回合（nextTwistTurn 到点）。
+  // 用注入的 rng 从 TWISTS 里选一个转折；转折只进 prompt 与 events.jsonl，不进公开状态。
+  const eventTurn = opening || settling;
+  const streak = Number.isInteger(state.sceneStreak) ? state.sceneStreak : 0;
+  const dueTurn = Number.isInteger(state.nextTwistTurn)
+    ? state.nextTwistTurn
+    : (nextTurn + TWIST_GAP_MIN);
+  const streakHit = streak >= TWIST_STREAK_THRESHOLD;
+  const timeHit = nextTurn >= dueTurn;
+  let twist = null;
+  let nextTwistTurn = null;
+  if (!eventTurn && (streakHit || timeHit)) {
+    twist = TWISTS[Math.floor(unit(rng) * TWISTS.length)];
+    // 本次转折后重新排下一次时间型转折（随机 9~14 回合），避免连续触发。
+    nextTwistTurn = nextTurn + TWIST_GAP_MIN + Math.floor(unit(rng) * TWIST_GAP_SPAN);
+  }
+
   return {
     nextTurn,
     settling,
@@ -534,6 +590,8 @@ function planTurn(state, opts) {
     omen,                                   // 本回合叙事需要埋不祥征兆
     omenTheme: omen ? pendingTheme : null,   // 供 prompt 写与主题相关的征兆（仅服务端可见）
     pendingEventTheme: pendingTheme,          // 供 resolveTurn 写入 / 消费
+    twist,                                   // 本回合必须出现的明显转折（仅服务端可见）
+    nextTwistTurn,                           // 触发后重新排定的下次转折回合（供 resolveTurn 写入）
     needEvent: opening, // 需要本回合 LLM 输出 event.title / event.desc
     needSettlement: settling, // 需要本回合 LLM 输出 event_check
     needChapter: nextTurn % 20 === 0,
@@ -675,8 +733,11 @@ function canTakeTurn(state) {
 function toPublicState(state) {
   const out = cloneState(state || {});
   for (const key of Object.keys(out)) {
-    // pendingEventTheme 是提前锁定的内部主题，绝不能以主题名暴露给玩家。
-    if (key === 'apex' || key === 'pendingEventTheme' || /api.?key/i.test(key)) delete out[key];
+    // pendingEventTheme 是提前锁定的内部主题，绝不能以主题名暴露给玩家；
+    // twist 是导演的强制转折信号，只写进 events.jsonl，绝不出现在公开状态里。
+    if (key === 'apex' || key === 'pendingEventTheme' || key === 'twist' || /api.?key/i.test(key)) {
+      delete out[key];
+    }
   }
   // 风声预兆：只给出布尔标记，从不带出主题名。
   out.omen = computeOmen(out);
@@ -739,6 +800,11 @@ function resolveTurn(state, input, opts) {
   let s = cloneState(state);
   const nextTurn = plan.nextTurn;
   s.turn = nextTurn;
+
+  // 越界累计：仅当回合 JSON 明确判定 overstep:true 才 +1（升级阶梯由 prompt 按累计次数给出）。
+  if (prop.overstep === true) {
+    s.oversteps = (Number.isInteger(s.oversteps) ? s.oversteps : 0) + 1;
+  }
 
   // 事件开启（本回合开始前，标题/描述由本回合 LLM 输出通过 data.event 回传）
   let openedEvent = null;
@@ -842,6 +908,8 @@ function resolveTurn(state, input, opts) {
   }
 
   // 未解之谜：先按完全一致的文本解开旧线索，再追加新线索；活跃最多 6 条，超出把最旧移入 fadedThreads。
+  // threadsChanged 供导演机制判定「本回合 threads 是否变化」。
+  let threadsChanged = false;
   if (!Array.isArray(s.threads)) s.threads = [];
   if (!Array.isArray(s.fadedThreads)) s.fadedThreads = [];
   const threadResolve = Array.isArray(prop.threads_resolve) ? prop.threads_resolve : [];
@@ -852,6 +920,7 @@ function resolveTurn(state, input, opts) {
     if (idx >= 0) {
       s.threads.splice(idx, 1);
       s.fadedThreads.push(text); // 已解开，归档不再活跃
+      threadsChanged = true;
     }
   }
   const threadAdd = Array.isArray(prop.threads_add) ? prop.threads_add : [];
@@ -859,6 +928,7 @@ function resolveTurn(state, input, opts) {
     const text = normalizeThread(raw);
     if (!text || s.threads.includes(text)) continue;
     s.threads.push(text);
+    threadsChanged = true;
     if (s.threads.length > THREADS_MAX) {
       s.fadedThreads.push(s.threads.shift()); // 最旧的淡去
     }
@@ -903,6 +973,23 @@ function resolveTurn(state, input, opts) {
     }
   }
 
+  // 导演机制：本回合的转折（plan.twist 由 planTurn 用 rng 选定）。
+  // 触发转折的回合是明显的大事，sceneStreak 清零、记录 lastTwistTurn、重排 nextTwistTurn；
+  // 转折词只随 result 写入 events.jsonl，绝不进入公开状态 / 公开回合结果。
+  const twist = (plan && typeof plan.twist === 'string' && plan.twist) ? plan.twist : null;
+  if (twist) {
+    s.sceneStreak = 0;
+    s.lastTwistTurn = nextTurn;
+    s.nextTwistTurn = (plan && Number.isInteger(plan.nextTwistTurn))
+      ? plan.nextTwistTurn
+      : (nextTurn + TWIST_GAP_MIN + 3);
+  } else {
+    // 原地打转 = 地点没变 且 本回合没有 new_facts / threads 变化；否则清零重新计数。
+    const boring = !moveTo && factsAdded === 0 && !threadsChanged;
+    const prevStreak = Number.isInteger(state.sceneStreak) ? state.sceneStreak : 0;
+    s.sceneStreak = boring ? prevStreak + 1 : 0;
+  }
+
   const result = {
     turn: nextTurn,
     life: s.life,
@@ -917,6 +1004,7 @@ function resolveTurn(state, input, opts) {
     settlement,
     death,
     apex: apexInfo, // 仅用于 events.jsonl 内部记录，接口返回前必须过滤
+    twist,          // 本回合强制转折，仅写入 events.jsonl，绝不进公开状态 / 公开回合结果
     needChapter: !!(plan.needChapter && !chapter),
     needNewApex: apexInfo.needNewApex,
     ts: now,
@@ -936,6 +1024,10 @@ module.exports = {
   DIFF_MAX,
   DIFF_POSITIVE_TOTAL_MAX,
   GENERIC_EVENT_THEMES,
+  TWISTS,
+  TWIST_STREAK_THRESHOLD,
+  TWIST_GAP_MIN,
+  TWIST_GAP_SPAN,
   normalizeEventThemes,
   isInternalReject,
   NARRATION_MIN,
@@ -943,6 +1035,7 @@ module.exports = {
   clamp,
   toInt,
   allocateAttrs,
+  startingFacts,
   createWorld,
   normalizeState,
   computeOmen,

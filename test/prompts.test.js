@@ -220,3 +220,80 @@ test('前世墓志铭：buildEpitaphMessages 用本世经历、要求 ≤80 字�
   assert.match(all, /不要点破任何隐藏目标/);
   assert.equal(/隐秘王冠|\bapex\b/.test(all), false, '墓志铭 prompt 不应夹带 apex');
 });
+
+// ---------- 导演机制：转折 / 越界升级 / 物品同步 / 开局事实 ----------
+
+test('回合 prompt：转折时要求「本回合必须出现明显转折：<twist>，要符合世界设定和当前局面」', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2, twist: '闯入者' }, '探查');
+  assert.match(system.content, /本回合必须出现明显转折：闯入者，要符合世界设定和当前局面/);
+  assert.match(system.content, /明显转折/);
+  assert.match(system.content, /不要点破这是被安排的转折/);
+});
+
+test('回合 prompt：无转折时不出现「本回合要求：明显转折」段', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.equal(/本回合要求：明显转折/.test(system.content), false);
+});
+
+test('越界升级：prompt 带累计次数与阶梯（1 冷遇 / 2 印记+声望-1 / 3+ 实质后果）', () => {
+  for (const n of [0, 1, 2, 3]) {
+    const state = makeState();
+    state.oversteps = n;
+    const [system] = prompts.buildTurnMessages(state, { nextTurn: 2 }, '探查');
+    const all = system.content;
+    assert.ok(all.includes(`玩家迄今已越界 ${n} 次`), `应带累计次数 ${n}`);
+    assert.match(all, /升级阶梯/);
+    assert.match(all, /第 1 次冷遇或警告/);
+    assert.match(all, /第 2 次留下印记且声望 -1/);
+    assert.match(all, /第 3 次起必须是实质后果/);
+    assert.match(all, /每次后果形式不同/);
+    assert.match(all, /被驱逐|被拘押|关键 NPC 断交|受伤/);
+    assert.match(all, /"overstep"/);
+    assert.match(all, /越界升级/);
+  }
+});
+
+test('越界升级：overstepDirective 按次数给出不同后果形式（第 3 次起轮换）', () => {
+  assert.match(prompts.overstepDirective(0), /冷遇或警告/);
+  assert.match(prompts.overstepDirective(1), /留下印记（marks_add）且声望 -1/);
+  const d2 = prompts.overstepDirective(2);
+  const d3 = prompts.overstepDirective(3);
+  const d4 = prompts.overstepDirective(4);
+  const d5 = prompts.overstepDirective(5);
+  assert.match(d2, /被驱逐/);
+  assert.match(d3, /被拘押/);
+  assert.match(d4, /关键 NPC 断交/);
+  assert.match(d5, /受伤/);
+  assert.match(prompts.overstepDirective(6), /被驱逐/); // 轮换，保证不重复
+  assert.equal(prompts.overstepDirective(undefined).includes('第 1 次'), true);
+  for (const form of prompts.OVERSTEP_FORMS) {
+    assert.match(d2 + d3 + d4 + d5, new RegExp(form));
+  }
+});
+
+test('回合 prompt：物品同步规则 + 当前物品列表放在输出格式说明旁边', () => {
+  const state = makeState();
+  state.character.items = ['旧铜灯', '无字信'];
+  const [system] = prompts.buildTurnMessages(state, { nextTurn: 2 }, '探查');
+  const all = system.content;
+  assert.match(all, /交出、丢失、用掉、被收走的物品，必须同时写进 items_remove/);
+  assert.match(all, /只有真正得到新物品才写 items_add/);
+  assert.match(all, /物品栏必须与叙事一致|物品栏必须与叙事同步/);
+  assert.match(all, /【当前随身物品（物品栏必须与叙事同步）】/);
+  assert.ok(all.includes('角色当前拥有的物品：旧铜灯、无字信'));
+  // 当前物品段落紧邻【输出格式】之前
+  const idxItems = all.indexOf('【当前随身物品');
+  const idxFormat = all.indexOf('【输出格式】');
+  assert.ok(idxItems >= 0 && idxFormat > idxItems, '物品列表应放在输出格式说明旁边');
+});
+
+test('建世界 prompt：要求 start.facts 给 2~3 条关键时间/规则事实（如满月）', () => {
+  const [system] = prompts.buildWorldMessages('一句世界观', { name: '旅人', appearance: '灰袍' });
+  assert.match(system.content, /"facts":\[str x2~3\]/);
+  assert.match(system.content, /start\.facts/);
+  assert.match(system.content, /关键时间\/规则事实/);
+  assert.match(system.content, /满月在三日后/);
+  assert.match(system.content, /锁定开局时间线/);
+  assert.match(system.content, /≤30 字/);
+  assert.match(system.content, /不得改写/);
+});

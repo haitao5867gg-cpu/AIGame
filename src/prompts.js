@@ -17,6 +17,33 @@ function bulletList(items) {
     .join('\n');
 }
 
+// 越界后果的固定形式：第 3 次起按累计次数轮换，保证「每次后果形式不同」。
+const OVERSTEP_FORMS = Object.freeze(['被驱逐', '被拘押', '关键 NPC 断交', '受伤']);
+
+// 越界升级阶梯：把累计次数（state.oversteps）与本次该用的后果写成给模型的指令。
+// 纯函数，单独导出便于单测；oversteps 为「截至上回合」的累计次数，本次即第 oversteps+1 次。
+function overstepDirective(oversteps) {
+  const n = Number.isInteger(oversteps) && oversteps >= 0 ? oversteps : 0;
+  const next = n + 1;
+  let tier;
+  if (next === 1) {
+    tier = '第 1 次：冷遇或警告——明确但克制地驳回，不留印记、不掉声望。';
+  } else if (next === 2) {
+    tier = '第 2 次：留下印记（marks_add）且声望 -1（state_diff），让世界记住这次妄为。';
+  } else {
+    const form = OVERSTEP_FORMS[(next - 3) % OVERSTEP_FORMS.length];
+    tier = `第 3 次起：必须是实质后果，本次固定采用「${form}」，写成叙事里真实发生、改变处境的事；`
+      + '每次后果形式都不得与前几次重复，不可退回冷遇或只记一笔了事。';
+  }
+  return [
+    `玩家迄今已越界 ${n} 次；若本回合判定为越界，即为第 ${next} 次。`,
+    '越界指：声称不存在的能力或物品、要求直接成为统治者、无理强闯禁地、对 NPC 动粗等。',
+    '升级阶梯：第 1 次冷遇或警告；第 2 次留下印记且声望 -1；第 3 次起必须是实质后果（被驱逐、被拘押、关键 NPC 断交、受伤），且每次后果形式不同。',
+    `本次应采用：${tier}`,
+    '越界后果一律以本段阶梯为准。若本回合越界，在输出 JSON 里写 "overstep":true 并按上述阶梯写出对应后果；否则省略该字段或写 false。',
+  ].join('\n');
+}
+
 const CONSTITUTION = [
   '你是「无限世界」的叙事引擎，只负责写第二人称叙事与提议状态变化。',
   '铁律：',
@@ -59,6 +86,7 @@ const TURN_OUTPUT_FORMAT = [
   '{"narration":"第二人称叙事，10~1200 字",',
   ' "state_diff":{"心智":1},',
   ' "items_add":[],"items_remove":[],',
+  ' "overstep":false,',
   ' "npc_attitude":{"某人":1},',
   ' "persona_tags":["冒险"],',
   ' "suggestions":["可选项一","可选项二","可选项三"],',
@@ -87,9 +115,13 @@ const TURN_OUTPUT_FORMAT = [
   '- 叙事必须与【时与地】给出的当前地点、第几日、时段一致；若给了 move_to，叙事里要真的到达该处。',
   '- persona_tags 只能从这 6 个词里取：冒险、审慎、共情、权谋、坚韧、秩序。',
   '  绝不要自造词（例如「谨慎」「水路」「冷静」等都不是合法值，会被引擎拒绝），只填本回合真正体现的维度。',
-  '- 角色当前拥有的物品见【当前状态】的「物品」一行。',
+  '- 角色当前拥有的物品见【当前状态】的「物品」一行及【当前随身物品（物品栏必须与叙事同步）】。',
   '  玩家若声称使用自己没有的物品，narration 里必须写出「你摸遍全身也没有」之类的失败，',
   '  不得凭空让它出现，也不得把它写进 items_add；items_add 只能填本回合真实获得的新物品。',
+  '- 物品栏必须与叙事同步：叙事里交出、丢失、用掉、被收走的物品，必须同时写进 items_remove；',
+  '  只有真正得到新物品才写 items_add。已失去的物品不能再出现在角色身上，也不能在后续叙述里被重新使用。',
+  '- overstep 是可选布尔：玩家本回合行动属于越界（声称不存在的能力或物品、要求直接成为统治者、无理强闯禁地等）',
+  '  时填 true，否则省略该字段或写 false；越界后果一律按【越界升级】给出的累计次数与阶梯处理。',
   '- event 仅在「本回合需要开启事件」时出现，否则不要输出该字段。',
   '- event_check 仅在「本回合需要结算事件」时出现；response_quality 为 0~3 整数，据实评价玩家应对；',
   '  attr 只能是 体魄/心智/魅力/气运/声望/资源 之一。',
@@ -99,11 +131,13 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want}],',
-  ' "start":{"place","situation","items":[str x2~3]},"eventThemes":[str x6]},',
+  ' "start":{"place","situation","items":[str x2~3],"facts":[str x2~3]},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
   'npcs[].want 写清「这个人想要什么」（能驱使他的欲望/立场），每个 NPC 各不相同，用于让反应有差异；',
   'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
+  'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
+  '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
 ].join('\n');
 
@@ -248,6 +282,25 @@ function buildTurnMessages(state, plan, action) {
       '事件回合玩家不可回避。'));
   }
 
+  // 导演机制：引擎判定本回合必须出现明显转折。转折词只给模型，不写进公开状态。
+  if (p.twist) {
+    sys.push(section('本回合要求：明显转折',
+      `本回合必须出现明显转折：${p.twist}，要符合世界设定和当前局面。` +
+      '把它写成叙事里真实发生、看得见的变化（人物、事件或局势的转折），不要只写气氛，' +
+      '不要点破这是被安排的转折，也不要因此宣布达成任何目标或结局。'));
+  }
+
+  // 越界升级：带累计次数与阶梯，避免每次复用同一套惩罚。
+  sys.push(section('越界升级（护栏，按累计次数升级）', overstepDirective(state && state.oversteps)));
+
+  // 当前物品列表放在输出格式说明旁边，并明确物品栏必须与叙事同步。
+  const curItems = (state && state.character && Array.isArray(state.character.items))
+    ? state.character.items : [];
+  sys.push(section('当前随身物品（物品栏必须与叙事同步）',
+    `角色当前拥有的物品：${curItems.length ? curItems.join('、') : '（无）'}。\n` +
+    '叙事里交出、丢失、用掉、被收走的物品，必须同时写进 items_remove；只有真正得到新物品才写 items_add。' +
+    '物品栏必须与叙事一致：已交出/失去的物品不能再出现在角色身上，也不能在后续叙述里被重新使用。'));
+
   sys.push(section('输出格式', TURN_OUTPUT_FORMAT));
 
   const user = [
@@ -367,5 +420,7 @@ module.exports = {
   buildChapterMessages,
   buildApexMessages,
   buildEpitaphMessages,
+  overstepDirective,
+  OVERSTEP_FORMS,
   parseJson,
 };
