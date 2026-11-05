@@ -34,3 +34,4 @@ yarn-error.log*
 # Game data (runtime)
 data/
 .logs/
+logs/
