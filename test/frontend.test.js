@@ -77,6 +77,28 @@ test('前端：顶部显示「地点 · 第N日 时段」', () => {
   assert.ok(/s\.clock/.test(html), '应读取 clock 渲染');
 });
 
+test('前端：重生「新一世开场」在 doRebirth 与 log 回放时都按开场样式显示', () => {
+  assert.ok(/s\.rebirthOpening/.test(html), '重生响应应带 rebirthOpening');
+  assert.ok(/rec\.rebirthOpening/.test(html), 'log 回放应识别 rebirthOpening 标记');
+  assert.ok(/appendOpening\(rec\.narration\)/.test(html), '回放时按开场样式渲染');
+  assert.ok(/appendOpening\(s\.rebirthOpening/.test(html), '重生后立即显示开场');
+});
+
+test('前端：濒死可感知（顶部「伤势沉重」、体魄条变红闪烁、死亡遮罩写明死因）', () => {
+  assert.ok(/id=["']g-danger["']/.test(html), '应有伤势沉重标签元素');
+  assert.ok(/伤势沉重/.test(html));
+  assert.ok(/danger-tag/.test(html));
+  assert.ok(/s\.danger/.test(html), 'renderHeader 应读取 danger');
+  assert.ok(/isDanger\(/.test(html), '应有濒死判定');
+  assert.ok(/\.attr-fill\.danger\{/.test(html), '体魄条变红样式');
+  assert.ok(/@keyframes dangerFlash/.test(html), '应闪烁');
+  assert.ok(/attr-fill danger/.test(html), '体魄 fill 应用 danger 类');
+  assert.ok(/top-chip danger-chip/.test(html));
+  assert.ok(/death-cause/.test(html), '死亡遮罩应有死因样式');
+  assert.ok(/死因 · /.test(html));
+  assert.ok(/death\.reason/.test(html), '应从回合结果取死因');
+});
+
 test('前端：死亡遮罩显示墓志铭、侧面板「前世」区', () => {
   assert.ok(/前世/.test(html), '侧面板应有前世区');
   assert.ok(/pastLives/.test(html), '应读取 pastLives');

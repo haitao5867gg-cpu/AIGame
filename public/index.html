@@ -88,6 +88,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .g-place{font-family:var(--sans);font-size:13px;color:var(--muted);letter-spacing:1px}
 .omen-tag{font-family:var(--sans);font-size:11px;color:#e8a99d;background:rgba(192,57,43,.14);
   border:1px solid rgba(192,57,43,.4);border-radius:10px;padding:2px 9px;letter-spacing:2px}
+/* 濒死：伤势沉重提示 + 闪烁 */
+.danger-tag{font-family:var(--sans);font-size:11px;color:#ffd7cf;background:rgba(192,57,43,.3);
+  border:1px solid rgba(224,57,43,.8);border-radius:10px;padding:2px 9px;letter-spacing:2px;
+  animation:dangerFlash .85s ease-in-out infinite alternate}
+@keyframes dangerFlash{from{opacity:.42}to{opacity:1}}
 #btn-panel{display:none}
 .event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);
   border:1px solid rgba(192,57,43,.5);border-left:4px solid var(--accent);border-radius:6px;
@@ -106,6 +111,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .top-attrs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .top-chip{font-family:var(--sans);font-size:11px;color:var(--muted);background:var(--bg-2);
   border:1px solid var(--line);border-radius:10px;padding:2px 8px}
+.top-chip.danger-chip{color:#ffd7cf;border-color:rgba(224,57,43,.75);background:rgba(192,57,43,.22)}
 .stream{flex:1;overflow-y:auto;max-height:60vh;padding:4px 2px 16px}
 @media(max-width:859px){.stream{max-height:50vh}}
 .narration-block{margin:14px 0}
@@ -149,6 +155,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .attr-name,.persona-name{width:34px;color:var(--muted)}
 .attr-bar,.persona-bar{flex:1;height:6px;background:var(--bg);border-radius:3px;overflow:hidden}
 .attr-fill{height:100%;background:linear-gradient(90deg,#8a6d3b,var(--accent-2))}
+.attr-fill.danger{background:linear-gradient(90deg,#7a1d17,#e0392b);
+  animation:dangerFlash .85s ease-in-out infinite alternate}
 .persona-fill{height:100%;background:var(--accent-2)}
 .attr-val{width:22px;text-align:right}
 .item-chip{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
@@ -182,6 +190,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .death-card{max-width:420px;width:100%;text-align:center}
 .death-kicker{font-size:30px;letter-spacing:8px;color:var(--accent-2);margin-bottom:16px}
 .death-summary{color:var(--muted);font-size:15px;line-height:1.9}
+.death-cause{font-family:var(--sans);font-size:13px;color:var(--accent-2);letter-spacing:1px;margin:8px 0 0}
 .epitaph{color:var(--ink);font-size:16px;line-height:2;font-style:italic;letter-spacing:1px;
   border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 4px;margin:18px 0}
 .rebirth-form{display:flex;flex-direction:column;gap:8px;margin-top:22px;text-align:left}
@@ -243,6 +252,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     <div class="g-subhead">
       <span id="g-place" class="g-place"></span>
       <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
+      <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
     </div>
     <div id="event-banner" class="event-banner" hidden></div>
     <div class="game-body">
@@ -293,6 +303,14 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     if (cls) n.className = cls;
     if (text != null) n.textContent = String(text);
     return n;
+  }
+
+  // 濒死：后端公开状态带 danger:true；老数据缺该字段时按体魄 ≤ 2 兜底。
+  function isDanger(s) {
+    if (s && s.danger === true) return true;
+    var attrs = (s && s.character && s.character.attrs) || {};
+    var v = Number(attrs['体魄']);
+    return Number.isFinite(v) && v <= 2;
   }
 
   var currentWorldId = null;
@@ -536,6 +554,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var c = s.clock || {};
     $('g-place').textContent = loc + ' · 第' + (c.day || 1) + '日 ' + (c.period || '清晨');
     $('g-omen').hidden = !s.omen;
+    $('g-danger').hidden = !s.danger; // 体魄 ≤ 2：顶部提示「伤势沉重」
   }
 
   function appendOpening(text) {
@@ -648,6 +667,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   }
 
   function appendLogRecord(rec) {
+    // 重生生成的「新一世开场」是该世第一条叙事，回放时用开场样式显示。
+    if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
     if (rec.event) appendEventCard(rec.event);
     if (rec.narration) appendNarration(rec.narration, rec.badges || [], true);
@@ -693,7 +714,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var box = $('top-attrs');
     box.textContent = '';
     var attrs = (s.character && s.character.attrs) || {};
-    ATTRS.forEach(function (a) { box.appendChild(el('span', 'top-chip', a + ' ' + (attrs[a] || 0))); });
+    var danger = isDanger(s);
+    ATTRS.forEach(function (a) {
+      var cls = a === '体魄' && danger ? 'top-chip danger-chip' : 'top-chip';
+      box.appendChild(el('span', cls, a + ' ' + (attrs[a] || 0)));
+    });
   }
 
   function renderPanel(s) {
@@ -702,6 +727,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     panel.appendChild(el('h3', 'panel-title', '角色面板'));
 
     var attrs = (s.character && s.character.attrs) || {};
+    var danger = isDanger(s);
     var attrSec = el('div', 'panel-section');
     attrSec.appendChild(el('h4', 'panel-h', '属性'));
     ATTRS.forEach(function (a) {
@@ -710,6 +736,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       row.appendChild(el('span', 'attr-name', a));
       var bar = el('div', 'attr-bar');
       var fill = el('div', 'attr-fill');
+      if (a === '体魄' && danger) fill.className = 'attr-fill danger'; // 变红并闪烁
       fill.style.width = Math.min(100, (v / 40) * 100) + '%';
       bar.appendChild(fill);
       row.appendChild(bar);
@@ -835,6 +862,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var last = past.length ? past[past.length - 1] : null;
     var lifeNo = death ? death.life : (last ? last.life : state.life);
     card.appendChild(el('div', 'death-kicker', '第 ' + lifeNo + ' 世 · 终'));
+    // 体魄归零 / 事件殒命：死亡遮罩写明死因（重进页面时从前世记录取回）。
+    var cause = (death && death.reason) || (last && last.cause) || '';
+    if (cause) card.appendChild(el('div', 'death-cause', '死因 · ' + cause));
     var summary = '本世走过 ' + state.turn + ' 回合。';
     if (death && death.inheritedReputation != null) {
       summary += '声望余响 ' + death.inheritedReputation + ' 将随你进入下一世，认识过你的人也还记得你。';
@@ -878,7 +908,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       currentState = s;
       hideDeath();
       clearStream();
-      appendOpening('第 ' + s.life + ' 世，你在陌生的晨光里醒来。名字与面孔都已不同，世界却还是那个世界。');
+      // 用后端 LLM 生成（失败时模板兜底）的「新一世开场」作为该世第一条叙事。
+      appendOpening(s.rebirthOpening ||
+        ('第 ' + s.life + ' 世，你在陌生的晨光里醒来。名字与面孔都已不同，世界却还是那个世界。'));
       renderHeader(s);
       renderPanel(s);
       renderEventBanner(s.activeEvent);

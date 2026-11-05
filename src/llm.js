@@ -17,6 +17,7 @@ const PURPOSES = Object.freeze({
   CHAPTER: 'chapter', // 编年史压缩
   APEX: 'apex',       // 新顶点
   EPITAPH: 'epitaph', // 前世墓志铭（死亡时额外调用）
+  REBIRTH: 'rebirth', // 新一世开场（重生时额外调用）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -72,9 +73,9 @@ function mockWorld(m) {
         { name: '缄默庭', desc: '不立文字的审判者', stance: '敌意未明' },
       ],
       npcs: [
-        { name: '守夜人', role: '引路者', desc: '总在雾里提一盏不灭的灯', want: '守住钟声不乱，查清谁在偷改更漏' },
-        { name: '铸剑师', role: '匠人', desc: '只肯为记得名字的人锻铁', want: '寻回失传锻谱，重铸一把有名之剑' },
-        { name: '拾骨少女', role: '线人', desc: '消息比刀快，笑里藏着价码', want: '攒够钱离开灰烬港，不再替人卖命' },
+        { name: '守夜人', role: '引路者', desc: '总在雾里提一盏不灭的灯', want: '守住钟声不乱，查清谁在偷改更漏', voice: '短句铁令，从不解释' },
+        { name: '铸剑师', role: '匠人', desc: '只肯为记得名字的人锻铁', want: '寻回失传锻谱，重铸一把有名之剑', voice: '哄劝式隐喻，句句带笑' },
+        { name: '拾骨少女', role: '线人', desc: '消息比刀快，笑里藏着价码', want: '攒够钱离开灰烬港，不再替人卖命', voice: '记账式冷语，只报数目' },
       ],
       start: {
         place: '灰烬港',
@@ -180,6 +181,24 @@ function mockEpitaph(m) {
   };
 }
 
+// 新一世开场：150~300 字，确定性假数据；覆盖「间隔 / 变化 / 有人隐约记得」四要素。
+function mockRebirthOpening(m) {
+  const life = (m && m.life) || 2;
+  const name = (m && m.name) || '新旅人';
+  return {
+    opening: (
+      `距上一世已过三年。灰烬港的雾比记忆里薄了些，旧钟楼在无人留意的清晨重新敲响，` +
+      `城门落锁的时刻却因上一世那桩旧案提前了半刻，守夜会据此在名册上多添了一栏。` +
+      `你以「${name}」之名在搁浅的船骸间醒来，手里仍攥着一封无字信——没人说得清它为何又回到你掌心，` +
+      `就像没人说得清这一世为何仍从同一处滩头开始。` +
+      `守夜人翻着更漏册抬眼时停了一瞬，像在辨认一张早该忘掉的脸，终究只把灯往你这边挪了半寸；` +
+      `拾骨少女则把一句「你倒是像谁」咽了回去，低头继续数她的旧币。` +
+      `第${life}世就这样开场：旧债没有随上一世埋进土里，满月仍在三日后，而世界已经悄悄改过一次规矩，` +
+      `你得在这副陌生的面孔里，重新挣一个位置。`
+    ),
+  };
+}
+
 function mockFor(purpose, m) {
   switch (purpose) {
     case PURPOSES.WORLD: return mockWorld(m);
@@ -187,6 +206,7 @@ function mockFor(purpose, m) {
     case PURPOSES.CHAPTER: return mockChapter(m);
     case PURPOSES.APEX: return mockApex(m);
     case PURPOSES.EPITAPH: return mockEpitaph(m);
+    case PURPOSES.REBIRTH: return mockRebirthOpening(m);
     default: return mockTurn(m);
   }
 }

@@ -40,6 +40,56 @@ function epitaphFromParsed(parsed, info) {
   return text.slice(0, engine.EPITAPH_MAX);
 }
 
+// 新一世开场：150~300 字。
+const REBIRTH_OPENING_MIN = 150;
+const REBIRTH_OPENING_MAX = 300;
+
+// 新一世开场模板兜底：LLM 失败 / 输出过短时使用，仍覆盖「间隔 / 变化 / 有人隐约记得」四要素。
+// 纯函数，绝不含 apex / Key 等内部信息，便于单测兜底路径。
+function templateRebirthOpening(info) {
+  const i = info || {};
+  const name = i.name || '无名旅人';
+  const life = i.life || 2;
+  const place = i.place || '旧地';
+  const title = i.title || '这片天地';
+  const gap = i.gap || '许多时日';
+  return (
+    `距上一世已有${gap}。${title}还在，${place}的晨雾却比记忆里淡了些：` +
+    '你上一世留在名册上的那笔旧账，被人抄进了新的册页，街口的盘查也因之紧了半分，' +
+    '连报出真名要登记的规矩都多添了一道。' +
+    `你以「${name}」之名在${place}醒来，手里攥着一件说不清来路的旧物，像是从未离开，又像头一遭落脚；` +
+    '石上那行墓志铭还没被雨水冲净，只是没人肯当着你的面念出来。' +
+    `第${life}世就这样开场。守夜的人抬眼时顿了顿，没叫破，只低声说了句「这身影倒是眼熟」；` +
+    '也有人把话咽回去，装作从没见过。' +
+    '世界没有重来，只是换了一副面孔继续往前走，而你得在这一副面孔里，重新挣一个位置。'
+  );
+}
+
+// 重生开场的上下文：世界标题 / 起点、上一世墓志铭、新身份（facts / npcAttitude 由 prompt 直接读 state）。
+function rebirthInfo(state) {
+  const s = state || {};
+  const last = (Array.isArray(s.pastLives) ? s.pastLives.slice(-1)[0] : null) || {};
+  const b = s.bible || {};
+  return {
+    life: s.life || 2,
+    prevLife: last.life || Math.max(1, (s.life || 2) - 1),
+    name: (s.character && s.character.name) || '无名旅人',
+    appearance: (s.character && s.character.appearance) || '',
+    prevName: last.name || '无名旅人',
+    epitaph: last.epitaph || '',
+    cause: last.cause || '力竭',
+    title: b.title || '',
+    place: s.location || (b.start && b.start.place) || '',
+  };
+}
+
+// 从 LLM 解析结果里取开场；失败 / 过短用模板兜底，并截到 ≤300 字。
+function openingFromParsed(parsed, info) {
+  let text = parsed && typeof parsed.opening === 'string' ? parsed.opening.trim() : '';
+  if (text.length < REBIRTH_OPENING_MIN) text = templateRebirthOpening(info);
+  return text.slice(0, REBIRTH_OPENING_MAX);
+}
+
 function newWorldId() {
   return 'w' + crypto.randomBytes(8).toString('hex');
 }
@@ -94,6 +144,8 @@ function toPublicLogRecord(rec) {
     life: e.life,
     action: typeof e.action === 'string' ? e.action : '',
     narration: typeof e.narration === 'string' ? e.narration : '',
+    // 重生开场是独立的一条公开叙事，前端进入新一世时按开场样式回放。
+    ...(e.rebirthOpening === true ? { rebirthOpening: true } : {}),
     badges: badgesFromApplied(e.applied),
     event: ev ? {
       theme: ev.theme, title: ev.title, desc: ev.desc, startedTurn: ev.startedTurn,
@@ -166,6 +218,22 @@ function createGame(cfg, dataDir) {
       turns: info.turns,
       cause: info.cause,
     };
+  }
+
+  // 重生时额外调用一次回合模型，据世界设定 / 上一世墓志铭 / facts / npcAttitude 写「新一世开场」。
+  // 任何失败（网络 / 超时 / 额度 / 解析 / 输出过短）都回退模板，绝不阻断重生落库。
+  async function composeRebirthOpening(state, usages) {
+    const info = rebirthInfo(state);
+    let parsed = null;
+    try {
+      const rp = await callParsed(
+        'rebirth', turnModel,
+        prompts.buildRebirthOpeningMessages(state, info),
+        { life: info.life, name: info.name }, usages,
+      );
+      parsed = rp.parsed;
+    } catch (_) { /* 失败时 parsed 保持 null，交给模板兜底 */ }
+    return openingFromParsed(parsed, info);
   }
 
   function publicWorld(state) {
@@ -397,8 +465,39 @@ function createGame(cfg, dataDir) {
       if (!state.awaitingRebirth) throw httpError(409, '当前并未等待重生');
       const r = engine.rebirth(state, input || {});
       if (r.error) throw httpError(400, r.error);
-      store.saveWorld(dataDir, r.state);
-      return publicWorld(r.state);
+
+      // 调一次 LLM_MODEL 生成「新一世开场」；失败用模板兜底，绝不阻断重生。
+      const usages = [];
+      const opening = await composeRebirthOpening(r.state, usages);
+      const finalState = engine.applyRebirthOpening(r.state, opening);
+      store.saveWorld(dataDir, finalState);
+
+      // 作为该世第一条叙事写入 events.jsonl（公开记录），前端回放时按开场样式显示。
+      const usageAgg = { prompt_tokens: 0, completion_tokens: 0 };
+      for (const u of usages) {
+        usageAgg.prompt_tokens += Number(u.prompt_tokens) || 0;
+        usageAgg.completion_tokens += Number(u.completion_tokens) || 0;
+      }
+      store.appendEvent(dataDir, worldId, {
+        turn: finalState.turn,
+        life: finalState.life,
+        action: '',
+        narration: opening,
+        rebirthOpening: true,
+        applied: {
+          state_diff: {}, items_add: [], items_remove: [], npc_attitude: {},
+          persona_tags: [], persona: {}, suggestions: [], narration: '',
+        },
+        rejected: [],
+        event: null,
+        settlement: null,
+        death: null,
+        apex: null,
+        twist: null,
+        usage: usageAgg,
+        ts: Date.now(),
+      });
+      return publicWorld(finalState);
     });
   }
 
@@ -421,4 +520,6 @@ module.exports = {
   createGame, HttpError, httpError,
   chapterEventWindow, badgesFromApplied, toPublicLogRecord,
   templateEpitaph, epitaphFromParsed,
+  templateRebirthOpening, openingFromParsed, rebirthInfo,
+  REBIRTH_OPENING_MIN, REBIRTH_OPENING_MAX,
 };

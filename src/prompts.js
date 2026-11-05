@@ -17,6 +17,9 @@ function bulletList(items) {
     .join('\n');
 }
 
+// 与 engine.DANGER_THRESHOLD 保持一致：体魄 ≤ 2 即濒死（回合叙事必须写出伤势）。
+const DANGER_BODY = 2;
+
 // 越界后果的固定形式：第 3 次起按累计次数轮换，保证「每次后果形式不同」。
 const OVERSTEP_FORMS = Object.freeze(['被驱逐', '被拘押', '关键 NPC 断交', '受伤']);
 
@@ -27,19 +30,31 @@ function overstepDirective(oversteps) {
   const next = n + 1;
   let tier;
   if (next === 1) {
-    tier = '第 1 次：冷遇或警告——明确但克制地驳回，不留印记、不掉声望。';
+    tier = '第 1 次：必须留下印记（marks_add，如「被登进疯人名册」「被卫兵记了脸」「被当成疯子」），' +
+      '并让世界当场把这桩妄为记成一笔账；明确驳回，但绝不只是冷遇或口头警告、绝不零成本放过。';
   } else if (next === 2) {
-    tier = '第 2 次：留下印记（marks_add）且声望 -1（state_diff），让世界记住这次妄为。';
+    tier = '第 2 次：声望 -1（state_diff）且有实质后果（被逐出当场 / 被短暂拘押 / 关键线索被旁人先拿走 / 关键 NPC 拒再交底），' +
+      '另留一枚新印记；后果必须比第 1 次更重，并明确援引第 1 次留下的那枚印记。';
   } else {
     const form = OVERSTEP_FORMS[(next - 3) % OVERSTEP_FORMS.length];
-    tier = `第 3 次起：必须是实质后果，本次固定采用「${form}」，写成叙事里真实发生、改变处境的事；`
-      + '每次后果形式都不得与前几次重复，不可退回冷遇或只记一笔了事。';
+    tier = `第 3 次起：严重后果，本次固定采用「${form}」，写成叙事里真实发生、改变处境的事；` +
+      '不得退回冷遇、只记一笔或前两次用过的处置，每次后果形式都不得与前几次重复。';
   }
+  // 已用后果形式（第 3 次起按累计次数轮换），供模型明确回避重复。
+  const used = [];
+  for (let i = 3; i <= n; i++) used.push(OVERSTEP_FORMS[(i - 3) % OVERSTEP_FORMS.length]);
+  const repeatRule = [
+    '同一种越界请求（同样的封王 / 同样的神力 / 同样不存在的宝物 / 同样的强闯）不得得到相同处理：',
+    '若玩家重复提出之前做过的越界请求，必须在叙事里点明「这已是第几次」、援引上次留下的印记或后果，',
+    '并把处置升级到更高一档；同一种请求每次的后果形式都不得相同，也不得淡化、改述或抹掉之前的惩罚。',
+    used.length ? `此前已用过的严重后果形式：${used.join('、')}；本次不得重复其中任何一种。` : '',
+  ].filter(Boolean).join('\n');
   return [
     `玩家迄今已越界 ${n} 次；若本回合判定为越界，即为第 ${next} 次。`,
     '越界指：声称不存在的能力或物品、要求直接成为统治者、无理强闯禁地、对 NPC 动粗等。',
-    '升级阶梯：第 1 次冷遇或警告；第 2 次留下印记且声望 -1；第 3 次起必须是实质后果（被驱逐、被拘押、关键 NPC 断交、受伤），且每次后果形式不同。',
+    '升级阶梯：第 1 次必须留下印记；第 2 次声望 -1 且有实质后果；第 3 次起必须是严重后果且每次形式不同。',
     `本次应采用：${tier}`,
+    repeatRule,
     '越界后果一律以本段阶梯为准。若本回合越界，在输出 JSON 里写 "overstep":true 并按上述阶梯写出对应后果；否则省略该字段或写 false。',
   ].join('\n');
 }
@@ -60,8 +75,11 @@ const TURN_RULES = [
   '叙事与状态规则（务必遵守）：',
   '- 大多数回合不要改属性：只有玩家本回合的行动带来实质成长或损失时才给 state_diff；平淡回合宁可不给，也不要每回合固定 +1。',
   '- 玩家越界时（声称拥有不存在的神力/宝物、要求直接称王封王、强闯禁地、对 NPC 动粗），世界必须给出具体、可见的后果：',
+  '  第 1 次就必须留下印记（marks_add，如被登记、被当成疯子、被记了脸），绝不能只是冷处理或口头警告；',
   '  相关 NPC 态度下降、声望 -1、被势力盯上/记档、被驱逐或触发守卫禁制等，写成叙事里真实发生的事，',
-  '  不能只冷处理、无人接话或轻描淡写带过。',
+  '  不能无人接话或轻描淡写带过；重复同一种越界请求时，处置必须逐次升级、不得与上次相同。',
+  '- 安全选择也有代价：玩家退让 / 观望 / 回避时同样要有代价或错失（NPC 信任下降、机会溜走、线索被别人拿走），',
+  '  不能零成本避险，详见【安全选项的代价】。',
   '- 节奏推进：同一场景、同一段对话或同一轮拉锯最多持续 3 回合，之后必须推进——给出新信息、新人物、转场或时间流逝；',
   '  每回合都要有至少一处看得见的变化。',
   '- 每个 NPC 都有自己的欲望与立场（见世界设定里的「想要」），对同一件事的反应要有差异、会主动趋利避害，',
@@ -121,7 +139,8 @@ const TURN_OUTPUT_FORMAT = [
   '- 物品栏必须与叙事同步：叙事里交出、丢失、用掉、被收走的物品，必须同时写进 items_remove；',
   '  只有真正得到新物品才写 items_add。已失去的物品不能再出现在角色身上，也不能在后续叙述里被重新使用。',
   '- overstep 是可选布尔：玩家本回合行动属于越界（声称不存在的能力或物品、要求直接成为统治者、无理强闯禁地等）',
-  '  时填 true，否则省略该字段或写 false；越界后果一律按【越界升级】给出的累计次数与阶梯处理。',
+  '  时填 true，否则省略该字段或写 false；越界后果一律按【越界升级】给出的累计次数与阶梯处理，' +
+  '  第 1 次也要留印记，重复同一种越界请求必须升级处置、不得与上次相同。',
   '- event 仅在「本回合需要开启事件」时出现，否则不要输出该字段。',
   '- event_check 仅在「本回合需要结算事件」时出现；response_quality 为 0~3 整数，据实评价玩家应对；',
   '  attr 只能是 体魄/心智/魅力/气运/声望/资源 之一。',
@@ -130,11 +149,13 @@ const TURN_OUTPUT_FORMAT = [
 const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
-  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want}],',
+  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
   ' "start":{"place","situation","items":[str x2~3],"facts":[str x2~3]},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
   'npcs[].want 写清「这个人想要什么」（能驱使他的欲望/立场），每个 NPC 各不相同，用于让反应有差异；',
+  'npcs[].voice 写「这个人的说话方式」，≤20 字（如「短句铁令，从不解释」「哄劝式隐喻，句句带笑」「记账式冷语，只报数目」），' +
+  '  每个 NPC 必须明显不同：句式长短、用词、语气、是否解释、是否带隐喻都要拉开差异，作为台词的语言指纹；',
   'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
   'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
@@ -146,7 +167,8 @@ function worldBibleText(bible) {
   const places = (b.places || []).map((p) => `${p.name}：${p.desc || ''}`).join('；');
   const factions = (b.factions || []).map((f) => `${f.name}（${f.stance || ''}）：${f.desc || ''}`).join('；');
   const npcs = (b.npcs || [])
-    .map((n) => `${n.name}（${n.role || ''}）：${n.desc || ''}${n.want ? `；想要：${n.want}` : ''}`)
+    .map((n) => `${n.name}（${n.role || ''}）：${n.desc || ''}` +
+      `${n.want ? `；想要：${n.want}` : ''}${n.voice ? `；口吻：${n.voice}` : ''}`)
     .join('；');
   return [
     `标题：${b.title || ''}`,
@@ -290,8 +312,42 @@ function buildTurnMessages(state, plan, action) {
       '不要点破这是被安排的转折，也不要因此宣布达成任何目标或结局。'));
   }
 
+  // 濒死可感知：体魄 ≤ 2 时，要求叙事明确写出伤势严重（只进 prompt，不进公开状态的内部词）。
+  const bodyAttr = state && state.character && state.character.attrs
+    ? Number(state.character.attrs['体魄']) : NaN;
+  if (Number.isFinite(bodyAttr) && bodyAttr <= DANGER_BODY) {
+    sys.push(section('伤势沉重（叙事必须明确写出）',
+      `角色体魄仅剩 ${bodyAttr}（≤${DANGER_BODY}），已濒临死亡。本回合叙事必须明确写出伤势的严重程度：` +
+      '哪里在流血、哪处骨头或筋络出了问题、视线发黑 / 站立不稳 / 抬手困难等具体可感的细节，' +
+      '并让旁人或环境对这副将死之躯有可见反应；不要用「略感疲惫」「有些不适」轻轻带过，' +
+      '也不要把伤写成已经痊愈。若玩家仍不设法自救，要让局面明显更险，并让 NPC 态度、机会随之流失。'));
+  }
+
+  // NPC 语言指纹：把每个 NPC 的 voice 带入，要求台词严格符合各自的口吻且彼此不同。
+  const npcs = (state && state.bible && Array.isArray(state.bible.npcs)) ? state.bible.npcs : [];
+  const voiceLines = npcs
+    .filter((n) => n && typeof n.name === 'string' && n.name.trim())
+    .map((n) => `- ${n.name}：${(typeof n.voice === 'string' && n.voice.trim())
+      ? n.voice.trim() : '（未标注，须当场确立一种与他人明显不同的说话方式）'}`);
+  if (voiceLines.length) {
+    sys.push(section('NPC 语言指纹（台词必须严格符合）',
+      voiceLines.join('\n') +
+      '\n每个 NPC 开口说话都必须严格符合上面各自的 voice：句式长短、用词习惯、语气、是否解释、是否带隐喻都要照着来；' +
+      '彼此之间必须明显不同，不能两三个人都用「温和地逼问」「压低声音」「你自己去看」同一套腔调，' +
+      '也不要把不同 NPC 写成同一个信息出口。同一 NPC 前后回合要始终沿用这一口吻，别写着写着变回通用旁白。' +
+      '未标注 voice 的 NPC，要当场确立一种与其他人不同的说法并沿用下去。'));
+  }
+
   // 越界升级：带累计次数与阶梯，避免每次复用同一套惩罚。
   sys.push(section('越界升级（护栏，按累计次数升级）', overstepDirective(state && state.oversteps)));
+
+  // 安全选项有代价：退让 / 观望 / 回避也必须失去点什么，不能零成本，且不复用同一套避险动作。
+  sys.push(section('安全选项的代价（不得零成本）',
+    '玩家本回合若表现为退让、观望、回避、沉默、退三步、摊开空手、把决定推给他人等避险动作，' +
+    '叙事里必须真的发生一次损失或错失，不能平安无事：相关 NPC 的信任下降（npc_attitude 给负值）、' +
+    '机会被旁人抢先、线索被别人取走、被记下「怯懦 / 不可靠」的印记（marks_add）、或干脆错过某一时限；' +
+    '把这些代价写成看得见的事，并同步进对应的状态字段，不要只写「你退到一旁，无人理会」就结束。' +
+    '同一套避险动作（退步、垂手、摊空掌心、让对方自己看）不要连续复用，避险也要换新的写法与新的代价。'));
 
   // 当前物品列表放在输出格式说明旁边，并明确物品栏必须与叙事同步。
   const curItems = (state && state.character && Array.isArray(state.character.items))
@@ -399,6 +455,51 @@ function buildEpitaphMessages(state, info) {
   ];
 }
 
+// 新一世开场：重生时额外调用一次（回合模型），据世界设定 / 上一世墓志铭 / facts / npcAttitude
+// 写 150~300 字的「新一世开场」。只输出 {opening}；不含 apex / Key 等内部信息。
+function buildRebirthOpeningMessages(state, info) {
+  const i = info || {};
+  const s = state || {};
+  const factTexts = (Array.isArray(s.facts) ? s.facts : [])
+    .map((f) => (f && typeof f.text === 'string' ? f.text : ''))
+    .filter(Boolean);
+  const npcLines = Object.entries((s.npcAttitude && typeof s.npcAttitude === 'object') ? s.npcAttitude : {})
+    .map(([k, v]) => `${k}:${v}`)
+    .join(' ') || '（无人还记得）';
+  const system = [
+    '你是「无限世界」的新一世开场执笔人，只输出一个 JSON 对象：{"opening":"150~300 字的一段开场叙事"}。',
+    '用第二人称「你」，写这一世如何重新出现在同一个世界里，笔调克制、苍凉，像一个世界在延续而非重开。',
+    '必须写清四件事，缺一不可：',
+    '  ① 新身份（新的名字与形象）以什么方式、在什么地方出现在这个世界；',
+    '  ② 距上一世过去了多久——由你自行决定，几天、几月或几年都可以，但要写明，并与世界的时间尺度相符；',
+    '  ③ 世界因上一世发生了什么可见变化（某项规矩更紧、某处多了或少了一样东西、某人的处境被改写），不得与已确立的事实矛盾；',
+    '  ④ 有没有人隐约记得你：用某个 NPC 一瞬的迟疑、一句说了一半的话或一点微妙态度暗示，不要明说「记得上一世」，也不要让任何人叫破重生。',
+    '铁律：',
+    '- 不改写、不否定锁定的世界设定与【已确立的事实】；叙事必须与【时与地】一致。',
+    '- 不点破、不命名、不解释任何隐藏目标，不要出现「游戏」「玩家」「重生机制」等出戏字眼；',
+    '- 不要写「终章」「完结」，也不要写成任务或目标；',
+    '- 只输出 {"opening":"..."}，不要解释、不要多余字段、不要 Markdown。',
+  ].join('\n');
+  const user = [
+    section('世界设定', worldBibleText(s.bible)),
+    section('时与地', timePlaceText(s)),
+    section('已确立的事实（叙事必须遵守，不得改写）',
+      factTexts.length ? bulletList(factTexts) : '（尚无）'),
+    section('人们对你的态度（npcAttitude）', npcLines),
+    section('上一世',
+      `第${i.prevLife || Math.max(1, (s.life || 2) - 1)}世 · ${i.prevName || '无名旅人'}；终于「${i.cause || '力竭'}」。`),
+    section('上一世墓志铭', i.epitaph || '（无）'),
+    section('新一世的身份',
+      `第${s.life || i.life || 2}世；名字：${i.name || (s.character && s.character.name) || '无名旅人'}；` +
+      `形象：${i.appearance || (s.character && s.character.appearance) || ''}`),
+    '请据此写一段 150~300 字的「新一世开场」，只输出 {"opening":"..."}。',
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -420,6 +521,7 @@ module.exports = {
   buildChapterMessages,
   buildApexMessages,
   buildEpitaphMessages,
+  buildRebirthOpeningMessages,
   overstepDirective,
   OVERSTEP_FORMS,
   parseJson,

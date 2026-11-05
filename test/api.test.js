@@ -109,6 +109,7 @@ test('接口层：随机端口测各接口，公开状态不含 apex 与 Key', a
     assert.equal(r.json.id, id);
     assert.equal('apex' in r.json, false);
     assert.equal(typeof r.json.omen, 'boolean', '公开状态应含 omen 布尔');
+    assert.equal(typeof r.json.danger, 'boolean', '公开状态应含 danger 布尔');
     assert.ok(Array.isArray(r.json.rumors), '公开状态应含 rumors 数组');
     assert.equal(typeof r.json.location, 'string', '公开状态应含 location');
     assert.ok(r.json.clock && typeof r.json.clock.day === 'number', '公开状态应含 clock');

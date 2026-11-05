@@ -83,6 +83,21 @@ const TIME_PASSES_DEFAULT = 1;
 // 前世墓志铭：单段 ≤80 字。
 const EPITAPH_MAX = 80;
 
+// 濒死阈值：体魄 ≤ 该值即「伤势沉重」，公开状态置 danger:true。
+// 与 prompts.js 的回合叙事判定保持一致（那里用字面量 2 并有注释互指）。
+const DANGER_THRESHOLD = 2;
+
+// 老存档兼容：NPC 缺 voice 时按序补一组彼此不同的默认口吻（每条 ≤20 字）。
+// 只给缺字段的补，已有 voice 的世界原样保留（幂等）。
+const DEFAULT_VOICES = Object.freeze([
+  '短句铁令，从不解释',
+  '哄劝式隐喻，句句带笑',
+  '记账式冷语，只报数目',
+  '慢条斯理，先问再答',
+  '粗声打断，只讲结论',
+  '低声耳语，话留半句',
+]);
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -115,6 +130,15 @@ function computeOmen(state) {
   if (!Number.isFinite(net)) return false;
   const gap = net - turn;
   return gap >= OMEN_MIN_GAP && gap <= OMEN_MAX_GAP;
+}
+
+// 濒死判定：体魄 ≤ DANGER_THRESHOLD 且仍在世时为 true。
+// 纯函数；老存档缺字段 / 已死亡的待重生状态都安全返回 false。
+function computeDanger(state) {
+  const c = state && state.character;
+  if (!c || c.alive === false || !c.attrs || typeof c.attrs !== 'object') return false;
+  const body = Number(c.attrs['体魄']);
+  return Number.isFinite(body) && body <= DANGER_THRESHOLD;
 }
 
 // 坊间传闻校验：非字符串 / 空串忽略，超过 40 字截断，返回可直接入库的文本（无则 ''）。
@@ -187,6 +211,7 @@ function advanceClock(clock, passes) {
 function normalizeState(state) {
   const s = cloneState(state || {});
   if (typeof s.pendingEventTheme !== 'string' || !s.pendingEventTheme) s.pendingEventTheme = null;
+  if (typeof s.rebirthOpening !== 'string') s.rebirthOpening = '';
   if (!Array.isArray(s.rumors)) s.rumors = [];
   if (!Array.isArray(s.pastLives)) s.pastLives = [];
   if (!Array.isArray(s.facts)) s.facts = [];
@@ -202,6 +227,16 @@ function normalizeState(state) {
   if (!Number.isInteger(s.oversteps) || s.oversteps < 0) s.oversteps = 0;
   if (s.character && typeof s.character === 'object' && !Array.isArray(s.character.marks)) {
     s.character.marks = [];
+  }
+  // 老存档 NPC 无 voice：按序补彼此不同的默认口吻，保证回合 prompt 的语言指纹段有具体可依的内容。
+  if (s.bible && Array.isArray(s.bible.npcs)) {
+    s.bible.npcs = s.bible.npcs.map((n, idx) => {
+      if (!n || typeof n !== 'object' || (typeof n.voice === 'string' && n.voice.trim())) return n;
+      const base = DEFAULT_VOICES[idx % DEFAULT_VOICES.length];
+      return Object.assign({}, n, {
+        voice: idx >= DEFAULT_VOICES.length ? `${base}·${idx + 1}` : base,
+      });
+    });
   }
   if (typeof s.location !== 'string' || !s.location) {
     const start = s.bible && s.bible.start;
@@ -357,6 +392,7 @@ function createWorld(spec, opts) {
     pastLives: [],           // 前世墓志铭 [{life,name,epitaph,turns,cause}]
     chronicle: [],
     recent: [],
+    rebirthOpening: '',      // 本世（第 1 世为空）由重生生成的新一世开场叙事
     highlightUntilTurn: 0,
     awaitingRebirth: false,
   };
@@ -709,6 +745,25 @@ function rebirth(state, input) {
   return { state: s, error: null };
 }
 
+// 新一世开场：重生时由编排层生成后写入状态。纯函数，不改入参。
+// 作为该世第一条叙事：存进 state.rebirthOpening（供前端进入新一世显示），并压入 recent
+// （供回合 prompt 的最近记录读取）；events.jsonl 由编排层另写一条公开记录。
+function applyRebirthOpening(state, opening) {
+  const s = cloneState(state);
+  const text = typeof opening === 'string' ? opening.trim() : '';
+  if (!text) return s;
+  s.rebirthOpening = text;
+  if (!Array.isArray(s.recent)) s.recent = [];
+  s.recent.push({
+    turn: s.turn,
+    action: '',
+    narration: text.slice(0, RECENT_NARRATION_MAX),
+    rebirthOpening: true,
+  });
+  if (s.recent.length > RECENT_MAX) s.recent = s.recent.slice(-RECENT_MAX);
+  return s;
+}
+
 // 前世墓志铭：把一条本世记录追加到 state.pastLives；引擎在此强制 ≤80 字与字段形状。
 function applyEpitaph(state, entry) {
   const s = cloneState(state);
@@ -741,6 +796,8 @@ function toPublicState(state) {
   }
   // 风声预兆：只给出布尔标记，从不带出主题名。
   out.omen = computeOmen(out);
+  // 濒死可感知：体魄 ≤ 2 时公开状态带 danger:true，前端据此变红闪烁并提示「伤势沉重」。
+  out.danger = computeDanger(out);
   return out;
 }
 
@@ -1039,6 +1096,9 @@ module.exports = {
   createWorld,
   normalizeState,
   computeOmen,
+  computeDanger,
+  DANGER_THRESHOLD,
+  DEFAULT_VOICES,
   OMEN_MIN_GAP,
   OMEN_MAX_GAP,
   RUMOR_MAX,
@@ -1063,6 +1123,7 @@ module.exports = {
   advanceClock,
   EPITAPH_MAX,
   applyEpitaph,
+  applyRebirthOpening,
   validateProposal,
   planTurn,
   settleEvent,

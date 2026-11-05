@@ -257,11 +257,14 @@ test('老存档：缺新字段的 state.json 读取时补默认，不报错', as
   delete state.location;
   delete state.clock;
   delete state.pastLives;
+  delete state.rebirthOpening;
   store.saveWorld(dataDir, state);
 
   const got = await g.getWorld(id);
   assert.equal('pendingEventTheme' in got, false);
   assert.equal(typeof got.omen, 'boolean');
+  assert.equal(typeof got.danger, 'boolean', '老存档补出 danger 布尔');
+  assert.equal(got.rebirthOpening, '', '老存档补出 rebirthOpening 默认值');
   assert.ok(Array.isArray(got.rumors), '老存档补出 rumors 默认值');
   assert.ok(Array.isArray(got.facts), '老存档补出 facts 默认值');
   assert.ok(Array.isArray(got.threads), '老存档补出 threads 默认值');
@@ -378,6 +381,149 @@ test('前世墓志铭：死亡回合写入 pastLives，公开可见、≤80 字�
 
   // 内部状态也确实落库
   assert.equal(store.loadWorld(dataDir, id).pastLives.length, 1);
+});
+
+test('濒死可感知：公开状态带 danger 布尔，体魄归零死亡回合写明死因', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雪原钟摆城', name: '初代', appearance: '白衣' });
+  const id = world.id;
+  const initial = await g.getWorld(id);
+  assert.equal(typeof initial.danger, 'boolean');
+  assert.equal(initial.danger, false);
+  assertNoLeak(initial);
+
+  const state = store.loadWorld(dataDir, id);
+  state.character.attrs['体魄'] = 2;
+  state.nextEventTurn = 999;
+  state.activeEvent = null;
+  store.saveWorld(dataDir, state);
+  const near = await g.getWorld(id);
+  assert.equal(near.danger, true, '体魄 2 应标记濒死');
+  assertNoLeak(near);
+
+  const res = await g.takeTurn(id, { action: '撑住' });
+  assert.equal(res.state.character.attrs['体魄'], 2);
+  assert.equal(res.state.danger, true, '回合结果的公开状态仍带 danger');
+  assertNoLeak(res);
+
+  // 体魄归零死亡：death.reason 供前端遮罩写明死因
+  const dying = store.loadWorld(dataDir, id);
+  dying.character.attrs['体魄'] = 0;
+  dying.nextEventTurn = 999;
+  dying.activeEvent = null;
+  store.saveWorld(dataDir, dying);
+  const dead = await g.takeTurn(id, { action: '倒下' });
+  assert.ok(dead.death);
+  assert.equal(dead.death.reason, '体魄归零');
+  assertNoLeak(dead);
+});
+
+// ---------- 新一世开场（rebirth 世界内解释） ----------
+
+test('新一世开场：templateRebirthOpening / openingFromParsed 兜底与 150~300 字', () => {
+  const info = { life: 3, name: '三世', place: '灰烬港', title: '残卷', gap: '三年' };
+  const tpl = game.templateRebirthOpening(info);
+  assert.ok(tpl.length >= 150 && tpl.length <= 300, `模板应在 150~300 字，实际 ${tpl.length}`);
+  assert.ok(tpl.includes('三世') && tpl.includes('三年') && tpl.includes('灰烬港'));
+  const long = '距上一世已过五年，世界因你而改了规矩，有人隐约记得你。'.repeat(8);
+  assert.equal(game.openingFromParsed({ opening: long }, info), long);
+  assert.equal(game.openingFromParsed(null, info), tpl.slice(0, 300));       // 缺失回退模板
+  assert.equal(game.openingFromParsed({}, info), tpl.slice(0, 300));
+  assert.equal(game.openingFromParsed({ opening: '短' }, info), tpl.slice(0, 300)); // 过短回退
+  assert.equal(game.openingFromParsed({ opening: '长'.repeat(400) }, info).length, 300);
+
+  const info2 = game.rebirthInfo({
+    life: 2, character: { name: '甲', appearance: '乙' },
+    pastLives: [{ life: 1, name: '旧', epitaph: '铭', cause: '体魄归零' }],
+    bible: { title: 'T', start: { place: 'P' } }, location: 'L',
+  });
+  assert.equal(info2.prevName, '旧');
+  assert.equal(info2.epitaph, '铭');
+  assert.equal(info2.place, 'L');
+  assert.equal(info2.cause, '体魄归零');
+});
+
+test('新一世开场：重生写入 recent / events.jsonl / 公开 log，响应带 rebirthOpening、不泄露 apex', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港与旧钟声', name: '初代', appearance: '白衣' });
+  const id = world.id;
+  const state = store.loadWorld(dataDir, id);
+  state.awaitingRebirth = true;
+  state.character.alive = false;
+  state.life = 2;
+  state.pastLives = [{ life: 1, name: '初代', epitaph: '初代行过雾港，终没能等来钟声落款。', turns: 3, cause: '体魄归零' }];
+  state.facts = [{ turn: 0, text: '满月在三日后' }];
+  state.npcAttitude = { 守夜人: 2 };
+  store.saveWorld(dataDir, state);
+
+  const rb = await g.rebirth(id, { name: '二世旅人', appearance: '红衣' });
+  assert.equal(typeof rb.rebirthOpening, 'string');
+  assert.ok(rb.rebirthOpening.length >= 150 && rb.rebirthOpening.length <= 300,
+    `开场应在 150~300 字，实际 ${rb.rebirthOpening.length}`);
+  assertNoLeak(rb);
+
+  // recent：该世第一条叙事
+  const internal = store.loadWorld(dataDir, id);
+  const last = internal.recent[internal.recent.length - 1];
+  assert.equal(last.rebirthOpening, true);
+  assert.equal(last.narration, rb.rebirthOpening.slice(0, 300));
+  assert.equal(internal.rebirthOpening, rb.rebirthOpening);
+
+  // events.jsonl：一条带 rebirthOpening 标记的公开记录
+  const events = store.readEvents(dataDir, id);
+  const openingRow = events.filter((x) => x.rebirthOpening);
+  assert.equal(openingRow.length, 1);
+  assert.equal(openingRow[0].narration, rb.rebirthOpening);
+  assert.equal(openingRow[0].life, 2);
+  assert.ok(openingRow[0].usage && typeof openingRow[0].usage === 'object');
+
+  // 公开 log 暴露给前端回放
+  const log = await g.getWorldLog(id, 50);
+  const rec = log.find((x) => x.rebirthOpening);
+  assert.ok(rec, '公开 log 应含 rebirthOpening 记录');
+  assert.equal(rec.narration, rb.rebirthOpening);
+  assertNoLeak(rec);
+
+  // 重生后仍能正常推进回合
+  const res = await g.takeTurn(id, { action: '二世第一步' });
+  assert.equal(res.state.turn, 1);
+  assertNoLeak(res);
+});
+
+// ---------- mock 覆盖新字段 / apex 不泄露 ----------
+
+test('mock 覆盖新字段：建世界把 npcs[].voice 带入公开 bible，且彼此不同、≤20 字', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港与旧钟声', name: '甲', appearance: '乙' });
+  const voices = (world.bible.npcs || []).map((n) => n.voice);
+  assert.ok(voices.length >= 2);
+  assert.ok(voices.every((v) => typeof v === 'string' && v.length > 0 && v.length <= 20));
+  assert.equal(new Set(voices).size, voices.length, 'voice 必须彼此不同');
+  assertNoLeak(world);
+});
+
+test('apex 不泄露：含 danger / rebirthOpening / voice 的公开状态、回合结果、log 均无 apex 与 Key', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟摆', name: '甲', appearance: '乙' });
+  const id = world.id;
+  const s = store.loadWorld(dataDir, id);
+  s.character.attrs['体魄'] = 1;   // 濒死
+  s.rebirthOpening = '一段由重生生成的开场叙事。';
+  s.nextEventTurn = 999;
+  s.activeEvent = null;
+  store.saveWorld(dataDir, s);
+
+  const got = await g.getWorld(id);
+  assert.equal(got.danger, true);
+  assert.equal(got.rebirthOpening, '一段由重生生成的开场叙事。');
+  assertNoLeak(got);
+  assert.ok(store.loadWorld(dataDir, id).apex, '内部状态仍保留 apex');
+
+  const res = await g.takeTurn(id, { action: '撑住伤势' });
+  assert.equal(res.state.danger, true);
+  assertNoLeak(res);
+  const log = await g.getWorldLog(id, 50);
+  log.forEach((rec) => assertNoLeak(rec));
 });
 
 function WORLD_ID_OK(id) {

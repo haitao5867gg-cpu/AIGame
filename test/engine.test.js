@@ -1057,6 +1057,87 @@ test('前世墓志铭：applyEpitaph 追加记录、强制 ≤80 字与字段形
   assert.equal(ns2.pastLives.length, 2); // 多世累积
 });
 
+// ---------- 濒死可感知（danger） ----------
+
+test('濒死可感知：computeDanger 在体魄 ≤ 2 为真，>2 / 缺字段 / 已死亡为假', () => {
+  assert.equal(e.DANGER_THRESHOLD, 2);
+  const s = makeState();
+  s.character.attrs['体魄'] = 3;
+  assert.equal(e.computeDanger(s), false);
+  s.character.attrs['体魄'] = 2;
+  assert.equal(e.computeDanger(s), true);
+  s.character.attrs['体魄'] = 1;
+  assert.equal(e.computeDanger(s), true);
+  s.character.attrs['体魄'] = 0;
+  assert.equal(e.computeDanger(s), true);
+  s.character.alive = false;
+  assert.equal(e.computeDanger(s), false);
+  assert.equal(e.computeDanger({}), false);
+  assert.equal(e.computeDanger({ character: { alive: true, attrs: {} } }), false);
+});
+
+test('濒死可感知：toPublicState / toPublicTurnResult 带 danger 布尔，且不泄露 apex', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  s.character.attrs['体魄'] = 2;
+  const pub = e.toPublicState(s);
+  assert.equal(pub.danger, true);
+  assert.equal('apex' in pub, false);
+  assert.equal('twist' in pub, false);
+  assert.equal(e.toPublicState(makeState()).danger, false);
+  assert.equal(e.toPublicState(e.normalizeState({ turn: 2 })).danger, false); // 老存档缺字段安全
+
+  const hurt = makeState();
+  hurt.nextEventTurn = 999;
+  hurt.character.attrs['体魄'] = 4;
+  const out = e.resolveTurn(
+    hurt,
+    { action: '硬闯', proposal: proposal({ state_diff: { 体魄: -2 } }) },
+    { rng: () => 0, now: 1 },
+  );
+  assert.equal(out.state.character.attrs['体魄'], 2);
+  const pubResult = e.toPublicTurnResult(out.result, out.state);
+  assert.equal(pubResult.state.danger, true);
+  assert.equal(pubResult.state.character.attrs['体魄'], 2);
+  assert.equal(/"apex"\s*:/.test(JSON.stringify(pubResult)), false);
+});
+
+// ---------- 新一世开场（rebirthOpening / recent） ----------
+
+test('新一世开场：createWorld / normalizeState 初始化与补默认 rebirthOpening', () => {
+  assert.equal(makeState().rebirthOpening, '');
+  assert.equal(e.normalizeState({ turn: 2 }).rebirthOpening, '');
+  const kept = e.normalizeState({ turn: 2, rebirthOpening: '旧开场' });
+  assert.equal(kept.rebirthOpening, '旧开场'); // 合法值保留
+});
+
+test('新一世开场：applyRebirthOpening 写入该世第一条叙事，recent 截 300 字、最多 6 条、纯函数', () => {
+  const s = makeState();
+  s.turn = 7;
+  s.life = 2;
+  s.recent = [{ turn: 6, action: '旧', narration: '上一世末尾' }];
+  const before = JSON.stringify(s);
+  const text = '距上一世已过三年，世界因你改了规矩，有人隐约记得你。'.repeat(20);
+  const ns = e.applyRebirthOpening(s, text);
+  assert.equal(ns.rebirthOpening, text);
+  assert.equal(ns.recent.length, 2);
+  assert.equal(ns.recent[1].turn, 7);
+  assert.equal(ns.recent[1].action, '');
+  assert.equal(ns.recent[1].rebirthOpening, true);
+  assert.ok(ns.recent[1].narration.length <= 300, 'recent 里截 300 字');
+  assert.equal(JSON.stringify(s), before, '纯函数，不改入参');
+
+  // 空开场不动状态
+  assert.deepEqual(e.applyRebirthOpening(s, ''), s);
+
+  // recent 已有 6 条时，开场成为最新一条，仍只保留 6 条
+  const full = makeState();
+  full.recent = Array.from({ length: 6 }, (_, i) => ({ turn: i + 1, action: 'a', narration: 'n' }));
+  const capped = e.applyRebirthOpening(full, '开场内容');
+  assert.equal(capped.recent.length, 6);
+  assert.equal(capped.recent[5].rebirthOpening, true);
+});
+
 // ---------- 事实账本（new_facts / facts） ----------
 
 test('事实账本：createWorld 初始化 facts=[]，老存档补默认', () => {
@@ -1391,6 +1472,39 @@ test('越界升级：overstep:true 累计 oversteps，false / 缺省不变', () 
   assert.equal(s.oversteps, 2);
   // 老存档 / 缺字段时按 0 起算
   assert.equal(e.normalizeState({ turn: 2 }).oversteps, 0);
+});
+
+// ---------- 老存档：voice 语言指纹补默认 ----------
+
+test('老存档：normalizeState 给缺 voice 的 NPC 补彼此不同且 ≤20 字的默认口吻（幂等、不改入参）', () => {
+  const old = {
+    turn: 4,
+    bible: { npcs: [
+      { name: '甲', role: '', desc: '' },
+      { name: '乙', role: '', desc: '' },
+      { name: '丙', role: '', desc: '', voice: '只报数目，不多说' },
+    ] },
+    character: { alive: true, attrs: { 体魄: 6 } },
+  };
+  const before = JSON.stringify(old);
+  const norm = e.normalizeState(old);
+  const voices = norm.bible.npcs.map((n) => n.voice);
+  assert.ok(voices.every((v) => typeof v === 'string' && v.length > 0 && v.length <= 20));
+  assert.equal(new Set(voices).size, voices.length, '补出的 voice 必须彼此不同');
+  assert.equal(norm.bible.npcs[2].voice, '只报数目，不多说', '已有 voice 原样保留');
+  assert.equal(JSON.stringify(old), before, '纯函数，不改入参');
+  assert.deepEqual(e.normalizeState(norm).bible.npcs.map((n) => n.voice), voices, '幂等');
+
+  // NPC 多于默认口吻数量时仍彼此不同，且都 ≤20 字
+  const many = {
+    turn: 1,
+    bible: { npcs: Array.from({ length: 9 }, (_, i) => ({ name: 'N' + i })) },
+    character: { alive: true, attrs: {} },
+  };
+  const manyVoices = e.normalizeState(many).bible.npcs.map((n) => n.voice);
+  assert.equal(new Set(manyVoices).size, manyVoices.length);
+  assert.ok(manyVoices.every((v) => v.length <= 20));
+  assert.ok(e.DEFAULT_VOICES.every((v) => v.length <= 20));
 });
 
 // ---------- 开局事实（bible.start.facts） ----------

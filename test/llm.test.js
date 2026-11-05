@@ -127,6 +127,34 @@ test('mock 模式不发起网络请求，parseExtraBody 仍可用', async (t) =>
   assert.deepEqual(llm.parseExtraBody('{"a":1}'), { a: 1 });
 });
 
+test('mock 数据覆盖新字段：mockWorld 每个 npc 带 ≤20 字且互不相同的 voice', async (t) => {
+  const cfg = baseCfg({ LLM_MOCK: true });
+  const client = llm.createClient(cfg, tmpDir(t));
+  const w = await client.complete({
+    purpose: 'world', model: 'm', messages: [], mock: { seed: '雾港' },
+  });
+  const npcs = JSON.parse(w.content).bible.npcs;
+  assert.ok(Array.isArray(npcs) && npcs.length >= 2);
+  const voices = npcs.map((n) => n.voice);
+  assert.ok(voices.every((v) => typeof v === 'string' && v.length > 0 && v.length <= 20),
+    'voice 应为 ≤20 字非空字符串');
+  assert.equal(new Set(voices).size, voices.length, 'voice 必须彼此不同');
+});
+
+test('mock 数据覆盖新字段：rebirth 目的返回 150~300 字「新一世开场」', async (t) => {
+  const cfg = baseCfg({ LLM_MOCK: true });
+  const client = llm.createClient(cfg, tmpDir(t));
+  const r = await client.complete({
+    purpose: llm.PURPOSES.REBIRTH, model: 'm', messages: [], mock: { life: 3, name: '三世旅人' },
+  });
+  const out = JSON.parse(r.content);
+  assert.equal(typeof out.opening, 'string');
+  assert.ok(out.opening.length >= 150 && out.opening.length <= 300,
+    `开场应在 150~300 字，实际 ${out.opening.length}`);
+  assert.ok(out.opening.includes('三世旅人'));
+  assert.equal(llm.PURPOSES.REBIRTH, 'rebirth');
+});
+
 test('mock 数据覆盖新字段：mockWorld 带 start.facts、mockTurn 带 overstep 布尔', async (t) => {
   const cfg = baseCfg({ LLM_MOCK: true });
   const client = llm.createClient(cfg, tmpDir(t));
