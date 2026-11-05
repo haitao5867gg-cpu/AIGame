@@ -27,7 +27,7 @@ start.cmd              Windows 启动脚本：node server.js
 ```
 
 ## 2. 配置（.env）
-`LLM_BASE`（如 https://aigw.telecomjs.com/v1）、`LLM_API_KEY`、`LLM_MODEL`（回合用，默认 deepseek-v4.1-flash）、`LLM_MODEL_WORLD`（建世界/写编年史用，默认 deepseek-v4-pro-0813）、`LLM_MOCK`（=1 时不联网，返回确定性假数据，测试用）、`LLM_TIMEOUT_MS`（默认 90000）、`LLM_DAILY_TOKEN_LIMIT`（默认 2000000，超过当天拒绝调用并返回明确错误）、`PORT`（默认 8787）、`HOST`（默认 0.0.0.0）、`DATA_DIR`（默认 ./data）。
+`LLM_BASE`（如 https://aigw.telecomjs.com/v1）、`LLM_API_KEY`、`LLM_MODEL`（回合用，默认 deepseek-v4.1-flash）、`LLM_MODEL_WORLD`（建世界/写编年史用，默认与 LLM_MODEL 相同）、`LLM_MOCK`（=1 时不联网，返回确定性假数据，测试用）、`LLM_TIMEOUT_MS`（默认 90000）、`LLM_DAILY_TOKEN_LIMIT`（默认 2000000，超过当天拒绝调用并返回明确错误）、`PORT`（默认 8787）、`HOST`（默认 0.0.0.0）、`DATA_DIR`（默认 ./data）。
 
 ## 3. 数据模型
 `data/worlds/<worldId>/state.json`（每回合原子覆盖写）：

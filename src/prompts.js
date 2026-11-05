@@ -31,6 +31,11 @@ const TURN_OUTPUT_FORMAT = [
   ' "event":{"title":"事件标题","desc":"事件描述"},',
   ' "event_check":{"attr":"体魄","response_quality":2}}',
   '说明：',
+  '- persona_tags 只能从这 6 个词里取：冒险、审慎、共情、权谋、坚韧、秩序。',
+  '  绝不要自造词（例如「谨慎」「水路」「冷静」等都不是合法值，会被引擎拒绝），只填本回合真正体现的维度。',
+  '- 角色当前拥有的物品见【当前状态】的「物品」一行。',
+  '  玩家若声称使用自己没有的物品，narration 里必须写出「你摸遍全身也没有」之类的失败，',
+  '  不得凭空让它出现，也不得把它写进 items_add；items_add 只能填本回合真实获得的新物品。',
   '- event 仅在「本回合需要开启事件」时出现，否则不要输出该字段。',
   '- event_check 仅在「本回合需要结算事件」时出现；response_quality 为 0~3 整数，据实评价玩家应对；',
   '  attr 只能是 体魄/心智/魅力/气运/声望/资源 之一。',
@@ -40,9 +45,10 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc}],',
-  ' "start":{"place","situation"},"eventThemes":[str x6]},',
+  ' "start":{"place","situation","items":[str x2~3]},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
+  'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
 ].join('\n');
 
@@ -127,6 +133,9 @@ function buildTurnMessages(state, plan, action) {
 
   const user = [
     section('当前状态', characterText(state)),
+    section('物品与性格约束',
+      '上面「物品」一行是角色当前拥有的全部物品。玩家声称使用其中没有的物品时，叙事要写出「你摸遍全身也没有」之类的失败，' +
+      '不可凭空给、也不可写进 items_add。persona_tags 只能取 冒险/审慎/共情/权谋/坚韧/秩序 这 6 个词，不要自造。'),
     section('最近两章编年史', chronicleText(state)),
     section('最近六回合', recentText(state)),
     section('玩家本回合的行动', String(action == null ? '' : action) || '（未填写，自由行动）'),

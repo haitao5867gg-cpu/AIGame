@@ -163,6 +163,67 @@ test('错误路径：世界不存在返回 404；无效 seed 返回 400；删除
   );
 });
 
+test('编年史窗口：包含当前回合（第 20 回合压 1~20 共 20 条）', () => {
+  const events = [];
+  for (let t = 1; t <= 19; t++) events.push({ turn: t, action: `a${t}`, narration: `n${t}` });
+  const current = { turn: 20, action: 'a20', narration: 'n20' };
+  const win = game.chapterEventWindow(events, 20, current);
+  assert.equal(win.length, 20, '应包含 20 条');
+  assert.equal(win[0].turn, 1);
+  assert.equal(win[19].turn, 20, '最后一条必须是当前回合');
+  assert.equal(win[19].narration, 'n20');
+
+  // 第 40 回合窗口为 21~40，且已存在当前回合时不重复追加。
+  const many = [];
+  for (let t = 1; t <= 40; t++) many.push({ turn: t });
+  const win2 = game.chapterEventWindow(many, 40, { turn: 40 });
+  assert.equal(win2.length, 20);
+  assert.equal(win2[0].turn, 21);
+  assert.equal(win2[19].turn, 40);
+});
+
+test('log 公开记录：只含公开字段，绝不含 apex / raw / proposal / rejected / usage', () => {
+  const raw = {
+    turn: 3, life: 1, action: '探查', narration: '你走进雾里，钟声更近了。',
+    raw: '{"内部":1}', proposal: { narration: 'x' },
+    applied: {
+      state_diff: { 心智: 1, 体魄: -2 },
+      items_add: ['一枚旧币'], items_remove: ['破布'], npc_attitude: { 守夜人: 1 },
+      persona: {}, persona_tags: ['冒险'], suggestions: [], narration: '',
+    },
+    rejected: ['内部拒绝原因'], usage: { prompt_tokens: 10 }, ts: 123,
+    apex: { achieved: true, title: '隐秘王冠', hint: '北方的钟声' },
+    event: { theme: '天灾', title: '地动', desc: '大地颤抖', startedTurn: 3 },
+    settlement: null, death: null,
+  };
+  const pub = game.toPublicLogRecord(raw);
+  for (const hidden of ['apex', 'raw', 'proposal', 'rejected', 'usage']) {
+    assert.equal(hidden in pub, false, `公开记录不应含 ${hidden}`);
+  }
+  assert.equal(JSON.stringify(pub).includes('隐秘王冠'), false);
+  assert.equal(pub.turn, 3);
+  assert.equal(pub.action, '探查');
+  assert.equal(pub.event.title, '地动');
+  assert.equal('startedTurn' in pub.event, true);
+  assert.ok(pub.badges.some((b) => b.type === 'attr' && b.name === '心智' && b.delta === 1));
+  assert.ok(pub.badges.some((b) => b.type === 'attr' && b.name === '体魄' && b.delta === -2));
+  assert.ok(pub.badges.some((b) => b.type === 'item-add' && b.name === '一枚旧币'));
+  assert.ok(pub.badges.some((b) => b.type === 'item-remove' && b.name === '破布'));
+  assert.ok(pub.badges.some((b) => b.type === 'npc' && b.name === '守夜人'));
+
+  // settlement / death 也只带公开字段，不夹带内部对象
+  const pub2 = game.toPublicLogRecord({
+    turn: 9, life: 2, action: '迎战', narration: '你迎了上去。',
+    settlement: { theme: 't', title: '事件', tier: '蜕变', attr: '体魄', score: 30, effects: { 体魄: 3 }, rand: 5, response_quality: 3 },
+    death: { reason: '事件殒命', life: 2, inheritedReputation: 2 },
+    apex: { achieved: true },
+  });
+  assert.equal('apex' in pub2, false);
+  assert.equal(pub2.settlement.tier, '蜕变');
+  assert.equal('rand' in pub2.settlement, false);
+  assert.equal(pub2.death.reason, '事件殒命');
+});
+
 function WORLD_ID_OK(id) {
   return /^[A-Za-z0-9_-]+$/.test(id);
 }

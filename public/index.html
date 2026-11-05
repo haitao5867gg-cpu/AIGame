@@ -1,1 +1,861 @@
-<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>无限世界</title></head><body><p>前端待实现</p></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>无限世界</title>
+<style>
+:root{
+  --bg:#14130f; --bg-2:#1b1a14; --panel:#201e17; --ink:#e8e2d0;
+  --muted:#9a927c; --line:#3a352a; --accent:#c0392b; --accent-2:#e0543f;
+  --up:#7cc07f; --down:#e0725f;
+  --serif:"Songti SC","Noto Serif SC","Source Han Serif SC","STSong",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--serif);font-size:16px;line-height:1.75;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+button,input,textarea{font-family:var(--sans)}
+button{cursor:pointer}
+#app{max-width:1060px;margin:0 auto;padding:14px 14px 40px}
+.view[hidden]{display:none!important}
+[hidden]{display:none!important}
+
+/* ---- 通用控件 ---- */
+.btn{font-family:var(--sans);border:1px solid var(--line);background:var(--bg-2);color:var(--ink);
+  border-radius:8px;padding:9px 16px;font-size:14px;transition:.15s;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--accent-2)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
+.btn.tiny{padding:4px 10px;font-size:12px}
+.btn.danger{border-color:rgba(192,57,43,.55);color:#e39a90}
+.link{background:none;border:none;color:var(--muted);font-size:14px;font-family:var(--sans);padding:4px 0}
+.link:hover{color:var(--accent-2)}
+textarea,input{width:100%;background:var(--bg-2);color:var(--ink);border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px;font-family:var(--sans);font-size:15px;outline:none;resize:vertical}
+textarea:focus,input:focus{border-color:var(--accent)}
+label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);margin-top:10px}
+.bar{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.bar h2{flex:1;margin:0;font-size:20px}
+
+/* ---- 首页 ---- */
+.home-head{text-align:center;padding:38px 0 16px}
+.home-head h1{font-size:40px;letter-spacing:8px;margin:0;color:var(--ink);font-weight:600}
+.home-head .sub{color:var(--muted);font-family:var(--sans);font-size:14px;margin-top:10px;letter-spacing:1px}
+.home-actions{text-align:center;margin:12px 0 28px}
+.world-list{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+.world-card{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+  cursor:pointer;transition:.15s}
+.world-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.world-card h3{margin:0 0 6px;font-size:18px;font-weight:600}
+.world-card .meta{font-family:var(--sans);font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.world-card .card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+.world-card .go{font-family:var(--sans);font-size:12px;color:var(--accent-2)}
+.empty{color:var(--muted);text-align:center;font-family:var(--sans);padding:30px 0}
+
+/* ---- 新世界 ---- */
+.form{max-width:660px;margin:0 auto;display:flex;flex-direction:column;gap:6px}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.preset{font-family:var(--sans);font-size:12px;color:var(--muted);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:14px;padding:5px 11px}
+.preset:hover{border-color:var(--accent-2);color:var(--ink)}
+.alloc-head{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.alloc-head label{flex:1;min-width:150px;margin:0}
+#points-left{font-family:var(--sans);font-size:13px;color:var(--muted)}
+.alloc{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:4px}
+.alloc-row{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:1px solid var(--line);
+  border-radius:8px;padding:6px 10px;font-family:var(--sans);font-size:14px}
+.alloc-name{flex:1}
+.alloc-val{min-width:20px;text-align:center;color:var(--accent-2);font-weight:600}
+.hint{font-family:var(--sans);font-size:12px;color:var(--muted)}
+.creating{font-family:var(--sans);font-size:14px;color:var(--accent-2);margin-top:12px;letter-spacing:1px}
+.dots{animation:blink 1.1s infinite}
+@keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+
+/* ---- 游戏页 ---- */
+.game-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);
+  padding-bottom:10px;margin-bottom:12px}
+.game-head-title{flex:1;min-width:120px;font-size:20px;font-weight:600}
+.game-head-meta{display:flex;gap:12px;font-family:var(--sans);font-size:13px;color:var(--muted)}
+#btn-panel{display:none}
+.event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);
+  border:1px solid rgba(192,57,43,.5);border-left:4px solid var(--accent);border-radius:6px;
+  padding:10px 12px;margin-bottom:12px;color:#f0cdc6}
+.event-banner-icon{font-size:18px;line-height:1.4}
+.event-banner-title{font-size:16px;font-weight:600}
+.event-banner-desc{font-size:13px;font-family:var(--sans);opacity:.85;margin-top:2px}
+.game-body{display:block}
+@media(min-width:860px){
+  .game-body{display:flex;gap:20px;align-items:flex-start}
+  .stage{flex:1;min-width:0}
+  .panel{width:300px;flex:0 0 300px;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto}
+  .top-attrs{display:none}
+}
+.stage{display:flex;flex-direction:column}
+.top-attrs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.top-chip{font-family:var(--sans);font-size:11px;color:var(--muted);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:10px;padding:2px 8px}
+.stream{flex:1;overflow-y:auto;max-height:60vh;padding:4px 2px 16px}
+@media(max-width:859px){.stream{max-height:50vh}}
+.narration-block{margin:14px 0}
+.narration{font-size:17px;line-height:1.95;white-space:pre-wrap;margin:0}
+.opening{font-size:17px;line-height:1.95;white-space:pre-wrap;color:var(--ink);
+  border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:8px 0 18px}
+.action-line{font-family:var(--sans);font-size:13px;color:var(--muted);margin:16px 0 4px;white-space:pre-wrap}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.badge{font-family:var(--sans);font-size:12px;padding:2px 9px;border-radius:12px;border:1px solid}
+.badge.up{color:#a9d6ad;border-color:rgba(124,192,127,.45);background:rgba(124,192,127,.1)}
+.badge.down{color:#e8a99d;border-color:rgba(224,114,95,.45);background:rgba(224,114,95,.12)}
+.event-card,.settlement-card{border:1px solid rgba(192,57,43,.4);background:rgba(192,57,43,.07);
+  border-radius:8px;padding:10px 12px;margin:12px 0}
+.event-card-label{font-family:var(--sans);font-size:12px;color:var(--accent-2);letter-spacing:1px}
+.event-card-title,.settlement-title{font-size:16px;font-weight:600;margin:3px 0}
+.event-card-desc{font-family:var(--sans);font-size:13px;color:var(--muted)}
+.settlement-card{border-color:rgba(224,114,95,.6);background:rgba(224,114,95,.1)}
+.settlement-tier{font-family:var(--sans);font-size:13px;color:var(--accent-2);letter-spacing:2px}
+.settlement-effects{font-family:var(--sans);font-size:12px;color:var(--muted);margin-top:4px}
+.divider{text-align:center;font-family:var(--sans);font-size:12px;color:var(--muted);
+  letter-spacing:3px;margin:22px 0;border-top:1px dashed var(--line);padding-top:12px}
+
+/* ---- 输入区 ---- */
+.composer{border-top:1px solid var(--line);padding-top:10px;margin-top:8px}
+.suggestions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.suggestion{font-family:var(--sans);font-size:12px;color:var(--muted);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:14px;padding:5px 12px}
+.suggestion:hover{border-color:var(--accent-2);color:var(--ink)}
+.composer-row{display:flex;gap:8px;align-items:flex-end}
+#action-input{flex:1;min-height:54px}
+.pending{font-family:var(--sans);font-size:13px;color:var(--muted);margin-top:8px}
+
+/* ---- 侧面板 / 抽屉 ---- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.panel-title{margin:0 0 10px;font-size:16px}
+.panel-section{margin-bottom:14px}
+.panel-h{font-family:var(--sans);font-size:13px;color:var(--muted);margin:0 0 6px;
+  list-style:none;cursor:pointer}
+.panel-h::-webkit-details-marker{display:none}
+.attr-row,.persona-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-family:var(--sans);font-size:12px}
+.attr-name,.persona-name{width:34px;color:var(--muted)}
+.attr-bar,.persona-bar{flex:1;height:6px;background:var(--bg);border-radius:3px;overflow:hidden}
+.attr-fill{height:100%;background:linear-gradient(90deg,#8a6d3b,var(--accent-2))}
+.persona-fill{height:100%;background:var(--accent-2)}
+.attr-val{width:22px;text-align:right}
+.item-chip{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:12px;padding:3px 9px;display:inline-block;margin:2px 4px 2px 0}
+.muted{font-family:var(--sans);font-size:12px;color:var(--muted)}
+.npc-row{display:flex;justify-content:space-between;font-family:var(--sans);font-size:12px;margin:5px 0}
+.npc-attitude{color:var(--accent-2);letter-spacing:1px}
+.chronicle-item{font-size:13px;color:var(--muted);margin:6px 0;border-left:2px solid var(--line);padding-left:8px}
+.world-setting{font-size:13px;color:var(--muted);margin:4px 0;line-height:1.6}
+@media(max-width:859px){
+  #btn-panel{display:inline-block}
+  .panel{position:fixed;z-index:40;top:0;right:0;width:86%;max-width:340px;height:100%;
+    border-radius:0;transform:translateX(105%);transition:transform .25s ease;overflow-y:auto;
+    box-shadow:-8px 0 30px rgba(0,0,0,.55)}
+  .panel[data-open="true"]{transform:none}
+}
+
+/* ---- 死亡遮罩 / toast ---- */
+.death-mask{position:fixed;inset:0;z-index:60;background:rgba(9,8,6,.94);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.death-card{max-width:420px;width:100%;text-align:center}
+.death-kicker{font-size:30px;letter-spacing:8px;color:var(--accent-2);margin-bottom:16px}
+.death-summary{color:var(--muted);font-size:15px;line-height:1.9}
+.rebirth-form{display:flex;flex-direction:column;gap:8px;margin-top:22px;text-align:left}
+.rebirth-form label{margin:0}
+.toast{position:fixed;z-index:80;top:14px;left:50%;transform:translateX(-50%);max-width:90%;
+  background:var(--accent);color:#fff;font-family:var(--sans);font-size:14px;padding:10px 16px;
+  border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 首页 -->
+  <section id="view-home" class="view">
+    <header class="home-head">
+      <h1>无限世界</h1>
+      <p class="sub">一句话，开一个永不结束的世界</p>
+    </header>
+    <div class="home-actions"><button id="btn-new" class="btn primary">开新世界</button></div>
+    <div id="world-list" class="world-list"></div>
+    <p id="world-empty" class="empty" hidden>还没有世界，先开一个吧。</p>
+  </section>
+
+  <!-- 新世界 -->
+  <section id="view-new" class="view" hidden>
+    <div class="bar"><button class="link" data-nav="#/">‹ 返回</button><h2>开新世界</h2></div>
+    <div class="form">
+      <label for="seed">世界观（一句话）</label>
+      <textarea id="seed" rows="3" placeholder="例如：蒸汽朋克长安，机关兽与占星术并存，皇城地下埋着永不停歇的锅炉……"></textarea>
+      <div id="presets" class="presets"></div>
+
+      <label for="char-name">角色名</label>
+      <input id="char-name" type="text" placeholder="无名旅人">
+      <label for="char-appearance">形象描述</label>
+      <input id="char-appearance" type="text" placeholder="一袭布衣">
+
+      <div class="alloc-head">
+        <label>属性分配（基础 5，额外 6 点，每项最多 +3）</label>
+        <span id="points-left">剩余 0 点</span>
+        <button id="btn-random" class="btn tiny">随机</button>
+      </div>
+      <div id="alloc" class="alloc"></div>
+      <p class="hint">不分配也可直接创世，默认把 6 点平均加到 6 项属性上。</p>
+
+      <button id="btn-create" class="btn primary" style="margin-top:14px">创世</button>
+      <div id="creating" class="creating" hidden>世界正在成形<span class="dots">…</span></div>
+    </div>
+  </section>
+
+  <!-- 游戏页 -->
+  <section id="view-game" class="view" hidden>
+    <header class="game-head">
+      <button class="link" data-nav="#/">‹ 世界列表</button>
+      <div id="g-title" class="game-head-title">无限世界</div>
+      <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
+      <button id="btn-panel" class="btn tiny">角色面板</button>
+    </header>
+    <div id="event-banner" class="event-banner" hidden></div>
+    <div class="game-body">
+      <main class="stage">
+        <div id="top-attrs" class="top-attrs"></div>
+        <div id="stream" class="stream"></div>
+        <div class="composer">
+          <div id="suggestions" class="suggestions"></div>
+          <div class="composer-row">
+            <textarea id="action-input" rows="2" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
+            <button id="btn-send" class="btn primary">发送</button>
+          </div>
+          <div id="pending" class="pending" hidden>世界在回应…</div>
+        </div>
+      </main>
+      <aside id="panel" class="panel" data-open="false"></aside>
+    </div>
+    <div id="death-mask" class="death-mask" hidden></div>
+  </section>
+
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var ATTRS = ['体魄', '心智', '魅力', '气运', '声望', '资源'];
+  var PERSONA = ['冒险', '审慎', '共情', '权谋', '坚韧', '秩序'];
+  var PRESETS = [
+    '蒸汽朋克长安：机关兽与占星术并存，皇城地下埋着永不停歇的锅炉',
+    '末日尸潮下的江南水乡：乌篷船穿行在被淹没的古镇，尸潮随潮水涨落',
+    '修仙宗门外门杂役：灵田、丹房与藏经阁，一步踏错便是百年苦役',
+    '深海殖民站：万米海沟下的玻璃穹顶，氧气与秘密都要省着用',
+    '民国上海滩谍影：百乐门的舞曲盖过电报声，人人都有三个名字',
+    '被诅咒的中世纪王国：每当钟敲十三下，就有一个人忘记自己的名字',
+  ];
+  var DEFAULT_SUGGESTIONS = ['环顾四周', '向人打听消息', '查看随身物品'];
+
+  function $(id) { return document.getElementById(id); }
+
+  // 只用 createElement + textContent 构建 DOM，绝不把用户内容拼进 innerHTML。
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = String(text);
+    return n;
+  }
+
+  var currentWorldId = null;
+  var currentState = null;
+  var busy = false;
+  var typer = null;
+  var toastTimer = null;
+  var alloc = {};
+
+  // ---- 网络 ----
+  async function api(pathname, opts) {
+    var res = await fetch(pathname, Object.assign(
+      { headers: { 'Content-Type': 'application/json' } }, opts || {},
+    ));
+    var text = await res.text();
+    var data = null;
+    try { data = JSON.parse(text); } catch (_) { data = text; }
+    if (!res.ok) {
+      var err = new Error((data && data.error) || ('请求失败（' + res.status + '）'));
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 4200);
+  }
+
+  // ---- 路由 ----
+  function hideAllViews() {
+    ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
+    $('panel').dataset.open = 'false';
+    if (typer) typer.skip();
+  }
+
+  function route() {
+    var h = location.hash || '#/';
+    hideAllViews();
+    if (h === '#/new') showNew();
+    else if (h.indexOf('#/w/') === 0) showGame(decodeURIComponent(h.slice(4)));
+    else showHome();
+  }
+
+  // ---- 首页 ----
+  async function showHome() {
+    $('view-home').hidden = false;
+    var list = await api('/api/worlds').catch(function (err) { toast(err.message); return []; });
+    renderWorldList(list);
+  }
+
+  function renderWorldList(list) {
+    var box = $('world-list');
+    box.textContent = '';
+    $('world-empty').hidden = list.length > 0;
+    list.forEach(function (w) {
+      var card = el('div', 'world-card');
+      card.appendChild(el('h3', '', w.title || '未命名世界'));
+      var meta = el('div', 'meta');
+      meta.appendChild(el('span', '', '第 ' + w.life + ' 世'));
+      meta.appendChild(el('span', '', '第 ' + w.turn + ' 回合'));
+      meta.appendChild(el('span', '', w.alive ? '在世' : '已终'));
+      meta.appendChild(el('span', '', w.updatedAt ? new Date(w.updatedAt).toLocaleString() : ''));
+      card.appendChild(meta);
+
+      var footer = el('div', 'card-footer');
+      footer.appendChild(el('span', 'go', '进入世界 ›'));
+      var del = el('button', 'btn danger tiny', '删除');
+      var armed = false;
+      del.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!armed) {
+          armed = true;
+          del.textContent = '确认删除？';
+          setTimeout(function () { armed = false; del.textContent = '删除'; }, 4000);
+          return;
+        }
+        api('/api/worlds/' + encodeURIComponent(w.id), { method: 'DELETE' })
+          .then(function () { showHome(); })
+          .catch(function (err) { toast(err.message); });
+      });
+      footer.appendChild(del);
+      card.appendChild(footer);
+
+      card.addEventListener('click', function () { location.hash = '#/w/' + w.id; });
+      box.appendChild(card);
+    });
+  }
+
+  // ---- 新世界 ----
+  function showNew() {
+    $('view-new').hidden = false;
+    if (!$('presets').childElementCount) renderPresets();
+    if (!$('alloc').childElementCount) initAlloc();
+    updatePoints();
+  }
+
+  function renderPresets() {
+    var box = $('presets');
+    PRESETS.forEach(function (p) {
+      var b = el('button', 'preset', p);
+      b.addEventListener('click', function () { $('seed').value = p; $('seed').focus(); });
+      box.appendChild(b);
+    });
+  }
+
+  function remaining() {
+    return 6 - ATTRS.reduce(function (s, a) { return s + (alloc[a] || 0); }, 0);
+  }
+
+  function initAlloc() {
+    var box = $('alloc');
+    box.textContent = '';
+    ATTRS.forEach(function (a) {
+      alloc[a] = 1; // 默认平均分配，剩余 0 点
+      var row = el('div', 'alloc-row');
+      row.appendChild(el('span', 'alloc-name', a));
+      var minus = el('button', 'btn tiny', '−');
+      var val = el('span', 'alloc-val', '1');
+      var plus = el('button', 'btn tiny', '+');
+      minus.addEventListener('click', function () { changeAlloc(a, -1, val); });
+      plus.addEventListener('click', function () { changeAlloc(a, 1, val); });
+      row.appendChild(minus);
+      row.appendChild(val);
+      row.appendChild(plus);
+      box.appendChild(row);
+    });
+  }
+
+  function changeAlloc(a, d, valEl) {
+    var next = (alloc[a] || 0) + d;
+    if (next < 0 || next > 3) return;
+    if (d > 0 && remaining() <= 0) return;
+    alloc[a] = next;
+    valEl.textContent = String(next);
+    updatePoints();
+  }
+
+  function randomAlloc() {
+    ATTRS.forEach(function (a) { alloc[a] = 0; });
+    var left = 6;
+    while (left > 0) {
+      var candidates = ATTRS.filter(function (a) { return alloc[a] < 3; });
+      var a = candidates[Math.floor(Math.random() * candidates.length)];
+      alloc[a] += 1;
+      left -= 1;
+    }
+    var rows = $('alloc').children;
+    ATTRS.forEach(function (a, i) { rows[i].querySelector('.alloc-val').textContent = String(alloc[a]); });
+    updatePoints();
+  }
+
+  function updatePoints() {
+    var r = remaining();
+    $('points-left').textContent = '剩余 ' + r + ' 点';
+    $('points-left').style.color = r === 0 ? 'var(--muted)' : 'var(--accent-2)';
+    $('btn-create').disabled = r !== 0;
+  }
+
+  function setCreating(b) {
+    $('creating').hidden = !b;
+    $('btn-create').disabled = b;
+  }
+
+  async function createWorld() {
+    var seed = $('seed').value.trim();
+    if (!seed) { toast('请先写一句世界观'); return; }
+    if (remaining() !== 0) { toast('请分配完 6 点属性'); return; }
+    var name = $('char-name').value.trim() || '无名旅人';
+    var appearance = $('char-appearance').value.trim() || '一袭布衣';
+    setCreating(true);
+    try {
+      var w = await api('/api/worlds', {
+        method: 'POST',
+        body: JSON.stringify({ seed: seed, name: name, appearance: appearance, alloc: alloc }),
+      });
+      location.hash = '#/w/' + w.id;
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  // ---- 游戏页 ----
+  function clearStream() {
+    if (typer) typer.skip();
+    $('stream').textContent = '';
+  }
+
+  function scrollBottom() {
+    var s = $('stream');
+    s.scrollTop = s.scrollHeight;
+  }
+
+  async function showGame(id) {
+    currentWorldId = id;
+    $('view-game').hidden = false;
+    clearStream();
+    try {
+      var results = await Promise.all([
+        api('/api/worlds/' + encodeURIComponent(id)),
+        api('/api/worlds/' + encodeURIComponent(id) + '/log?limit=50'),
+      ]);
+      var state = results[0];
+      var log = results[1];
+      currentState = state;
+      renderHeader(state);
+      var sit = state.bible && state.bible.start && state.bible.start.situation;
+      if (sit) appendOpening(sit);
+      (log || []).forEach(appendLogRecord);
+      renderPanel(state);
+      renderEventBanner(state.activeEvent);
+      renderSuggestions(null);
+      if (state.awaitingRebirth || !state.character.alive) showDeath(state, null);
+      else hideDeath();
+      scrollBottom();
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  function renderHeader(s) {
+    $('g-title').textContent = (s.bible && s.bible.title) || '无限世界';
+    $('g-life').textContent = '第 ' + s.life + ' 世';
+    $('g-turn').textContent = '第 ' + s.turn + ' 回合';
+  }
+
+  function appendOpening(text) {
+    $('stream').appendChild(el('p', 'opening', text));
+  }
+
+  function appendActionLine(action) {
+    $('stream').appendChild(el('p', 'action-line', '› 你：' + action));
+    scrollBottom();
+  }
+
+  function appendDivider(text) {
+    $('stream').appendChild(el('div', 'divider', text));
+  }
+
+  // 客户端徽章：与后端 /log 的 badges 同一种结构。
+  function badgesFromApplied(applied) {
+    var a = applied || {};
+    var out = [];
+    var diff = a.state_diff || {};
+    Object.keys(diff).forEach(function (k) {
+      var d = Number(diff[k]);
+      if (d) out.push({ type: 'attr', name: k, delta: d });
+    });
+    (a.items_add || []).forEach(function (n) { out.push({ type: 'item-add', name: n }); });
+    (a.items_remove || []).forEach(function (n) { out.push({ type: 'item-remove', name: n }); });
+    var npc = a.npc_attitude || {};
+    Object.keys(npc).forEach(function (n) {
+      var d = Number(npc[n]);
+      if (d) out.push({ type: 'npc', name: n, delta: d });
+    });
+    return out;
+  }
+
+  function makeBadge(b) {
+    var s = el('span', 'badge');
+    if (b.type === 'attr') {
+      var up = b.delta > 0;
+      s.className = 'badge ' + (up ? 'up' : 'down');
+      s.textContent = b.name + ' ' + (up ? '+' + b.delta : '−' + Math.abs(b.delta));
+    } else if (b.type === 'item-add') {
+      s.className = 'badge up';
+      s.textContent = '获得 · ' + b.name;
+    } else if (b.type === 'item-remove') {
+      s.className = 'badge down';
+      s.textContent = '失去 · ' + b.name;
+    } else if (b.type === 'npc') {
+      s.className = 'badge ' + (b.delta > 0 ? 'up' : 'down');
+      s.textContent = b.name + ' 态度' + (b.delta > 0 ? '↑' : '↓');
+    } else {
+      s.textContent = b.name || '';
+    }
+    return s;
+  }
+
+  function typewrite(p, text) {
+    if (typer) typer.skip();
+    var i = 0;
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      p.textContent = text;
+      typer = null;
+      scrollBottom();
+    }
+    var timer = setInterval(function () {
+      i = Math.min(text.length, i + 30); // 约 30 字/帧
+      p.textContent = text.slice(0, i);
+      scrollBottom();
+      if (i >= text.length) { clearInterval(timer); finish(); }
+    }, 60);
+    typer = { skip: function () { clearInterval(timer); finish(); } };
+  }
+
+  function appendNarration(text, badges, instant) {
+    var wrap = el('div', 'narration-block');
+    var p = el('p', 'narration');
+    wrap.appendChild(p);
+    if (badges && badges.length) {
+      var bd = el('div', 'badges');
+      badges.forEach(function (b) { bd.appendChild(makeBadge(b)); });
+      wrap.appendChild(bd);
+    }
+    $('stream').appendChild(wrap);
+    if (instant) { p.textContent = text; scrollBottom(); }
+    else typewrite(p, text);
+  }
+
+  function appendEventCard(ev) {
+    var c = el('div', 'event-card');
+    c.appendChild(el('div', 'event-card-label', '⚠ 世界性事件'));
+    c.appendChild(el('div', 'event-card-title', ev.title || ev.theme || '事件'));
+    if (ev.desc) c.appendChild(el('div', 'event-card-desc', ev.desc));
+    $('stream').appendChild(c);
+  }
+
+  function appendSettlementCard(st) {
+    var c = el('div', 'settlement-card');
+    c.appendChild(el('div', 'settlement-tier', '结算 · ' + (st.tier || '')));
+    c.appendChild(el('div', 'settlement-title', st.title || st.theme || ''));
+    var parts = [];
+    var effects = st.effects || {};
+    Object.keys(effects).forEach(function (k) {
+      var v = Number(effects[k]);
+      if (v) parts.push(k + (v > 0 ? ' +' + v : ' −' + Math.abs(v)));
+    });
+    if (parts.length) c.appendChild(el('div', 'settlement-effects', parts.join('　')));
+    $('stream').appendChild(c);
+  }
+
+  function appendLogRecord(rec) {
+    if (rec.action) appendActionLine(rec.action);
+    if (rec.event) appendEventCard(rec.event);
+    if (rec.narration) appendNarration(rec.narration, rec.badges || [], true);
+    if (rec.settlement) appendSettlementCard(rec.settlement);
+    if (rec.death) appendDivider('第 ' + rec.life + ' 世 · 终');
+  }
+
+  function renderEventBanner(ev) {
+    var b = $('event-banner');
+    b.textContent = '';
+    if (!ev) { b.hidden = true; return; }
+    b.hidden = false;
+    b.appendChild(el('span', 'event-banner-icon', '⚠'));
+    var body = el('div', 'event-banner-body');
+    body.appendChild(el('div', 'event-banner-title', ev.title || ev.theme || '事件'));
+    if (ev.desc) body.appendChild(el('div', 'event-banner-desc', ev.desc));
+    b.appendChild(body);
+  }
+
+  function renderSuggestions(list) {
+    var box = $('suggestions');
+    box.textContent = '';
+    var items = (list && list.length) ? list : DEFAULT_SUGGESTIONS;
+    items.slice(0, 3).forEach(function (text) {
+      var b = el('button', 'suggestion', text);
+      b.addEventListener('click', function () {
+        $('action-input').value = text;
+        $('action-input').focus();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function collapsible(title, children) {
+    var d = el('details', 'panel-section');
+    var sum = el('summary', 'panel-h', title);
+    d.appendChild(sum);
+    children.forEach(function (c) { d.appendChild(c); });
+    return d;
+  }
+
+  function renderTopAttrs(s) {
+    var box = $('top-attrs');
+    box.textContent = '';
+    var attrs = (s.character && s.character.attrs) || {};
+    ATTRS.forEach(function (a) { box.appendChild(el('span', 'top-chip', a + ' ' + (attrs[a] || 0))); });
+  }
+
+  function renderPanel(s) {
+    var panel = $('panel');
+    panel.textContent = '';
+    panel.appendChild(el('h3', 'panel-title', '角色面板'));
+
+    var attrs = (s.character && s.character.attrs) || {};
+    var attrSec = el('div', 'panel-section');
+    attrSec.appendChild(el('h4', 'panel-h', '属性'));
+    ATTRS.forEach(function (a) {
+      var v = Number(attrs[a]) || 0;
+      var row = el('div', 'attr-row');
+      row.appendChild(el('span', 'attr-name', a));
+      var bar = el('div', 'attr-bar');
+      var fill = el('div', 'attr-fill');
+      fill.style.width = Math.min(100, (v / 40) * 100) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el('span', 'attr-val', String(v)));
+      attrSec.appendChild(row);
+    });
+    panel.appendChild(attrSec);
+
+    var items = (s.character && s.character.items) || [];
+    var itemsSec = el('div', 'panel-section');
+    itemsSec.appendChild(el('h4', 'panel-h', '随身物品'));
+    if (items.length) items.forEach(function (it) { itemsSec.appendChild(el('span', 'item-chip', it)); });
+    else itemsSec.appendChild(el('span', 'muted', '（无）'));
+    panel.appendChild(itemsSec);
+
+    var npcSec = el('div', 'panel-section');
+    npcSec.appendChild(el('h4', 'panel-h', '认识的人'));
+    var npc = s.npcAttitude || {};
+    var names = Object.keys(npc);
+    if (names.length) {
+      names.forEach(function (name) {
+        var v = Math.max(-10, Math.min(10, Number(npc[name]) || 0));
+        var filled = Math.round(((v + 10) / 20) * 5);
+        var row = el('div', 'npc-row');
+        row.appendChild(el('span', '', name));
+        row.appendChild(el('span', 'npc-attitude', '♥'.repeat(filled) + '♡'.repeat(5 - filled)));
+        npcSec.appendChild(row);
+      });
+    } else npcSec.appendChild(el('span', 'muted', '（尚无）'));
+    panel.appendChild(npcSec);
+
+    var persona = s.persona || {};
+    var personaSec = el('div', 'panel-section');
+    personaSec.appendChild(el('h4', 'panel-h', '性格画像'));
+    PERSONA.forEach(function (d) {
+      var v = Math.max(0, Math.min(100, Number(persona[d]) || 0));
+      var row = el('div', 'persona-row');
+      row.appendChild(el('span', 'persona-name', d));
+      var bar = el('div', 'persona-bar');
+      var fill = el('div', 'persona-fill');
+      fill.style.width = v + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      personaSec.appendChild(row);
+    });
+    panel.appendChild(personaSec);
+
+    var chronicle = s.chronicle || [];
+    var chChildren = chronicle.length
+      ? chronicle.map(function (c) {
+          return el('div', 'chronicle-item',
+            '第' + c.chapter + '章（' + c.fromTurn + '-' + c.toTurn + '）：' + c.summary);
+        })
+      : [el('div', 'muted', '（尚无编年史）')];
+    panel.appendChild(collapsible('编年史', chChildren));
+
+    var bible = s.bible || {};
+    var wsChildren = [];
+    wsChildren.push(el('div', 'world-setting', '基调：' + (bible.tone || '—')));
+    (bible.places || []).forEach(function (p) {
+      wsChildren.push(el('div', 'world-setting', '地点 · ' + p.name + '：' + (p.desc || '')));
+    });
+    (bible.factions || []).forEach(function (f) {
+      wsChildren.push(el('div', 'world-setting', '势力 · ' + f.name + '（' + (f.stance || '') + '）'));
+    });
+    (bible.rules || []).forEach(function (r) { wsChildren.push(el('div', 'world-setting', '规则 · ' + r)); });
+    panel.appendChild(collapsible('世界设定', wsChildren));
+
+    renderTopAttrs(s);
+  }
+
+  function showDeath(state, death) {
+    var m = $('death-mask');
+    m.textContent = '';
+    m.hidden = false;
+    var card = el('div', 'death-card');
+    card.appendChild(el('div', 'death-kicker', '第 ' + (death ? death.life : state.life) + ' 世 · 终'));
+    var summary = '本世走过 ' + state.turn + ' 回合。';
+    if (death && death.inheritedReputation != null) {
+      summary += '声望余响 ' + death.inheritedReputation + ' 将随你进入下一世，认识过你的人也还记得你。';
+    } else {
+      summary += '声名会留下淡淡的余响，随你进入下一世。';
+    }
+    card.appendChild(el('p', 'death-summary', summary));
+
+    var form = el('div', 'rebirth-form');
+    form.appendChild(el('label', '', '新的名字'));
+    var name = el('input');
+    name.id = 'rb-name';
+    name.placeholder = '这一世，你叫什么';
+    form.appendChild(name);
+    form.appendChild(el('label', '', '新的形象'));
+    var app = el('input');
+    app.id = 'rb-appearance';
+    app.placeholder = '一袭布衣';
+    form.appendChild(app);
+    var btn = el('button', 'btn primary', '重生');
+    btn.addEventListener('click', doRebirth);
+    form.appendChild(btn);
+    card.appendChild(form);
+    m.appendChild(card);
+  }
+
+  function hideDeath() { $('death-mask').hidden = true; }
+
+  async function doRebirth() {
+    var name = $('rb-name').value.trim();
+    var appearance = $('rb-appearance').value.trim();
+    if (!name || !appearance) { toast('请填写新的名字与形象'); return; }
+    try {
+      var s = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/rebirth', {
+        method: 'POST',
+        body: JSON.stringify({ name: name, appearance: appearance }),
+      });
+      currentState = s;
+      hideDeath();
+      clearStream();
+      appendOpening('第 ' + s.life + ' 世，你在陌生的晨光里醒来。名字与面孔都已不同，世界却还是那个世界。');
+      renderHeader(s);
+      renderPanel(s);
+      renderEventBanner(s.activeEvent);
+      renderSuggestions(null);
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  function setBusy(b) {
+    busy = b;
+    $('btn-send').disabled = b;
+    $('pending').hidden = !b;
+  }
+
+  async function sendAction() {
+    if (busy || !currentWorldId) return;
+    var input = $('action-input');
+    var action = input.value.trim();
+    if (!action) { toast('写点什么再发送吧'); return; }
+    setBusy(true);
+    try {
+      var res = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
+        method: 'POST',
+        body: JSON.stringify({ action: action }),
+      });
+      input.value = ''; // 成功后才清空，失败时保留输入
+      currentState = res.state;
+      renderHeader(res.state);
+      appendActionLine(action);
+      if (res.event) appendEventCard(res.event);
+      appendNarration(res.narration, badgesFromApplied(res.applied), false);
+      if (res.settlement) appendSettlementCard(res.settlement);
+      renderPanel(res.state);
+      renderEventBanner(res.state.activeEvent);
+      renderSuggestions(res.suggestions);
+      if (res.death) showDeath(res.state, res.death);
+    } catch (err) {
+      toast(err.message); // 输入内容不丢
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---- 事件绑定 ----
+  function boot() {
+    $('btn-new').addEventListener('click', function () { location.hash = '#/new'; });
+    document.querySelectorAll('[data-nav]').forEach(function (n) {
+      n.addEventListener('click', function () { location.hash = n.getAttribute('data-nav'); });
+    });
+    $('btn-random').addEventListener('click', randomAlloc);
+    $('btn-create').addEventListener('click', createWorld);
+    $('btn-send').addEventListener('click', sendAction);
+    $('btn-panel').addEventListener('click', function () {
+      var p = $('panel');
+      p.dataset.open = p.dataset.open === 'true' ? 'false' : 'true';
+    });
+    $('stream').addEventListener('click', function () { if (typer) typer.skip(); });
+    document.querySelector('.stage').addEventListener('click', function () {
+      if (window.innerWidth < 860) $('panel').dataset.open = 'false';
+    });
+    $('action-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
+    });
+    window.addEventListener('hashchange', route);
+    route();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

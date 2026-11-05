@@ -132,6 +132,34 @@ test('接口层：随机端口测各接口，公开状态不含 apex 与 Key', a
     assert.ok(sawEvent, '应经历事件开启');
     assert.ok(sawSettlement, '应经历事件结算');
 
+    // log：最近 N 条，只返回公开字段，绝不含 apex / raw / proposal / rejected / usage
+    r = await req(base, 'GET', `/api/worlds/${id}/log?limit=50`);
+    assert.equal(r.status, 200, r.text);
+    assert.ok(Array.isArray(r.json));
+    assert.ok(r.json.length > 0, '应返回已产生的回合记录');
+    for (const item of r.json) {
+      assert.equal(typeof item.turn, 'number');
+      assert.equal(typeof item.action, 'string');
+      assert.equal(typeof item.narration, 'string');
+      assert.ok(Array.isArray(item.badges));
+      for (const hidden of ['apex', 'raw', 'proposal', 'rejected', 'usage']) {
+        assert.equal(hidden in item, false, `log 不应含内部字段 ${hidden}`);
+      }
+    }
+    assertNoLeak(r.text, r.json);
+
+    r = await req(base, 'GET', `/api/worlds/${id}/log?limit=2`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.length, 2, 'limit=2 应只返回 2 条');
+
+    r = await req(base, 'GET', `/api/worlds/${id}/log?limit=abc`);
+    assert.equal(r.status, 200, r.text);
+    assert.ok(Array.isArray(r.json), '非法 limit 回退默认，不报错');
+
+    r = await req(base, 'GET', '/api/worlds/does-not-exist/log');
+    assert.equal(r.status, 404, '不存在世界的 log 应 404');
+    assertNoLeak(r.text, r.json);
+
     // usage
     r = await req(base, 'GET', '/api/usage');
     assert.equal(r.status, 200);
@@ -175,7 +203,7 @@ test('接口层：随机端口测各接口，公开状态不含 apex 与 Key', a
     // 静态首页
     r = await req(base, 'GET', '/');
     assert.equal(r.status, 200);
-    assert.ok(r.text.includes('前端待实现'));
+    assert.ok(r.text.includes('无限世界'));
     assert.equal(r.text.includes(SECRET), false);
 
     // 删除 → 移入 _trash，之后不可访问、列表不再含

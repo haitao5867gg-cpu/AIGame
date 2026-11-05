@@ -58,7 +58,11 @@ function mockWorld(m) {
         { name: '铸剑师', role: '匠人', desc: '只肯为记得名字的人锻铁' },
         { name: '拾骨少女', role: '线人', desc: '消息比刀快，笑里藏着价码' },
       ],
-      start: { place: '灰烬港', situation: '你在一条搁浅的船上醒来，手里攥着一封无字信。' },
+      start: {
+        place: '灰烬港',
+        situation: '你在一条搁浅的船上醒来，手里攥着一封无字信。',
+        items: ['一封无字信', '旧铜灯', '半张海图'],
+      },
       eventThemes: ['魔族入侵', '宫廷政变', '天灾', '秘境开启', '商路断绝', '古神低语'],
     },
     apex: {

@@ -57,6 +57,31 @@ test('parse: 引号值、内联注释、export、空值、非法键名', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(out, 'BAD-KEY'), false);
 });
 
+test('parse: 去掉开头的 UTF-8 BOM（Windows PowerShell 写的文件）', () => {
+  const bom = '\uFEFF';
+  const out = env.parse(bom + 'PORT=9999\nLLM_MOCK=1\nLLM_API_KEY=abc\n');
+  assert.equal(out.PORT, '9999');
+  assert.equal(out.LLM_MOCK, '1');
+  assert.equal(out.LLM_API_KEY, 'abc');
+  // 不带 BOM 时行为不变
+  assert.equal(env.parse('PORT=9999\n').PORT, '9999');
+  // BOM 单独出现 / 只有 BOM 不抛错
+  assert.deepEqual(env.parse(bom), {});
+  assert.deepEqual(env.parse(bom + bom + 'A=1'), { A: '1' });
+});
+
+test('load: 带 BOM 的 .env 首行仍能被解析（优先级与默认值正确）', () => {
+  const { dir, file } = tmpFile('\uFEFFPORT=4321\nLLM_MOCK=1\n');
+  try {
+    const cfg = env.load(file, {});
+    assert.equal(cfg.PORT, 4321);
+    assert.equal(cfg.LLM_MOCK, true);
+    assert.equal(cfg.LLM_MODEL_WORLD, cfg.LLM_MODEL);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('parse: 非字符串输入不抛错', () => {
   assert.deepEqual(env.parse(null), {});
   assert.deepEqual(env.parse(undefined), {});
@@ -68,7 +93,8 @@ test('load: .env 不存在时全部使用规格默认值', () => {
   assert.equal(cfg.LLM_BASE, '');
   assert.equal(cfg.LLM_API_KEY, '');
   assert.equal(cfg.LLM_MODEL, 'deepseek-v4.1-flash');
-  assert.equal(cfg.LLM_MODEL_WORLD, 'deepseek-v4-pro-0813');
+  // 默认与 LLM_MODEL 相同（pro 模型建世界太慢）。
+  assert.equal(cfg.LLM_MODEL_WORLD, cfg.LLM_MODEL);
   assert.equal(cfg.LLM_MOCK, false);
   assert.equal(cfg.LLM_TIMEOUT_MS, 90000);
   assert.equal(cfg.LLM_DAILY_TOKEN_LIMIT, 2000000);

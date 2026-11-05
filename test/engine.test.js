@@ -94,8 +94,8 @@ test('createWorld: 初始属性各 6（5 + 平均 1）、persona 全 50、nextEv
   assert.equal(s.turn, 0);
   assert.equal(s.character.alive, true);
   assert.equal(s.character.bornTurn, 0);
-  assert.deepEqual(s.character.items, []);
-  assert.deepEqual(s.npcAttitude, {});
+  assert.deepEqual(s.character.items, []); // makeState 的 bible.start 没给 items
+  assert.deepEqual(s.npcAttitude, { 长老: 0, 铁匠: 0 }); // 按 bible.npcs 每人初始化 0
   assert.equal(s.activeEvent, null);
   assert.equal(s.highlightUntilTurn, 0);
   assert.deepEqual(s.chronicle, []);
@@ -108,6 +108,29 @@ test('createWorld: 初始属性各 6（5 + 平均 1）、persona 全 50、nextEv
   const hi = e.createWorld({ id: 'b', bible: {} }, { rng: () => 0.999999 });
   assert.equal(lo.nextEventTurn, 7);
   assert.equal(hi.nextEventTurn, 12);
+});
+
+test('createWorld: bible.start.items 写入起始物品、非法项被过滤', () => {
+  const s = e.createWorld(
+    {
+      id: 'w',
+      bible: {
+        npcs: [{ name: '守夜人' }, { name: '铸剑师' }],
+        start: { place: '灰烬港', situation: '醒来', items: ['一封无字信', '旧铜灯', '半张海图', '多余的第四件', '1'.repeat(13), '一封无字信'] },
+      },
+    },
+    { rng: () => 0 },
+  );
+  assert.deepEqual(s.character.items, ['一封无字信', '旧铜灯', '半张海图']);
+  assert.deepEqual(s.npcAttitude, { 守夜人: 0, 铸剑师: 0 });
+});
+
+test('createWorld: 显式 npcAttitude 可覆盖初始化值', () => {
+  const s = e.createWorld(
+    { id: 'w', bible: { npcs: [{ name: '甲' }, { name: '乙' }] }, npcAttitude: { 甲: 3, 丙: 1 } },
+    { rng: () => 0 },
+  );
+  assert.deepEqual(s.npcAttitude, { 甲: 3, 乙: 0, 丙: 1 });
 });
 
 test('allocateAttrs: 自定义分配合计 6、每项 ≤3；非法分配抛错', () => {
@@ -477,6 +500,24 @@ test('重生：提交新名字/形象后恢复可行动，声望继承保留', (
   const bad = e.rebirth(dead, { name: '', appearance: '红衣' });
   assert.match(bad.error, /重生需要提交新的名字与形象/);
   assert.equal(bad.state, dead);
+});
+
+test('重生：给 1 个符合世界观的基础物品', () => {
+  const s = e.createWorld(
+    { id: 'w', bible: { start: { items: ['旧铜灯', '半张海图'] } } },
+    { rng: () => 0 },
+  );
+  s.awaitingRebirth = true;
+  s.character.alive = false;
+  const rb = e.rebirth(s, { name: '二世', appearance: '布衣' });
+  assert.equal(rb.error, null);
+  assert.deepEqual(rb.state.character.items, ['旧铜灯']);
+
+  // 世界没给起始物品时兜底为 1 个基础物品
+  const s2 = e.createWorld({ id: 'w2', bible: {} }, { rng: () => 0 });
+  s2.awaitingRebirth = true;
+  const rb2 = e.rebirth(s2, { name: '甲', appearance: '乙' });
+  assert.deepEqual(rb2.state.character.items, ['旧行囊']);
 });
 
 test('体魄 > 0 不会误判死亡', () => {

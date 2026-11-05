@@ -27,6 +27,72 @@ function newWorldId() {
   return 'w' + crypto.randomBytes(8).toString('hex');
 }
 
+// 取 [nextTurn-19, nextTurn] 的 20 回合记录用于压缩编年史。
+// 当前回合的 event 还没写进 events.jsonl（appendEvent 在 resolveTurn 之后），
+// 因此这里显式把当前回合补进窗口，保证第 20 回合压的是 1~20 而不是 1~19。
+function chapterEventWindow(events, nextTurn, current) {
+  const fromTurn = Math.max(1, nextTurn - 19);
+  const window = (Array.isArray(events) ? events : [])
+    .filter((e) => e && e.turn >= fromTurn && e.turn <= nextTurn)
+    .slice();
+  if (current && !window.some((e) => e.turn === nextTurn)) window.push(current);
+  window.sort((a, b) => a.turn - b.turn);
+  return window;
+}
+
+// 把 applied（引擎消毒后的 diff）转成给前端展示的小徽章（公开数据，不含内部字段）。
+function badgesFromApplied(applied) {
+  const a = applied && typeof applied === 'object' ? applied : {};
+  const badges = [];
+  const diff = a.state_diff && typeof a.state_diff === 'object' ? a.state_diff : {};
+  for (const key of Object.keys(diff)) {
+    if (!engine.ATTRS.includes(key)) continue;
+    const d = Number(diff[key]);
+    if (!Number.isFinite(d) || d === 0) continue;
+    badges.push({ type: 'attr', name: key, delta: d });
+  }
+  for (const name of Array.isArray(a.items_add) ? a.items_add : []) {
+    if (typeof name === 'string' && name) badges.push({ type: 'item-add', name });
+  }
+  for (const name of Array.isArray(a.items_remove) ? a.items_remove : []) {
+    if (typeof name === 'string' && name) badges.push({ type: 'item-remove', name });
+  }
+  const npc = a.npc_attitude && typeof a.npc_attitude === 'object' ? a.npc_attitude : {};
+  for (const name of Object.keys(npc)) {
+    const d = Number(npc[name]);
+    if (!Number.isFinite(d) || d === 0) continue;
+    badges.push({ type: 'npc', name, delta: d });
+  }
+  return badges;
+}
+
+// events.jsonl 的单条记录 → 只保留公开字段，绝不把 apex / raw / proposal / rejected / usage 带出去。
+function toPublicLogRecord(rec) {
+  const e = rec && typeof rec === 'object' ? rec : {};
+  const ev = e.event && typeof e.event === 'object' ? e.event : null;
+  const st = e.settlement && typeof e.settlement === 'object' ? e.settlement : null;
+  const d = e.death && typeof e.death === 'object' ? e.death : null;
+  return {
+    turn: e.turn,
+    life: e.life,
+    action: typeof e.action === 'string' ? e.action : '',
+    narration: typeof e.narration === 'string' ? e.narration : '',
+    badges: badgesFromApplied(e.applied),
+    event: ev ? {
+      theme: ev.theme, title: ev.title, desc: ev.desc, startedTurn: ev.startedTurn,
+    } : null,
+    settlement: st ? {
+      theme: st.theme, title: st.title, tier: st.tier, attr: st.attr,
+      score: st.score,
+      effects: st.effects && typeof st.effects === 'object' ? Object.assign({}, st.effects) : {},
+    } : null,
+    death: d ? {
+      reason: d.reason, life: d.life, inheritedReputation: d.inheritedReputation,
+    } : null,
+    ts: e.ts,
+  };
+}
+
 function createGame(cfg, dataDir) {
   const client = llm.createClient(cfg, dataDir);
   const turnModel = cfg.LLM_MODEL;
@@ -112,6 +178,19 @@ function createGame(cfg, dataDir) {
     return client.summarizeUsage(Date.now());
   }
 
+  // GET /api/worlds/:id/log?limit=50：从 events.jsonl 读最近 N 条，只返回公开字段。
+  function getWorldLog(worldId, rawLimit) {
+    store.assertWorldId(worldId);
+    if (!store.loadWorld(dataDir, worldId)) {
+      throw httpError(404, '世界不存在或已被移入回收站');
+    }
+    let limit = Number(rawLimit);
+    if (!Number.isFinite(limit) || limit <= 0) limit = 50;
+    limit = Math.min(Math.floor(limit), 200);
+    const all = store.readEvents(dataDir, worldId);
+    return all.slice(Math.max(0, all.length - limit)).map(toPublicLogRecord);
+  }
+
   // ---- 执行一回合 ----
   async function takeTurn(worldId, input) {
     store.assertWorldId(worldId);
@@ -171,12 +250,19 @@ function createGame(cfg, dataDir) {
       if (needChapter) {
         try {
           const fromTurn = Math.max(1, nextTurn - 19);
-          const past = store
-            .readEvents(dataDir, worldId)
-            .filter((e) => e.turn >= fromTurn && e.turn < nextTurn);
+          // 当前回合尚未写入 events.jsonl，显式补进压缩窗口，保证包含第 20 回合本身。
+          const current = {
+            turn: nextTurn,
+            life: state.life,
+            action,
+            narration: typeof out.narration === 'string' ? out.narration : '',
+          };
+          const chapterEvents = chapterEventWindow(
+            store.readEvents(dataDir, worldId), nextTurn, current,
+          );
           const cp = await callParsed(
             'chapter', worldModel,
-            prompts.buildChapterMessages(state, past),
+            prompts.buildChapterMessages(state, chapterEvents),
             { fromTurn, toTurn: nextTurn }, usages,
           );
           if (cp.parsed && typeof cp.parsed.summary === 'string') {
@@ -255,7 +341,12 @@ function createGame(cfg, dataDir) {
     });
   }
 
-  return { buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage };
+  return {
+    buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, getWorldLog,
+  };
 }
 
-module.exports = { createGame, HttpError, httpError };
+module.exports = {
+  createGame, HttpError, httpError,
+  chapterEventWindow, badgesFromApplied, toPublicLogRecord,
+};

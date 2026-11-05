@@ -113,8 +113,11 @@ function serveStatic(req, res, pathname, isHead) {
 async function handle(req, res, cfg, g) {
   const method = (req.method || 'GET').toUpperCase();
   let pathname;
+  let searchParams = null;
   try {
-    pathname = new URL(req.url, 'http://localhost').pathname;
+    const url = new URL(req.url, 'http://localhost');
+    pathname = url.pathname;
+    searchParams = url.searchParams;
   } catch (_) {
     pathname = (req.url || '/').split('?')[0];
   }
@@ -141,7 +144,7 @@ async function handle(req, res, cfg, g) {
   }
 
   // ---- 带世界 ID 的接口 ----
-  const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth))?$/);
+  const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth|log))?$/);
   if (m) {
     let id;
     try {
@@ -153,6 +156,11 @@ async function handle(req, res, cfg, g) {
     const sub = m[2];
     if (!sub && method === 'GET') return sendJson(res, 200, await g.getWorld(id));
     if (!sub && method === 'DELETE') return sendJson(res, 200, await g.deleteWorld(id));
+    if (sub === 'log' && method === 'GET') {
+      let limit;
+      if (searchParams && searchParams.has('limit')) limit = Number(searchParams.get('limit'));
+      return sendJson(res, 200, await g.getWorldLog(id, limit));
+    }
     if (sub === 'turn' && method === 'POST') {
       const body = await readJsonBody(req);
       return sendJson(res, 200, await g.takeTurn(id, body));

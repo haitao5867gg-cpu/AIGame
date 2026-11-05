@@ -58,6 +58,37 @@ function freshPersona() {
   return p;
 }
 
+// 从 bible.start.items 提取 ≤3 个合法起始物品（字符串、去空白、≤12 字、去重）。
+function startingItems(bible) {
+  const start = bible && typeof bible === 'object' ? bible.start : null;
+  const raw = start && Array.isArray(start.items) ? start.items : [];
+  const out = [];
+  for (const it of raw) {
+    if (typeof it !== 'string') continue;
+    const name = it.trim();
+    if (!name || name.length > ITEM_NAME_MAX || out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+// 重生时给 1 个符合世界观的基础物品：取世界自身起始物品的首个，无则兜底。
+function baseItem(bible) {
+  const items = startingItems(bible);
+  return items.length ? items[0] : '旧行囊';
+}
+
+// npcAttitude 初始化为 bible.npcs 每人 0；显式传入的取值可覆盖。
+function initialNpcAttitude(bible, provided) {
+  const out = {};
+  const npcs = bible && Array.isArray(bible.npcs) ? bible.npcs : [];
+  for (const n of npcs) {
+    if (n && typeof n.name === 'string' && n.name.trim()) out[n.name.trim()] = 0;
+  }
+  return Object.assign(out, provided && typeof provided === 'object' ? provided : {});
+}
+
 // ---- 建世界 / 分配属性点 ----
 
 // 未传 alloc 时 6 点平均分到 6 项（各 +1）；传入时校验合计 6 点且每项 ≤ 3。
@@ -92,11 +123,12 @@ function createWorld(spec, opts) {
   const options = opts || {};
   const rng = options.rng || Math.random;
   const now = options.now == null ? Date.now() : options.now;
+  const bible = cloneState(s.bible || {});
   return {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
     seed: s.seed || '',
-    bible: cloneState(s.bible || {}),
+    bible,
     apex: Object.assign({ achievedAt: null, generation: 1 }, cloneState(s.apex || {})),
     life: 1,
     turn: 0,
@@ -104,11 +136,11 @@ function createWorld(spec, opts) {
       name: s.name || '',
       appearance: s.appearance || '',
       attrs: allocateAttrs(s.alloc),
-      items: [],
+      items: startingItems(bible),
       alive: true,
       bornTurn: 0,
     },
-    npcAttitude: Object.assign({}, s.npcAttitude || {}),
+    npcAttitude: initialNpcAttitude(bible, s.npcAttitude),
     persona: freshPersona(),
     nextEventTurn: 7 + Math.floor(unit(rng) * 6), // 7~12 随机
     activeEvent: null,
@@ -413,6 +445,8 @@ function rebirth(state, input) {
   s.character.name = name;
   s.character.appearance = appearance;
   s.character.alive = true;
+  // 重生给 1 个符合世界观的基础物品（死亡时已清空，这里补上）。
+  s.character.items = [baseItem(s.bible)];
   s.character.bornTurn = s.turn;
   s.awaitingRebirth = false;
   return { state: s, error: null };

@@ -6,11 +6,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// 建世界 / 编年史默认与回合用同一个（快）模型：pro 模型建世界要 80 秒太慢。
+const DEFAULT_LLM_MODEL = 'deepseek-v4.1-flash';
+
 const DEFAULTS = Object.freeze({
   LLM_BASE: '',
   LLM_API_KEY: '',
-  LLM_MODEL: 'deepseek-v4.1-flash',
-  LLM_MODEL_WORLD: 'deepseek-v4-pro-0813',
+  LLM_MODEL: DEFAULT_LLM_MODEL,
+  LLM_MODEL_WORLD: DEFAULT_LLM_MODEL,
   LLM_MOCK: '0',
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
@@ -29,7 +32,10 @@ const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 function parse(text) {
   const out = {};
-  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  // Windows PowerShell 写出的 .env 常带 UTF-8 BOM（\uFEFF），放在首个键名前会导致
+  // 该行键名不合法而被整行忽略；这里在解析前统一去掉开头的 BOM。
+  const src = String(text == null ? '' : text).replace(/^\uFEFF+/, '');
+  const lines = src.split(/\r?\n/);
   for (const raw of lines) {
     let line = raw.trim();
     if (!line || line[0] === '#') continue;
