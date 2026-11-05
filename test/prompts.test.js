@@ -82,3 +82,56 @@ test('parseJson 仍可解析带 ```json 包裹的输出', () => {
   assert.deepEqual(prompts.parseJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.equal(prompts.parseJson('不是 json'), null);
 });
+
+test('回合 prompt：风声预兆时要求不祥征兆，并禁止写出主题词', () => {
+  const [system, user] = prompts.buildTurnMessages(
+    makeState(), { nextTurn: 2, omen: true, omenTheme: '天灾' }, '探查',
+  );
+  const all = system.content + '\n' + user.content;
+  assert.match(all, /风声预兆/);
+  assert.match(all, /不祥征兆/);
+  assert.match(all, /天灾/);            // 主题交给模型，让征兆与真正到来的事件相关
+  assert.match(all, /不要写出主题词/);
+});
+
+test('回合 prompt：无预兆时不出现风声预兆段落', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2, omen: false }, '探查');
+  assert.equal(/风声预兆/.test(system.content), false);
+});
+
+test('回合 prompt：输出格式列出 rumor 可选字段及约每三回合说明', () => {
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  assert.match(system.content, /"rumor"/);
+  assert.match(system.content, /约每三回合/);
+  assert.match(system.content, /≤40 字/);
+});
+
+test('回合 prompt：带上当前地点与时间并要求叙事一致；格式含 move_to/time_passes', () => {
+  const state = makeState();
+  state.location = '灰烬港';
+  state.clock = { day: 3, period: '黄昏' };
+  const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 4 }, '探查');
+  const all = system.content + '\n' + user.content;
+  assert.match(all, /时与地/);
+  assert.match(all, /灰烬港/);
+  assert.match(all, /第3日 黄昏/);
+  assert.match(all, /"move_to"/);
+  assert.match(all, /"time_passes"/);
+  assert.match(all, /0、1、2/);
+  assert.match(all, /一致/);
+});
+
+test('前世墓志铭：buildEpitaphMessages 用本世经历、要求 ≤80 字、不夹带 apex', () => {
+  const state = makeState();
+  state.character.name = '初代';
+  const [system, user] = prompts.buildEpitaphMessages(
+    state, { life: 1, name: '初代', turns: 8, cause: '体魄归零' },
+  );
+  const all = system.content + '\n' + user.content;
+  assert.match(all, /"epitaph"/);
+  assert.match(all, /不超过 80 字|≤80 字/);
+  assert.match(all, /初代/);
+  assert.match(all, /体魄归零/);
+  assert.match(all, /不要点破任何隐藏目标/);
+  assert.equal(/隐秘王冠|\bapex\b/.test(all), false, '墓志铭 prompt 不应夹带 apex');
+});

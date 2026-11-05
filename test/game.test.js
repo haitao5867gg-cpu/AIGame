@@ -224,6 +224,124 @@ test('log 公开记录：只含公开字段，绝不含 apex / raw / proposal / 
   assert.equal(pub2.death.reason, '事件殒命');
 });
 
+test('风声预兆：mock 30 回合里出现预兆标记，公开状态不含主题名', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '旅人', appearance: '青衣' });
+  const id = world.id;
+  let sawOmen = false;
+  for (let i = 0; i < 30; i++) {
+    const before = await g.getWorld(id);
+    if (before.awaitingRebirth) await g.rebirth(id, { name: '新', appearance: '衣' });
+    const res = await g.takeTurn(id, { action: '继续探查' });
+    assert.equal(typeof res.state.omen, 'boolean');
+    assert.equal('pendingEventTheme' in res.state, false, '公开状态不得泄露预选主题');
+    if (res.state.omen) sawOmen = true;
+  }
+  assert.ok(sawOmen, '30 回合内应出现过风声预兆');
+});
+
+test('老存档：缺新字段的 state.json 读取时补默认，不报错', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '旧世界', name: '甲', appearance: '乙' });
+  const id = world.id;
+  // 抹掉新字段，模拟升级前写下的老存档
+  const state = store.loadWorld(dataDir, id);
+  delete state.pendingEventTheme;
+  delete state.rumors;
+  delete state.location;
+  delete state.clock;
+  delete state.pastLives;
+  store.saveWorld(dataDir, state);
+
+  const got = await g.getWorld(id);
+  assert.equal('pendingEventTheme' in got, false);
+  assert.equal(typeof got.omen, 'boolean');
+  assert.ok(Array.isArray(got.rumors), '老存档补出 rumors 默认值');
+  assert.equal(typeof got.location, 'string', '老存档补出 location 默认值');
+  assert.ok(got.clock && typeof got.clock.day === 'number', '老存档补出 clock 默认值');
+  assert.ok(Array.isArray(got.pastLives), '老存档补出 pastLives 默认值');
+
+  const res = await g.takeTurn(id, { action: '继续' }); // 老存档能正常推进回合
+  assert.equal(res.state.turn, 1);
+  const internal = store.loadWorld(dataDir, id);
+  assert.equal('pendingEventTheme' in internal, true, '读取后补齐字段');
+  assert.ok(Array.isArray(internal.rumors));
+});
+
+test('坊间传闻：mock 回合产生传闻，约每 3 回合一条，公开状态可见', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '旅人', appearance: '青衣' });
+  const id = world.id;
+  for (let i = 0; i < 9; i++) await g.takeTurn(id, { action: '继续探查' });
+  const s = await g.getWorld(id);
+  assert.ok(Array.isArray(s.rumors));
+  assert.ok(s.rumors.length >= 2 && s.rumors.length <= 4, '约每 3 回合一条传闻');
+  s.rumors.forEach((r) => {
+    assert.equal(typeof r.text, 'string');
+    assert.ok(r.text.length <= 40);
+    assert.equal(typeof r.turn, 'number');
+  });
+});
+
+test('地点与时间：mock 回合推进时段、偶发移动，公开状态可见', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '旅人', appearance: '青衣' });
+  const id = world.id;
+  const initial = await g.getWorld(id);
+  assert.equal(typeof initial.location, 'string');
+  assert.deepEqual(initial.clock, { day: 1, period: '清晨' });
+  for (let i = 0; i < 8; i++) await g.takeTurn(id, { action: '继续探查' });
+  const s = await g.getWorld(id);
+  assert.equal(typeof s.location, 'string');
+  assert.ok(['清晨', '午后', '黄昏', '深夜'].includes(s.clock.period));
+  assert.ok(s.clock.day > 1 || s.clock.period !== '清晨', '时间应随回合推进');
+});
+
+test('前世墓志铭：templateEpitaph / epitaphFromParsed 兜底与 ≤80 字', () => {
+  const info = { life: 3, name: '旅人', turns: 12, cause: '事件殒命' };
+  const tpl = game.templateEpitaph(info);
+  assert.ok(tpl.length <= 80 && tpl.includes('旅人') && tpl.includes('事件殒命'));
+  assert.equal(game.epitaphFromParsed({ epitaph: '  真实墓志铭  ' }, info), '真实墓志铭');
+  assert.equal(game.epitaphFromParsed(null, info), tpl.slice(0, 80)); // 缺失回退模板
+  assert.equal(game.epitaphFromParsed({}, info), tpl.slice(0, 80));
+  assert.equal(game.epitaphFromParsed({ epitaph: '长'.repeat(100) }, info).length, 80);
+});
+
+test('前世墓志铭：死亡回合写入 pastLives，公开可见、≤80 字、不泄露 apex、不阻断重生', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雪原钟摆之城', name: '初代', appearance: '白衣' });
+  const id = world.id;
+
+  // 强制本回合体魄归零死亡（mock 事件结算不会致死）：直接把内部状态体魄设为 0。
+  const state = store.loadWorld(dataDir, id);
+  state.character.attrs['体魄'] = 0;
+  state.nextEventTurn = 999;
+  state.activeEvent = null;
+  store.saveWorld(dataDir, state);
+
+  const res = await g.takeTurn(id, { action: '力竭倒下' });
+  assert.ok(res.death, '本回合应触发死亡');
+  assert.ok(Array.isArray(res.state.pastLives));
+  assert.equal(res.state.pastLives.length, 1);
+  const pl = res.state.pastLives[0];
+  assert.equal(pl.life, 1);
+  assert.equal(pl.name, '初代');
+  assert.equal(typeof pl.epitaph, 'string');
+  assert.ok(pl.epitaph.length > 0 && pl.epitaph.length <= 80, '墓志铭 ≤80 字');
+  assert.equal(typeof pl.turns, 'number');
+  assert.equal(pl.cause, '体魄归零');
+  assertNoLeak(res);
+
+  // 死亡不阻断重生，且重生后仍保留前世
+  const rb = await g.rebirth(id, { name: '二世', appearance: '红衣' });
+  assert.equal(rb.character.alive, true);
+  assert.equal(rb.pastLives.length, 1, '重生保留前世');
+  assertNoLeak(rb);
+
+  // 内部状态也确实落库
+  assert.equal(store.loadWorld(dataDir, id).pastLives.length, 1);
+});
+
 function WORLD_ID_OK(id) {
   return /^[A-Za-z0-9_-]+$/.test(id);
 }

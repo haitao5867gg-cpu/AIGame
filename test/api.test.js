@@ -102,6 +102,12 @@ test('接口层：随机端口测各接口，公开状态不含 apex 与 Key', a
     assert.equal(r.status, 200);
     assert.equal(r.json.id, id);
     assert.equal('apex' in r.json, false);
+    assert.equal(typeof r.json.omen, 'boolean', '公开状态应含 omen 布尔');
+    assert.ok(Array.isArray(r.json.rumors), '公开状态应含 rumors 数组');
+    assert.equal(typeof r.json.location, 'string', '公开状态应含 location');
+    assert.ok(r.json.clock && typeof r.json.clock.day === 'number', '公开状态应含 clock');
+    assert.ok(Array.isArray(r.json.pastLives), '公开状态应含 pastLives 数组');
+    assert.equal('pendingEventTheme' in r.json, false, '公开状态不得含预选主题');
     assertNoLeak(r.text, r.json);
 
     // 同一世界并发两个回合 → 串行，turn 依次 1、2

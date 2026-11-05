@@ -41,9 +41,18 @@ const TURN_OUTPUT_FORMAT = [
   ' "npc_attitude":{"某人":1},',
   ' "persona_tags":["冒险"],',
   ' "suggestions":["可选项一","可选项二","可选项三"],',
+  ' "rumor":"一句 ≤40 字的坊间传闻（可选）",',
+  ' "move_to":"≤12 字的地点名（可选）",',
+  ' "time_passes":1,',
   ' "event":{"title":"事件标题","desc":"事件描述"},',
   ' "event_check":{"attr":"体魄","response_quality":2}}',
   '说明：',
+  '- rumor 是可选的坊间流言（≤40 字），约每三回合给一条即可，不要每回合都给；',
+  '  内容可是对隐晦线索的侧面暗示、其他势力的风声，或真假难辨的闲话，写成听来的口吻。',
+  '- move_to 是本回合去往的地点：必须是世界设定「地点」里已有的名字，或本回合叙事里新出现的地点名；',
+  '  ≤12 字；没有移动就不要输出该字段。',
+  '- time_passes 是本回合推进的时段数，只能是 0、1、2（默认 1）；0 表示几乎未流动，2 表示明显跨越时段。',
+  '- 叙事必须与【时与地】给出的当前地点、第几日、时段一致；若给了 move_to，叙事里要真的到达该处。',
   '- persona_tags 只能从这 6 个词里取：冒险、审慎、共情、权谋、坚韧、秩序。',
   '  绝不要自造词（例如「谨慎」「水路」「冷静」等都不是合法值，会被引擎拒绝），只填本回合真正体现的维度。',
   '- 角色当前拥有的物品见【当前状态】的「物品」一行。',
@@ -97,6 +106,15 @@ function characterText(state) {
   ].join('\n');
 }
 
+function timePlaceText(state) {
+  const loc = state.location ||
+    (state.bible && state.bible.start && state.bible.start.place) || '未知之地';
+  const c = state.clock && typeof state.clock === 'object' ? state.clock : {};
+  const day = Number.isInteger(c.day) && c.day >= 1 ? c.day : 1;
+  const period = ['清晨', '午后', '黄昏', '深夜'].includes(c.period) ? c.period : '清晨';
+  return `地点：${loc}；时间：第${day}日 ${period}`;
+}
+
 function recentText(state) {
   const rec = state.recent || [];
   if (!rec.length) return '（尚无近期记录）';
@@ -118,6 +136,9 @@ function buildTurnMessages(state, plan, action) {
   sys.push(CONSTITUTION);
   sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
   sys.push(section('叙事与状态规则', TURN_RULES));
+  sys.push(section('时与地（叙事一致性）',
+    '叙事里的所处地点、白昼/黑夜、所在日子必须与【时与地】一致，不要凭空跳到别处或别的时段；' +
+    '时间只随回合缓慢推进，不可一夜之间改换季节。'));
 
   // 隐晦提示：apex.hint，只要求通过传闻 / 机会 / NPC 态度暗示，绝不点破。
   const hint = state.apex && state.apex.hint;
@@ -131,6 +152,15 @@ function buildTurnMessages(state, plan, action) {
   if (state.highlightUntilTurn > 0 && nextTurn <= state.highlightUntilTurn) {
     sys.push(section('写法提示',
       '本回合值得写一段克制的高光时刻：气氛更浓、留白更多，但不要说破原因，也不要宣布达成任何目标。'));
+  }
+
+  // 风声预兆：距下次事件 1~2 回合时，叙事里埋不祥征兆。主题只交给模型，
+  // 明确禁止命名 / 点破，玩家侧只会看到一个「风声渐紧」的布尔标记。
+  if (p.omen && p.omenTheme) {
+    sys.push(section('风声预兆（只写征兆，绝不点破）',
+      `一件与「${p.omenTheme}」有关的大事正在逼近。请在叙事里埋下与之呼应的不祥征兆：` +
+      '反常的天色、欲言又止的路人、骤然收紧的市井气氛、断了线的旧消息……' +
+      '只写气氛与征兆，不要写出主题词、不要宣布将发生什么、也不要把它写成任务或目标。'));
   }
 
   // 事件中：开启事件 / 结算事件说明。
@@ -150,6 +180,8 @@ function buildTurnMessages(state, plan, action) {
 
   const user = [
     section('当前状态', characterText(state)),
+    section('时与地', timePlaceText(state) +
+      '\n（本回合叙事须与此一致；若要转场，请在 move_to 写出新地点）'),
     section('物品与性格约束',
       '上面「物品」一行是角色当前拥有的全部物品。玩家声称使用其中没有的物品时，叙事要写出「你摸遍全身也没有」之类的失败，' +
       '不可凭空给、也不可写进 items_add。persona_tags 只能取 冒险/审慎/共情/权谋/坚韧/秩序 这 6 个词，不要自造。'),
@@ -220,6 +252,28 @@ function buildApexMessages(state) {
   ];
 }
 
+// 前世墓志铭：角色死亡时额外调用一次（回合模型），据本世经历写 ≤80 字墓志铭。
+// 只输出 {epitaph}；不含 apex / Key 等内部信息。
+function buildEpitaphMessages(state, info) {
+  const i = info || {};
+  const system = [
+    '你是「无限世界」的墓志铭执笔人，只输出一个 JSON 对象：{"epitaph":"不超过 80 字的一段墓志铭"}。',
+    '用克制、苍凉的笔调，为刚结束的这一世写一段墓志铭：点出此人的名字、走过的地方或做过的事、以及结局，',
+    '像刻在石上的短文，不要解释、不要评价玩法、不要点破任何隐藏目标、不要输出多余字段。',
+  ].join('\n');
+  const user = [
+    section('本世', `第${i.life}世 · ${i.name || '无名旅人'}；走过 ${i.turns} 个回合；终于「${i.cause || '力竭'}」。`),
+    section('此世行迹', recentText(state)),
+    section('编年史', chronicleText(state)),
+    section('角色', characterText(state)),
+    '请据本世经历写一段 ≤80 字的墓志铭，只输出 {"epitaph":"..."}。',
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -240,5 +294,6 @@ module.exports = {
   buildWorldMessages,
   buildChapterMessages,
   buildApexMessages,
+  buildEpitaphMessages,
   parseJson,
 };

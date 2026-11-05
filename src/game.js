@@ -23,6 +23,23 @@ function httpError(status, message) {
   return new HttpError(status, message);
 }
 
+// 墓志铭模板兜底：LLM 失败 / 输出缺失时使用，绝不阻塞本回合落库与重生。
+function templateEpitaph(info) {
+  const i = info || {};
+  return (
+    `第${i.life || 1}世，${i.name || '无名旅人'}走过${i.turns || 0}个回合，` +
+    `终因${i.cause || '力竭'}长眠于此。名字会淡去，旧债与旧交却留在风里。`
+  );
+}
+
+// 从 LLM 解析结果里取墓志铭；缺失 / 非法时用模板兜底，并截到 ≤80 字。
+// 纯函数，单独导出便于单测兜底路径。
+function epitaphFromParsed(parsed, info) {
+  let text = parsed && typeof parsed.epitaph === 'string' ? parsed.epitaph.trim() : '';
+  if (!text) text = templateEpitaph(info);
+  return text.slice(0, engine.EPITAPH_MAX);
+}
+
 function newWorldId() {
   return 'w' + crypto.randomBytes(8).toString('hex');
 }
@@ -123,8 +140,42 @@ function createGame(cfg, dataDir) {
     throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
   }
 
+  // 死亡时额外调用一次回合模型，据本世经历写墓志铭；
+  // 任何失败（网络 / 超时 / 额度 / 解析）都回退模板，不影响回合落库与后续重生。
+  async function composeEpitaph(state, death, deathTurn, usages) {
+    const dead = (state && state.character) || {};
+    const info = {
+      life: death.life,
+      name: dead.name || '无名旅人',
+      turns: deathTurn - (dead.bornTurn == null ? 0 : dead.bornTurn),
+      cause: death.reason,
+    };
+    let parsed = null;
+    try {
+      const ep = await callParsed(
+        'epitaph', turnModel,
+        prompts.buildEpitaphMessages(state, info),
+        { life: info.life, name: info.name, cause: info.cause }, usages,
+      );
+      parsed = ep.parsed;
+    } catch (_) { /* 失败时 parsed 保持 null，交给模板兜底 */ }
+    return {
+      life: info.life,
+      name: info.name,
+      epitaph: epitaphFromParsed(parsed, info),
+      turns: info.turns,
+      cause: info.cause,
+    };
+  }
+
   function publicWorld(state) {
     return engine.toPublicState(state);
+  }
+
+  // 读取世界状态；老存档缺少新玩法字段时自动补默认值，不报错。
+  function loadState(worldId) {
+    const state = store.loadWorld(dataDir, worldId);
+    return state ? engine.normalizeState(state) : null;
   }
 
   // ---- 建世界 ----
@@ -165,7 +216,7 @@ function createGame(cfg, dataDir) {
   // ---- 读 ----
   async function getWorld(worldId) {
     store.assertWorldId(worldId);
-    const state = store.loadWorld(dataDir, worldId);
+    const state = loadState(worldId);
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
     return publicWorld(state);
   }
@@ -181,7 +232,7 @@ function createGame(cfg, dataDir) {
   // GET /api/worlds/:id/log?limit=50：从 events.jsonl 读最近 N 条，只返回公开字段。
   function getWorldLog(worldId, rawLimit) {
     store.assertWorldId(worldId);
-    if (!store.loadWorld(dataDir, worldId)) {
+    if (!loadState(worldId)) {
       throw httpError(404, '世界不存在或已被移入回收站');
     }
     let limit = Number(rawLimit);
@@ -195,7 +246,7 @@ function createGame(cfg, dataDir) {
   async function takeTurn(worldId, input) {
     store.assertWorldId(worldId);
     return store.withWorldLock(worldId, async () => {
-      const state = store.loadWorld(dataDir, worldId);
+      const state = loadState(worldId);
       if (!state) throw httpError(404, '世界不存在或已被移入回收站');
       if (!engine.canTakeTurn(state)) {
         throw httpError(409, '本世已终，请先提交重生（POST /rebirth）');
@@ -236,6 +287,9 @@ function createGame(cfg, dataDir) {
         npc_attitude: out.npc_attitude,
         persona_tags: out.persona_tags,
         suggestions: out.suggestions,
+        rumor: out.rumor,
+        move_to: out.move_to,
+        time_passes: out.time_passes,
       };
       const data = {
         action,
@@ -289,7 +343,17 @@ function createGame(cfg, dataDir) {
         throw httpError(422, resolved.error || '本回合无效，请重试');
       }
 
-      store.saveWorld(dataDir, resolved.state);
+      // 死亡：额外调用一次回合模型写墓志铭并入 state.pastLives。
+      // 失败 / 超时都回退模板，绝不阻断本回合落库与后续重生。
+      let finalState = resolved.state;
+      if (resolved.result.death) {
+        const entry = await composeEpitaph(
+          state, resolved.result.death, resolved.result.turn, usages,
+        );
+        finalState = engine.applyEpitaph(finalState, entry);
+      }
+
+      store.saveWorld(dataDir, finalState);
 
       const usageAgg = { prompt_tokens: 0, completion_tokens: 0 };
       for (const u of usages) {
@@ -313,7 +377,7 @@ function createGame(cfg, dataDir) {
         ts: resolved.result.ts,
       });
 
-      return engine.toPublicTurnResult(resolved.result, resolved.state);
+      return engine.toPublicTurnResult(resolved.result, finalState);
     });
   }
 
@@ -321,7 +385,7 @@ function createGame(cfg, dataDir) {
   async function rebirth(worldId, input) {
     store.assertWorldId(worldId);
     return store.withWorldLock(worldId, async () => {
-      const state = store.loadWorld(dataDir, worldId);
+      const state = loadState(worldId);
       if (!state) throw httpError(404, '世界不存在或已被移入回收站');
       if (!state.awaitingRebirth) throw httpError(409, '当前并未等待重生');
       const r = engine.rebirth(state, input || {});
@@ -349,4 +413,5 @@ function createGame(cfg, dataDir) {
 module.exports = {
   createGame, HttpError, httpError,
   chapterEventWindow, badgesFromApplied, toPublicLogRecord,
+  templateEpitaph, epitaphFromParsed,
 };

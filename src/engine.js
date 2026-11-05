@@ -41,6 +41,24 @@ const CHRONICLE_MAX = 300;
 const PERSONA_INIT = 50;
 const PERSONA_REGRESSION = 0.2;
 
+// 风声预兆：距离下一次事件 1~2 回合且无进行中事件时，叙事里要埋下不祥征兆。
+const OMEN_MIN_GAP = 1;
+const OMEN_MAX_GAP = 2;
+
+// 坊间传闻：单条 ≤40 字，state 只留最近 10 条。
+const RUMOR_MAX = 40;
+const RUMORS_MAX = 10;
+
+// 地点与时间：时段依次循环，深夜之后进入次日清晨；单回合推进 0~2 个时段。
+const PERIODS = Object.freeze(['清晨', '午后', '黄昏', '深夜']);
+const MOVE_TO_MAX = 12;
+const TIME_PASSES_MIN = 0;
+const TIME_PASSES_MAX = 2;
+const TIME_PASSES_DEFAULT = 1;
+
+// 前世墓志铭：单段 ≤80 字。
+const EPITAPH_MAX = 80;
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -62,6 +80,77 @@ function internalReject(reason) {
 
 function isInternalReject(reason) {
   return typeof reason === 'string' && reason.startsWith(INTERNAL_REJECT_TAG);
+}
+
+// 是否处于「风声预兆」窗口：无进行中事件，且 nextEventTurn - turn 落在 1~2。
+// 纯函数，供回合 prompt 判定与公开状态计算共用；对老存档缺字段也安全。
+function computeOmen(state) {
+  if (!state || typeof state !== 'object' || state.activeEvent) return false;
+  const net = Number(state.nextEventTurn);
+  const turn = Number(state.turn) || 0;
+  if (!Number.isFinite(net)) return false;
+  const gap = net - turn;
+  return gap >= OMEN_MIN_GAP && gap <= OMEN_MAX_GAP;
+}
+
+// 坊间传闻校验：非字符串 / 空串忽略，超过 40 字截断，返回可直接入库的文本（无则 ''）。
+function normalizeRumor(value) {
+  if (typeof value !== 'string') return '';
+  const t = value.trim();
+  if (!t) return '';
+  return t.slice(0, RUMOR_MAX);
+}
+
+// move_to 校验：≤12 字，且必须是 bible.places 里的名字或本回合叙事里新出现的地点名。
+// 返回合法地点名，非法时返回 ''（原地不动）。
+function normalizeMoveTo(state, value, narration) {
+  if (typeof value !== 'string') return '';
+  const name = value.trim();
+  if (!name || name.length > MOVE_TO_MAX) return '';
+  const places = state && state.bible && Array.isArray(state.bible.places) ? state.bible.places : [];
+  const known = places.some((p) => p && typeof p.name === 'string' && p.name === name);
+  if (known) return name;
+  if (typeof narration === 'string' && narration.includes(name)) return name;
+  return '';
+}
+
+// time_passes 校验：0~2 的整数，缺省 / 非法值回退默认 1。
+function normalizeTimePasses(value) {
+  if (value == null) return TIME_PASSES_DEFAULT;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return TIME_PASSES_DEFAULT;
+  return clamp(Math.round(n), TIME_PASSES_MIN, TIME_PASSES_MAX);
+}
+
+// 按推进时段数滚动 clock；返回全新对象，不改入参。
+function advanceClock(clock, passes) {
+  const c = clock && typeof clock === 'object' ? clock : {};
+  let day = Number.isInteger(c.day) && c.day >= 1 ? c.day : 1;
+  let idx = PERIODS.indexOf(c.period);
+  if (idx < 0) idx = 0;
+  const total = idx + clamp(toInt(passes), TIME_PASSES_MIN, TIME_PASSES_MAX);
+  day += Math.floor(total / PERIODS.length);
+  const period = PERIODS[total % PERIODS.length];
+  return { day, period };
+}
+
+// 老存档兼容：读取时补齐新增字段的默认值，缺字段的世界不报错。
+// 纯函数，返回新对象；不改动入参。各玩法新增字段在此集中补默认。
+function normalizeState(state) {
+  const s = cloneState(state || {});
+  if (typeof s.pendingEventTheme !== 'string' || !s.pendingEventTheme) s.pendingEventTheme = null;
+  if (!Array.isArray(s.rumors)) s.rumors = [];
+  if (!Array.isArray(s.pastLives)) s.pastLives = [];
+  if (typeof s.location !== 'string' || !s.location) {
+    const start = s.bible && s.bible.start;
+    s.location = start && typeof start.place === 'string' ? start.place : '';
+  }
+  const c = s.clock && typeof s.clock === 'object' ? s.clock : {};
+  s.clock = {
+    day: Number.isInteger(c.day) && c.day >= 1 ? c.day : 1,
+    period: PERIODS.includes(c.period) ? c.period : PERIODS[0],
+  };
+  return s;
 }
 
 // eventThemes 少于 4 个时用通用主题补齐（过滤无效项、去重）。
@@ -175,6 +264,11 @@ function createWorld(spec, opts) {
     persona: freshPersona(),
     nextEventTurn: 7 + Math.floor(unit(rng) * 6), // 7~12 随机
     activeEvent: null,
+    pendingEventTheme: null, // 提前锁定、开事件时消费的内部主题，绝不进公开状态
+    rumors: [],              // 坊间传闻，只保留最近 10 条 [{turn, text}]
+    location: (bible.start && typeof bible.start.place === 'string') ? bible.start.place : '',
+    clock: { day: 1, period: PERIODS[0] },
+    pastLives: [],           // 前世墓志铭 [{life,name,epitaph,turns,cause}]
     chronicle: [],
     recent: [],
     highlightUntilTurn: 0,
@@ -366,12 +460,31 @@ function planTurn(state, opts) {
   const hasActive = !!state.activeEvent;
   const settling = hasActive && state.activeEvent.startedTurn < nextTurn;
   const opening = !hasActive && nextTurn >= state.nextEventTurn && themes.length > 0;
-  const theme = opening ? themes[Math.floor(unit(rng) * themes.length)] : null;
+  // 风声预兆窗口：无进行中事件、距下次事件 1~2 回合。
+  const omen = computeOmen(state);
+
+  // 提前锁定即将到来的事件主题，保证预兆回合的征兆最终对应真正开启的大事：
+  // 优先沿用已存的 pendingEventTheme（连续预兆回合指向同一主题），否则现在随机选一个。
+  let pendingTheme = null;
+  if (opening || omen) {
+    const stored = state.pendingEventTheme;
+    if (typeof stored === 'string' && themes.includes(stored)) {
+      pendingTheme = stored;
+    } else {
+      pendingTheme = themes[Math.floor(unit(rng) * themes.length)];
+    }
+  }
+  // 开事件用预选主题；老存档没有预选主题时现选一个兜底。
+  const theme = opening ? (pendingTheme || themes[Math.floor(unit(rng) * themes.length)]) : null;
+
   return {
     nextTurn,
     settling,
     opening,
     theme,
+    omen,                                   // 本回合叙事需要埋不祥征兆
+    omenTheme: omen ? pendingTheme : null,   // 供 prompt 写与主题相关的征兆（仅服务端可见）
+    pendingEventTheme: pendingTheme,          // 供 resolveTurn 写入 / 消费
     needEvent: opening, // 需要本回合 LLM 输出 event.title / event.desc
     needSettlement: settling, // 需要本回合 LLM 输出 event_check
     needChapter: nextTurn % 20 === 0,
@@ -487,6 +600,21 @@ function rebirth(state, input) {
   return { state: s, error: null };
 }
 
+// 前世墓志铭：把一条本世记录追加到 state.pastLives；引擎在此强制 ≤80 字与字段形状。
+function applyEpitaph(state, entry) {
+  const s = cloneState(state);
+  if (!Array.isArray(s.pastLives)) s.pastLives = [];
+  const e = entry && typeof entry === 'object' ? entry : {};
+  s.pastLives.push({
+    life: Number.isInteger(e.life) ? e.life : (s.life || 1),
+    name: typeof e.name === 'string' ? e.name : '',
+    epitaph: typeof e.epitaph === 'string' ? e.epitaph.slice(0, EPITAPH_MAX) : '',
+    turns: Number.isFinite(e.turns) ? e.turns : 0,
+    cause: typeof e.cause === 'string' ? e.cause : '',
+  });
+  return s;
+}
+
 function canTakeTurn(state) {
   return !state.awaitingRebirth;
 }
@@ -496,8 +624,11 @@ function canTakeTurn(state) {
 function toPublicState(state) {
   const out = cloneState(state || {});
   for (const key of Object.keys(out)) {
-    if (key === 'apex' || /api.?key/i.test(key)) delete out[key];
+    // pendingEventTheme 是提前锁定的内部主题，绝不能以主题名暴露给玩家。
+    if (key === 'apex' || key === 'pendingEventTheme' || /api.?key/i.test(key)) delete out[key];
   }
+  // 风声预兆：只给出布尔标记，从不带出主题名。
+  out.omen = computeOmen(out);
   return out;
 }
 
@@ -566,6 +697,10 @@ function resolveTurn(state, input, opts) {
     if (!meta.title) rejected.push('事件标题未提供，使用主题占位');
     openedEvent = { theme: plan.theme, title, desc, startedTurn: nextTurn };
     s.activeEvent = openedEvent;
+    s.pendingEventTheme = null; // 预选主题已用于开启事件，消费掉
+  } else if (plan.omen && plan.pendingEventTheme) {
+    // 预兆回合：提前锁定主题，供后续预兆回合与真正开事件时使用。
+    s.pendingEventTheme = plan.pendingEventTheme;
   }
 
   // 应用已消毒的提议
@@ -613,6 +748,20 @@ function resolveTurn(state, input, opts) {
   // 最近 6 回合，narration 截 300 字
   s.recent.push({ turn: nextTurn, action, narration: applied.narration.slice(0, RECENT_NARRATION_MAX) });
   if (s.recent.length > RECENT_MAX) s.recent = s.recent.slice(-RECENT_MAX);
+
+  // 坊间传闻：可选字段，校验长度后入库，只留最近 10 条（含 turn）
+  const rumor = normalizeRumor(data.proposal && data.proposal.rumor);
+  if (rumor) {
+    if (!Array.isArray(s.rumors)) s.rumors = [];
+    s.rumors.push({ turn: nextTurn, text: rumor });
+    if (s.rumors.length > RUMORS_MAX) s.rumors = s.rumors.slice(-RUMORS_MAX);
+  }
+
+  // 地点与时间：校验 move_to / time_passes 后写入（叙事须与之一致，由 prompt 约束）
+  const p = data.proposal && typeof data.proposal === 'object' ? data.proposal : {};
+  const moveTo = normalizeMoveTo(state, p.move_to, applied.narration);
+  if (moveTo) s.location = moveTo;
+  s.clock = advanceClock(s.clock, normalizeTimePasses(p.time_passes));
 
   // 编年史：turn % 20 == 0，摘要由 LLM_MODEL_WORLD 生成后从 data.chapterSummary 回传
   let chapter = null;
@@ -686,6 +835,21 @@ module.exports = {
   toInt,
   allocateAttrs,
   createWorld,
+  normalizeState,
+  computeOmen,
+  OMEN_MIN_GAP,
+  OMEN_MAX_GAP,
+  RUMOR_MAX,
+  RUMORS_MAX,
+  normalizeRumor,
+  PERIODS,
+  MOVE_TO_MAX,
+  TIME_PASSES_DEFAULT,
+  normalizeMoveTo,
+  normalizeTimePasses,
+  advanceClock,
+  EPITAPH_MAX,
+  applyEpitaph,
   validateProposal,
   planTurn,
   settleEvent,

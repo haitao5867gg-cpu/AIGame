@@ -79,6 +79,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   padding-bottom:10px;margin-bottom:12px}
 .game-head-title{flex:1;min-width:120px;font-size:20px;font-weight:600}
 .game-head-meta{display:flex;gap:12px;font-family:var(--sans);font-size:13px;color:var(--muted)}
+.g-subhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px;min-height:1px}
+.g-place{font-family:var(--sans);font-size:13px;color:var(--muted);letter-spacing:1px}
+.omen-tag{font-family:var(--sans);font-size:11px;color:#e8a99d;background:rgba(192,57,43,.14);
+  border:1px solid rgba(192,57,43,.4);border-radius:10px;padding:2px 9px;letter-spacing:2px}
 #btn-panel{display:none}
 .event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);
   border:1px solid rgba(192,57,43,.5);border-left:4px solid var(--accent);border-radius:6px;
@@ -144,10 +148,15 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .attr-val{width:22px;text-align:right}
 .item-chip{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
   border:1px solid var(--line);border-radius:12px;padding:3px 9px;display:inline-block;margin:2px 4px 2px 0}
+.rumor-item{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:5px 0;line-height:1.6}
 .muted{font-family:var(--sans);font-size:12px;color:var(--muted)}
 .npc-row{display:flex;justify-content:space-between;font-family:var(--sans);font-size:12px;margin:5px 0}
 .npc-attitude{color:var(--accent-2);letter-spacing:1px}
 .chronicle-item{font-size:13px;color:var(--muted);margin:6px 0;border-left:2px solid var(--line);padding-left:8px}
+.past-life-item{border-left:2px solid var(--accent);padding-left:9px;margin:8px 0}
+.past-life-head{font-family:var(--sans);font-size:12px;color:var(--muted)}
+.past-life-epitaph{font-size:13px;color:var(--ink);line-height:1.7;margin-top:3px}
 .world-setting{font-size:13px;color:var(--muted);margin:4px 0;line-height:1.6}
 @media(max-width:859px){
   #btn-panel{display:inline-block}
@@ -163,6 +172,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .death-card{max-width:420px;width:100%;text-align:center}
 .death-kicker{font-size:30px;letter-spacing:8px;color:var(--accent-2);margin-bottom:16px}
 .death-summary{color:var(--muted);font-size:15px;line-height:1.9}
+.epitaph{color:var(--ink);font-size:16px;line-height:2;font-style:italic;letter-spacing:1px;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 4px;margin:18px 0}
 .rebirth-form{display:flex;flex-direction:column;gap:8px;margin-top:22px;text-align:left}
 .rebirth-form label{margin:0}
 .toast{position:fixed;z-index:80;top:14px;left:50%;transform:translateX(-50%);max-width:90%;
@@ -218,6 +229,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
       <button id="btn-panel" class="btn tiny">角色面板</button>
     </header>
+    <div class="g-subhead">
+      <span id="g-place" class="g-place"></span>
+      <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
+    </div>
     <div id="event-banner" class="event-banner" hidden></div>
     <div class="game-body">
       <main class="stage">
@@ -494,6 +509,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     $('g-title').textContent = (s.bible && s.bible.title) || '无限世界';
     $('g-life').textContent = '第 ' + s.life + ' 世';
     $('g-turn').textContent = '第 ' + s.turn + ' 回合';
+    var loc = s.location || (s.bible && s.bible.start && s.bible.start.place) || '—';
+    var c = s.clock || {};
+    $('g-place').textContent = loc + ' · 第' + (c.day || 1) + '日 ' + (c.period || '清晨');
+    $('g-omen').hidden = !s.omen;
   }
 
   function appendOpening(text) {
@@ -683,6 +702,16 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     else itemsSec.appendChild(el('span', 'muted', '（无）'));
     panel.appendChild(itemsSec);
 
+    var rumors = s.rumors || [];
+    var rumorSec = el('div', 'panel-section');
+    rumorSec.appendChild(el('h4', 'panel-h', '坊间传闻'));
+    if (rumors.length) {
+      rumors.slice().reverse().forEach(function (r) {
+        rumorSec.appendChild(el('div', 'rumor-item', '· ' + (r.text || '')));
+      });
+    } else rumorSec.appendChild(el('div', 'muted', '（尚无传闻）'));
+    panel.appendChild(rumorSec);
+
     var npcSec = el('div', 'panel-section');
     npcSec.appendChild(el('h4', 'panel-h', '认识的人'));
     var npc = s.npcAttitude || {};
@@ -715,6 +744,20 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     });
     panel.appendChild(personaSec);
 
+    var past = s.pastLives || [];
+    var pastSec = el('div', 'panel-section');
+    pastSec.appendChild(el('h4', 'panel-h', '前世'));
+    if (past.length) {
+      past.slice().reverse().forEach(function (pl) {
+        var item = el('div', 'past-life-item');
+        item.appendChild(el('div', 'past-life-head',
+          '第' + pl.life + '世 · ' + (pl.name || '无名') + ' · ' + (pl.turns || 0) + ' 回合'));
+        item.appendChild(el('div', 'past-life-epitaph', pl.epitaph || ''));
+        pastSec.appendChild(item);
+      });
+    } else pastSec.appendChild(el('div', 'muted', '（尚无前世）'));
+    panel.appendChild(pastSec);
+
     var chronicle = s.chronicle || [];
     var chChildren = chronicle.length
       ? chronicle.map(function (c) {
@@ -744,7 +787,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     m.textContent = '';
     m.hidden = false;
     var card = el('div', 'death-card');
-    card.appendChild(el('div', 'death-kicker', '第 ' + (death ? death.life : state.life) + ' 世 · 终'));
+    var past = state.pastLives || [];
+    var last = past.length ? past[past.length - 1] : null;
+    var lifeNo = death ? death.life : (last ? last.life : state.life);
+    card.appendChild(el('div', 'death-kicker', '第 ' + lifeNo + ' 世 · 终'));
     var summary = '本世走过 ' + state.turn + ' 回合。';
     if (death && death.inheritedReputation != null) {
       summary += '声望余响 ' + death.inheritedReputation + ' 将随你进入下一世，认识过你的人也还记得你。';
@@ -752,6 +798,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       summary += '声名会留下淡淡的余响，随你进入下一世。';
     }
     card.appendChild(el('p', 'death-summary', summary));
+    if (last && last.epitaph) {
+      card.appendChild(el('p', 'epitaph', last.epitaph)); // 前世墓志铭
+    }
 
     var form = el('div', 'rebirth-form');
     form.appendChild(el('label', '', '新的名字'));

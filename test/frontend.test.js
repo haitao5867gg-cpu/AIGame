@@ -4,8 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+test('前端：内联脚本语法合法（仅编译，不执行 DOM）', () => {
+  const m = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(m, '应存在内联 <script>');
+  assert.doesNotThrow(() => new vm.Script(m[1]));
+});
 
 test('前端：无外部 http(s) 脚本/样式引用（单文件、无 CDN）', () => {
   assert.equal(/<script[^>]*\bsrc\s*=\s*["']\s*https?:\/\//i.test(html), false, '不应引用外部脚本');
@@ -50,4 +57,29 @@ test('前端：包含三个视图与 /rebirth 调用', () => {
   assert.ok(/\/rebirth/.test(html), '应调用 /rebirth');
   // 只调用自家 /api/*，不得出现 Key 字样
   assert.equal(/LLM_API_KEY|API_KEY/.test(html), false, '前端不得出现 Key');
+});
+
+test('前端：风声渐紧预兆标签', () => {
+  assert.ok(/id=["']g-omen["']/.test(html), '应有预兆标签元素');
+  assert.ok(/风声渐紧/.test(html), '应显示「风声渐紧」文案');
+  assert.ok(/omen-tag/.test(html), '应有预兆标签样式');
+});
+
+test('前端：坊间传闻区（最新在上）', () => {
+  assert.ok(/坊间传闻/.test(html), '应有坊间传闻区');
+  assert.ok(/rumor-item/.test(html), '应有传闻条目样式');
+  assert.ok(/rumors\.slice\(\)\.reverse\(\)/.test(html), '传闻应最新在上');
+});
+
+test('前端：顶部显示「地点 · 第N日 时段」', () => {
+  assert.ok(/id=["']g-place["']/.test(html), '应有一处显示地点与时间');
+  assert.ok(/· 第/.test(html), '应拼出「地点 · 第N日 时段」');
+  assert.ok(/s\.clock/.test(html), '应读取 clock 渲染');
+});
+
+test('前端：死亡遮罩显示墓志铭、侧面板「前世」区', () => {
+  assert.ok(/前世/.test(html), '侧面板应有前世区');
+  assert.ok(/pastLives/.test(html), '应读取 pastLives');
+  assert.ok(/last\.epitaph/.test(html), '死亡遮罩应显示墓志铭');
+  assert.ok(/past-life-item/.test(html), '应有前世条目样式');
 });

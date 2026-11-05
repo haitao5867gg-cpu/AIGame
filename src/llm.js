@@ -14,6 +14,7 @@ const PURPOSES = Object.freeze({
   TURN: 'turn',       // 普通回合 / 事件开启 / 事件结算
   CHAPTER: 'chapter', // 编年史压缩
   APEX: 'apex',       // 新顶点
+  EPITAPH: 'epitaph', // 前世墓志铭（死亡时额外调用）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -86,6 +87,21 @@ function mockTurn(m) {
     persona_tags: ['冒险'],
     suggestions: ['继续沿旧道探查', '向守夜人打听钟声', '先去枯井集市补给'],
   };
+  // 坊间传闻：约每 3 回合给一条（≤40 字），内容真假难辨、可作侧面暗示。
+  if (turn % 3 === 0) {
+    const rumors = [
+      '守夜会的更漏昨夜快了一刻',
+      '拾骨者在枯井淘到半页旧谱',
+      '北边的钟声近来总在子夜响',
+    ];
+    out.rumor = rumors[Math.floor(turn / 3) % rumors.length];
+  }
+  // 地点与时间：偶尔移动到设定地点（或叙事里出现的地点），按节奏推进 0~2 个时段。
+  if (turn % 4 === 0) {
+    const places = ['无灯塔', '枯井集市', '灰烬港'];
+    out.move_to = places[Math.floor(turn / 4) % places.length];
+  }
+  out.time_passes = turn % 6 === 0 ? 0 : (turn % 5 === 0 ? 2 : 1);
   // 事件开启：仅当引擎要求时给出 event.title / event.desc。
   if (m && m.needEvent) {
     const theme = m.theme || '秘境开启';
@@ -124,12 +140,22 @@ function mockApex(m) {
   };
 }
 
+// 前世墓志铭：≤80 字，确定性假数据。
+function mockEpitaph(m) {
+  const life = (m && m.life) || 1;
+  const name = (m && m.name) || '旅人';
+  return {
+    epitaph: `第${life}世，${name}行过灰烬港的雾，听过无灯塔的钟，终没能等来那封信的落款。`,
+  };
+}
+
 function mockFor(purpose, m) {
   switch (purpose) {
     case PURPOSES.WORLD: return mockWorld(m);
     case PURPOSES.TURN: return mockTurn(m);
     case PURPOSES.CHAPTER: return mockChapter(m);
     case PURPOSES.APEX: return mockApex(m);
+    case PURPOSES.EPITAPH: return mockEpitaph(m);
     default: return mockTurn(m);
   }
 }

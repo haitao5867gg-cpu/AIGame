@@ -815,3 +815,214 @@ test('纯函数循环跑 30 回合（含至少 2 次事件），状态可完整�
   assert.ok(chapters >= 1); // 第 20 回合压了一章
   assert.equal(e.canTakeTurn(state), true);
 });
+
+// ---------- 风声预兆（omen / pendingEventTheme） ----------
+
+test('风声预兆：computeOmen 只在无进行中事件且 nextEventTurn - turn 为 1~2 时为真', () => {
+  const s = makeState();
+  s.activeEvent = null;
+  s.turn = 5;
+  s.nextEventTurn = 8;
+  assert.equal(e.computeOmen(s), false); // gap 3
+  s.nextEventTurn = 7;
+  assert.equal(e.computeOmen(s), true);  // gap 2
+  s.nextEventTurn = 6;
+  assert.equal(e.computeOmen(s), true);  // gap 1
+  s.nextEventTurn = 5;
+  assert.equal(e.computeOmen(s), false); // gap 0
+  s.activeEvent = { theme: '天灾' };
+  assert.equal(e.computeOmen(s), false); // 有进行中事件
+});
+
+test('风声预兆：planTurn 在预兆窗口提前选主题，开事件时沿用同一主题', () => {
+  const s = makeState();
+  s.turn = 5;
+  s.nextEventTurn = 8; // gap 3 → 无预兆
+  let plan = e.planTurn(s, { rng: () => 0 });
+  assert.equal(plan.omen, false);
+  assert.equal(plan.omenTheme, null);
+
+  s.turn = 6; // gap 2 → 预兆，提前选主题
+  plan = e.planTurn(s, { rng: () => 0 });
+  assert.equal(plan.omen, true);
+  assert.equal(plan.omenTheme, '魔族入侵');
+  assert.equal(plan.pendingEventTheme, '魔族入侵');
+  assert.equal(plan.opening, false);
+
+  // resolveTurn 把主题写入 state.pendingEventTheme
+  const out = run(s, { action: '探听', proposal: proposal(), plan });
+  assert.equal(out.state.pendingEventTheme, '魔族入侵');
+
+  // 下一回合 gap=1：预兆 + 开事件，主题沿用已存的（即便 rng 变化也不重选）
+  const s2 = out.state;
+  const plan2 = e.planTurn(s2, { rng: () => 0.999999 });
+  assert.equal(plan2.omen, true);
+  assert.equal(plan2.opening, true);
+  assert.equal(plan2.theme, '魔族入侵');
+  assert.equal(plan2.omenTheme, '魔族入侵');
+
+  const out2 = run(s2, {
+    action: '迎上去', proposal: proposal(), plan: plan2,
+    event: { title: '北境烽火', desc: '告急' },
+  });
+  assert.equal(out2.state.activeEvent.theme, '魔族入侵');
+  assert.equal(out2.state.pendingEventTheme, null); // 开事件后消费掉
+});
+
+test('风声预兆：公开状态只有 omen 布尔，绝不暴露 pendingEventTheme 主题名', () => {
+  const s = makeState();
+  s.turn = 6;
+  s.nextEventTurn = 8; // gap 2
+  s.pendingEventTheme = '绝密预选主题'; // 哨兵值，确保该内部值不会出现在公开状态
+  const pub = e.toPublicState(s);
+  assert.equal(pub.omen, true);
+  assert.equal('pendingEventTheme' in pub, false);
+  assert.equal(JSON.stringify(pub).includes('绝密预选主题'), false);
+  assert.equal('apex' in pub, false);
+
+  assert.equal(e.toPublicState(makeState()).omen, false); // 距事件尚远
+});
+
+test('老存档：normalizeState 补齐新字段默认值，不报错也不改入参', () => {
+  const old = {
+    id: 'w', turn: 3, nextEventTurn: 9, activeEvent: null,
+    bible: { title: '旧世界' }, character: { alive: true, attrs: {} },
+  };
+  const before = JSON.stringify(old);
+  const norm = e.normalizeState(old);
+  assert.equal(norm.pendingEventTheme, null);
+  assert.deepEqual(norm.rumors, []);
+  assert.equal(JSON.stringify(old), before); // 不改入参
+  assert.equal(typeof e.toPublicState(norm).omen, 'boolean');
+});
+
+// ---------- 坊间传闻（rumor / rumors） ----------
+
+test('坊间传闻：normalizeRumor 截 40 字、忽略非字符串/空串', () => {
+  assert.equal(e.normalizeRumor('  巷口有人说书  '), '巷口有人说书');
+  assert.equal(e.normalizeRumor('长'.repeat(55)).length, 40);
+  assert.equal(e.normalizeRumor(''), '');
+  assert.equal(e.normalizeRumor('   '), '');
+  assert.equal(e.normalizeRumor(null), '');
+  assert.equal(e.normalizeRumor(123), '');
+});
+
+test('坊间传闻：resolveTurn 校验后写入 rumors（含 turn），只留最近 10 条', () => {
+  let s = makeState();
+  s.nextEventTurn = 999;
+  for (let i = 1; i <= 12; i++) {
+    s = run(s, {
+      action: 'a',
+      proposal: proposal({ rumor: '第' + i + '条传闻，' + '长'.repeat(50) }),
+    }, () => 0.5, i).state;
+  }
+  assert.equal(s.rumors.length, 10);
+  assert.equal(s.rumors[0].turn, 3);   // 最早留下的第 3 回合
+  assert.equal(s.rumors[9].turn, 12);  // 最新在第 12 回合
+  assert.equal(s.rumors[9].text.length, 40); // 超长截断
+  assert.ok(s.rumors.every((r) => typeof r.turn === 'number' && typeof r.text === 'string'));
+});
+
+test('坊间传闻：无 rumor 回合不写 rumors；老存档补默认', () => {
+  const out = run(makeState(), { action: 'a', proposal: proposal() });
+  assert.deepEqual(out.state.rumors, []);
+  assert.deepEqual(e.normalizeState({ turn: 2 }).rumors, []);
+});
+
+// ---------- 地点与时间（location / clock / move_to / time_passes） ----------
+
+test('地点与时间：createWorld 初始 location = bible.start.place、clock = 第1日清晨', () => {
+  const s = makeState(); // bible.start.place = '村口'
+  assert.equal(s.location, '村口');
+  assert.deepEqual(s.clock, { day: 1, period: '清晨' });
+});
+
+test('地点与时间：advanceClock 按 清晨→午后→黄昏→深夜→次日清晨 滚动', () => {
+  let c = { day: 1, period: '清晨' };
+  c = e.advanceClock(c, 1); assert.deepEqual(c, { day: 1, period: '午后' });
+  c = e.advanceClock(c, 1); assert.deepEqual(c, { day: 1, period: '黄昏' });
+  c = e.advanceClock(c, 1); assert.deepEqual(c, { day: 1, period: '深夜' });
+  c = e.advanceClock(c, 1); assert.deepEqual(c, { day: 2, period: '清晨' }); // 深夜后 day+1
+  assert.deepEqual(e.advanceClock({ day: 3, period: '黄昏' }, 2), { day: 4, period: '清晨' });
+  assert.deepEqual(e.advanceClock({ day: 1, period: '午后' }, 0), { day: 1, period: '午后' });
+  assert.deepEqual(e.advanceClock(null, 1), { day: 1, period: '午后' }); // 非法 clock 兜底
+});
+
+test('地点与时间：normalizeTimePasses 夹 0~2、缺省默认 1', () => {
+  assert.equal(e.normalizeTimePasses(undefined), 1);
+  assert.equal(e.normalizeTimePasses(null), 1);
+  assert.equal(e.normalizeTimePasses('abc'), 1);
+  assert.equal(e.normalizeTimePasses(0), 0);
+  assert.equal(e.normalizeTimePasses(2), 2);
+  assert.equal(e.normalizeTimePasses(9), 2);
+  assert.equal(e.normalizeTimePasses(-3), 0);
+  assert.equal(e.normalizeTimePasses(1.6), 2);
+});
+
+test('地点与时间：normalizeMoveTo 只接受设定地点或叙事新地点、≤12 字', () => {
+  const s = makeState();
+  s.bible.places = [{ name: '北岭' }, { name: '旧渡口' }];
+  assert.equal(e.normalizeMoveTo(s, '北岭', '任意叙事'), '北岭'); // 设定地点
+  assert.equal(e.normalizeMoveTo(s, '旧渡口', '任意叙事'), '旧渡口');
+  assert.equal(e.normalizeMoveTo(s, '雾中石桥', '你走上雾中石桥，脚下吱呀作响'), '雾中石桥'); // 叙事新地点
+  assert.equal(e.normalizeMoveTo(s, '雾中石桥', '你留在原地'), ''); // 未在设定/叙事出现
+  assert.equal(e.normalizeMoveTo(s, '超'.repeat(13), '叙事'), ''); // >12 字
+  assert.equal(e.normalizeMoveTo(s, 123, '叙事'), ''); // 非字符串
+});
+
+test('地点与时间：resolveTurn 校验后写入 location / clock', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  s.bible.places = [{ name: '码头' }];
+  s.location = '村口';
+  s.clock = { day: 1, period: '黄昏' };
+
+  const o1 = run(s, {
+    action: '出发',
+    proposal: proposal({ move_to: '码头', time_passes: 2 }),
+  });
+  assert.equal(o1.state.location, '码头');
+  assert.deepEqual(o1.state.clock, { day: 2, period: '清晨' }); // 黄昏→深夜→次日清晨
+
+  const o2 = run(o1.state, {
+    action: '张望',
+    proposal: proposal({ move_to: '天宫禁地', time_passes: undefined }),
+  });
+  assert.equal(o2.state.location, '码头'); // 非法移动被忽略，原地不动
+  assert.deepEqual(o2.state.clock, { day: 2, period: '午后' }); // 缺省推进 1
+});
+
+test('地点与时间：老存档补 location / clock 默认值', () => {
+  const norm = e.normalizeState({ turn: 4, bible: { start: { place: '古城' } } });
+  assert.equal(norm.location, '古城');
+  assert.deepEqual(norm.clock, { day: 1, period: '清晨' });
+  const norm2 = e.normalizeState({ turn: 4, location: '某地', clock: { day: 9, period: '深夜' } });
+  assert.deepEqual(norm2.clock, { day: 9, period: '深夜' }); // 合法值保留
+});
+
+// ---------- 前世墓志铭（pastLives / epitaph） ----------
+
+test('前世墓志铭：createWorld 初始化 pastLives = []，老存档补默认', () => {
+  assert.deepEqual(makeState().pastLives, []);
+  assert.deepEqual(e.normalizeState({ turn: 2 }).pastLives, []);
+});
+
+test('前世墓志铭：applyEpitaph 追加记录、强制 ≤80 字与字段形状、不改入参', () => {
+  const s = makeState();
+  const before = JSON.stringify(s);
+  const ns = e.applyEpitaph(s, {
+    life: 1, name: '初代', epitaph: '长'.repeat(120), turns: 8, cause: '体魄归零',
+  });
+  assert.equal(ns.pastLives.length, 1);
+  assert.equal(ns.pastLives[0].epitaph.length, 80);
+  assert.equal(ns.pastLives[0].life, 1);
+  assert.equal(ns.pastLives[0].name, '初代');
+  assert.equal(ns.pastLives[0].turns, 8);
+  assert.equal(ns.pastLives[0].cause, '体魄归零');
+  assert.deepEqual(Object.keys(ns.pastLives[0]).sort(),
+    ['cause', 'epitaph', 'life', 'name', 'turns']);
+  assert.equal(JSON.stringify(s), before); // 纯函数，不改入参
+
+  const ns2 = e.applyEpitaph(ns, { life: 2, name: '二世', epitaph: '短', turns: 3, cause: '事件殒命' });
+  assert.equal(ns2.pastLives.length, 2); // 多世累积
+});
