@@ -35,3 +35,6 @@ yarn-error.log*
 data/
 .logs/
 logs/
+
+# Autoplay reports
+reports/
