@@ -30,3 +30,7 @@ venv/
 *.log
 npm-debug.log*
 yarn-error.log*
+
+# Game data (runtime)
+data/
+.logs/

@@ -1,0 +1,148 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const env = require('../src/env.js');
+
+function tmpFile(text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aigame-env-'));
+  const file = path.join(dir, '.env');
+  fs.writeFileSync(file, text, 'utf8');
+  return { dir, file };
+}
+
+function missingFile() {
+  return path.join(os.tmpdir(), `aigame-no-such-env-${process.pid}-${Date.now()}`);
+}
+
+test('parse: KEY=VALUE、# 注释、空行、CRLF、无 = 的行', () => {
+  const out = env.parse(
+    '# 这是注释\r\n\r\n' +
+      'LLM_BASE=https://example.com/v1\r\n' +
+      'LLM_MODEL = deepseek-x\r\n' +
+      'BROKEN_LINE\r\n' +
+      '=novalue\r\n' +
+      '  # 缩进注释\n',
+  );
+  assert.equal(out.LLM_BASE, 'https://example.com/v1');
+  assert.equal(out.LLM_MODEL, 'deepseek-x');
+  assert.equal(Object.prototype.hasOwnProperty.call(out, 'BROKEN_LINE'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(out, ''), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(out, '# 这是注释'), false);
+});
+
+test('parse: 引号值、内联注释、export、空值、非法键名', () => {
+  const out = env.parse(
+    [
+      'A="hello # world"   # 行尾注释',
+      "B='single quoted'",
+      'C=plain # comment',
+      'D=hash#nospace',
+      'export E=1',
+      'EMPTY=',
+      '1BAD=x',
+      'BAD-KEY=y',
+    ].join('\n'),
+  );
+  assert.equal(out.A, 'hello # world');
+  assert.equal(out.B, 'single quoted');
+  assert.equal(out.C, 'plain');
+  assert.equal(out.D, 'hash#nospace');
+  assert.equal(out.E, '1');
+  assert.equal(out.EMPTY, '');
+  assert.equal(Object.prototype.hasOwnProperty.call(out, '1BAD'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(out, 'BAD-KEY'), false);
+});
+
+test('parse: 非字符串输入不抛错', () => {
+  assert.deepEqual(env.parse(null), {});
+  assert.deepEqual(env.parse(undefined), {});
+  assert.deepEqual(env.parse(''), {});
+});
+
+test('load: .env 不存在时全部使用规格默认值', () => {
+  const cfg = env.load(missingFile(), {});
+  assert.equal(cfg.LLM_BASE, '');
+  assert.equal(cfg.LLM_API_KEY, '');
+  assert.equal(cfg.LLM_MODEL, 'deepseek-v4.1-flash');
+  assert.equal(cfg.LLM_MODEL_WORLD, 'deepseek-v4-pro-0813');
+  assert.equal(cfg.LLM_MOCK, false);
+  assert.equal(cfg.LLM_TIMEOUT_MS, 90000);
+  assert.equal(cfg.LLM_DAILY_TOKEN_LIMIT, 2000000);
+  assert.equal(cfg.PORT, 8787);
+  assert.equal(cfg.HOST, '0.0.0.0');
+  assert.equal(cfg.DATA_DIR, './data');
+});
+
+test('load: 文件值、数值转换、mock 布尔、PORT=0', () => {
+  const { dir, file } = tmpFile(
+    'LLM_MOCK=1\nPORT=0\nLLM_TIMEOUT_MS=1200\nLLM_API_KEY=secret-xyz\nDATA_DIR=./mydata\n',
+  );
+  try {
+    const cfg = env.load(file, {});
+    assert.equal(cfg.LLM_MOCK, true);
+    assert.equal(cfg.PORT, 0);
+    assert.equal(cfg.LLM_TIMEOUT_MS, 1200);
+    assert.equal(cfg.LLM_API_KEY, 'secret-xyz');
+    assert.equal(cfg.DATA_DIR, './mydata');
+    assert.equal(typeof cfg.LLM_TIMEOUT_MS, 'number');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('load: 显式环境变量优先级高于 .env 文件', () => {
+  const { dir, file } = tmpFile('PORT=1111\nLLM_MOCK=1\nLLM_MODEL=from-file\n');
+  try {
+    const cfg = env.load(file, { PORT: '9999', LLM_MOCK: '0' });
+    assert.equal(cfg.PORT, 9999);
+    assert.equal(cfg.LLM_MOCK, false);
+    assert.equal(cfg.LLM_MODEL, 'from-file');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('load: LLM_MOCK 的各种真值 / 非法数值回退默认值', () => {
+  for (const v of ['1', 'true', 'TRUE', 'yes', 'on']) {
+    assert.equal(env.load(missingFile(), { LLM_MOCK: v }).LLM_MOCK, true, `mock=${v}`);
+  }
+  for (const v of ['0', 'false', '', 'no']) {
+    assert.equal(env.load(missingFile(), { LLM_MOCK: v }).LLM_MOCK, false, `mock=${v}`);
+  }
+  assert.equal(env.load(missingFile(), { LLM_TIMEOUT_MS: 'not-a-number' }).LLM_TIMEOUT_MS, 90000);
+  assert.equal(env.load(missingFile(), { PORT: '-3' }).PORT, 8787);
+});
+
+test('load: .env 里的额外键原样保留', () => {
+  const { dir, file } = tmpFile('CUSTOM_FLAG=hello\n');
+  try {
+    assert.equal(env.load(file, {}).CUSTOM_FLAG, 'hello');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('withoutKey: 接口返回里绝不带 Key', () => {
+  const cfg = env.load(missingFile(), {});
+  cfg.LLM_API_KEY = 'sk-super-secret';
+  const pub = env.withoutKey(cfg);
+  assert.equal(Object.prototype.hasOwnProperty.call(pub, 'LLM_API_KEY'), false);
+  assert.equal(JSON.stringify(pub).includes('sk-super-secret'), false);
+  assert.equal(cfg.LLM_API_KEY, 'sk-super-secret'); // 原对象不被修改
+});
+
+test('resolveDataDir: 用 path.resolve，Windows 兼容', () => {
+  const cwd = path.join(os.tmpdir(), 'aigame-cwd');
+  assert.equal(env.resolveDataDir({ DATA_DIR: './data' }, cwd), path.resolve(cwd, './data'));
+  assert.equal(env.resolveDataDir({ DATA_DIR: 'custom' }, cwd), path.resolve(cwd, 'custom'));
+  assert.equal(env.resolveDataDir({}, cwd), path.resolve(cwd, './data'));
+});
+
+test('getConfig 是可用函数', () => {
+  assert.equal(typeof env.getConfig, 'function');
+  assert.equal(typeof env.getConfig().LLM_MODEL, 'string');
+});
