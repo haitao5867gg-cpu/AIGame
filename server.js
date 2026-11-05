@@ -80,6 +80,98 @@ function readJsonBody(req) {
   });
 }
 
+// ---- 导出 ----
+// 把公开状态（去掉 apex）+ events.jsonl 公开字段打包成 JSON 附件下载。
+function handleExport(res, g, id) {
+  const data = g.exportWorld(id);
+  const text = JSON.stringify(data, null, 2);
+  const filename = `world-${id}.json`;
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Length': Buffer.byteLength(text),
+    'Cache-Control': 'no-store',
+  });
+  res.end(text);
+}
+
+// ---- 启动备份 ----
+const BACKUP_KEEP = 7;
+const BACKUP_NAME = /^\d{8}-\d{6}$/;
+
+function backupTimestamp(now) {
+  const d = now == null ? new Date() : new Date(now);
+  const p = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  );
+}
+
+// 把 DATA_DIR/worlds 整个（只）用 fs.cpSync 复制到 DATA_DIR/../backups/<ts>/；
+// 只保留最近 7 份，更旧的删除；失败只告警，绝不影响启动。返回 dest 或 null。
+function createBackup(dataDir, now) {
+  const ts = backupTimestamp(now);
+  const baseDir = path.join(dataDir, '..', 'backups');
+  const dest = path.join(baseDir, ts);
+  const src = path.join(dataDir, 'worlds');
+  try {
+    fs.cpSync(src, dest, { recursive: true });
+    const dirs = fs.readdirSync(baseDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && BACKUP_NAME.test(e.name))
+      .map((e) => e.name)
+      .sort();
+    while (dirs.length > BACKUP_KEEP) {
+      const old = dirs.shift();
+      fs.rmSync(path.join(baseDir, old), { recursive: true, force: true });
+    }
+    return dest;
+  } catch (err) {
+    console.warn('[backup] 启动备份失败（已忽略，不影响启动）：' +
+      (err && err.message ? err.message : err));
+    return null;
+  }
+}
+
+// ---- SSE 流式回合 ----
+function startEventStream(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // 禁止反向代理缓冲，保证 delta 边生成边到达
+  });
+}
+
+function sseEvent(res, event, data) {
+  if (res.writableEnded || res.destroyed) return;
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+// POST /api/worlds/:id/turn/stream：多次 event: delta，最后 event: result / event: error。
+// result 的 data 与普通 /turn 的响应体完全相同（来自同一个 takeTurn）。
+async function handleStreamTurn(req, res, g, id) {
+  startEventStream(res);
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    const message = err && err.expose && err.message ? err.message : '请求体不是合法 JSON';
+    sseEvent(res, 'error', { error: String(message) });
+    res.end();
+    return;
+  }
+  try {
+    const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }));
+    sseEvent(res, 'result', result);
+    res.end();
+  } catch (err) {
+    const message = err && err.expose && err.message ? err.message : '服务器内部错误';
+    sseEvent(res, 'error', { error: String(message) });
+    res.end();
+  }
+}
+
 function serveStatic(req, res, pathname, isHead) {
   let rel;
   try {
@@ -144,6 +236,34 @@ async function handle(req, res, cfg, g) {
   }
 
   // ---- 带世界 ID 的接口 ----
+  // 流式回合：POST /api/worlds/:id/turn/stream（text/event-stream），须在通用路由前匹配。
+  const streamMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/turn\/stream$/);
+  if (streamMatch) {
+    if (method !== 'POST') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(streamMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    return handleStreamTurn(req, res, g, id);
+  }
+
+  // 导出：GET /api/worlds/:id/export（打包 state + events 的 JSON 附件）。
+  const exportMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/export$/);
+  if (exportMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(exportMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    return handleExport(res, g, id);
+  }
+
   const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth|log))?$/);
   if (m) {
     let id;
@@ -199,6 +319,8 @@ function createHttpServer(cfg) {
 
 if (require.main === module) {
   const cfg = env.getConfig();
+  // 启动时先做一次存档备份（失败只告警，不阻断启动）。
+  createBackup(env.resolveDataDir(cfg));
   const server = createHttpServer(cfg);
   server.listen(cfg.PORT, cfg.HOST, () => {
     const addr = server.address();
@@ -209,4 +331,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createHttpServer, serveStatic, PUBLIC_DIR };
+module.exports = {
+  createHttpServer, serveStatic, PUBLIC_DIR,
+  createBackup, backupTimestamp, BACKUP_KEEP,
+};

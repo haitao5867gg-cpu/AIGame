@@ -180,6 +180,19 @@ function createGame(cfg, dataDir) {
     return res;
   }
 
+  // 流式调用：逐段回调 onDelta，返回与 complete 相同形状的结果。
+  async function callStream(purpose, model, messages, mockCtx, usages, onDelta) {
+    const res = await client.completeStream({
+      purpose,
+      model,
+      messages,
+      responseFormat: 'json_object',
+      mock: mockCtx,
+    }, onDelta);
+    if (usages) usages.push(res.usage);
+    return res;
+  }
+
   // 调用 + 解析；解析失败重试 1 次，再失败则报错且不推进回合。
   async function callParsed(purpose, model, messages, mockCtx, usages) {
     let lastContent = '';
@@ -190,6 +203,23 @@ function createGame(cfg, dataDir) {
       if (parsed) return { parsed, content: res.content };
     }
     throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
+  }
+
+  // 主回合调用（可流式）：首尝试走流式并逐段回调 onDelta；
+  // 解析失败时的重试一律走非流式（不再回调 delta）。拿到 content 之后的
+  // 解析 / 校验 / 落库流程与非流式完全一致。
+  async function callTurnParsed(purpose, model, messages, mockCtx, usages, onDelta) {
+    if (typeof onDelta === 'function') {
+      const res = await callStream(purpose, model, messages, mockCtx, usages, onDelta);
+      const parsed = prompts.parseJson(res.content);
+      if (parsed) return { parsed, content: res.content };
+      // 流式输出无法解析 → 非流式重试一次。
+      const retry = await call(purpose, model, messages, mockCtx, usages);
+      const parsed2 = prompts.parseJson(retry.content);
+      if (parsed2) return { parsed: parsed2, content: retry.content };
+      throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
+    }
+    return callParsed(purpose, model, messages, mockCtx, usages);
   }
 
   // 死亡时额外调用一次回合模型，据本世经历写墓志铭；
@@ -297,6 +327,18 @@ function createGame(cfg, dataDir) {
     return client.summarizeUsage(Date.now());
   }
 
+  // GET /api/worlds/:id/export：state.json（去掉 apex 等内部字段，用公开状态）
+  // + events.jsonl 的公开字段，打包成一个可下载的对象。
+  function exportWorld(worldId) {
+    store.assertWorldId(worldId);
+    const state = loadState(worldId);
+    if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+    return {
+      state: engine.toPublicState(state),
+      events: store.readEvents(dataDir, worldId).map(toPublicLogRecord),
+    };
+  }
+
   // GET /api/worlds/:id/log?limit=50：从 events.jsonl 读最近 N 条，只返回公开字段。
   function getWorldLog(worldId, rawLimit) {
     store.assertWorldId(worldId);
@@ -311,7 +353,8 @@ function createGame(cfg, dataDir) {
   }
 
   // ---- 执行一回合 ----
-  async function takeTurn(worldId, input) {
+  // onDelta 可选：传入时主回合走流式并逐段回调叙事文本；整个过程仍在该世界互斥锁内。
+  async function takeTurn(worldId, input, onDelta) {
     store.assertWorldId(worldId);
     return store.withWorldLock(worldId, async () => {
       const state = loadState(worldId);
@@ -341,10 +384,10 @@ function createGame(cfg, dataDir) {
         needEvent: plan.opening,
         needSettlement: plan.settling,
       };
-      const tp = await callParsed(
+      const tp = await callTurnParsed(
         'turn', turnModel,
         prompts.buildTurnMessages(state, plan, action),
-        turnCtx, usages,
+        turnCtx, usages, onDelta,
       );
       const out = tp.parsed;
       const proposal = {
@@ -513,6 +556,7 @@ function createGame(cfg, dataDir) {
 
   return {
     buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, getWorldLog,
+    exportWorld,
   };
 }
 

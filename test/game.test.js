@@ -638,3 +638,33 @@ test('老存档：缺 sceneStreak/lastTwistTurn/nextTwistTurn/oversteps 时读�
   assert.equal(typeof internal.oversteps, 'number');
   assert.equal(typeof internal.nextTwistTurn, 'number');
 });
+
+// ---------- 流式回合（onDelta）----------
+
+test('流式回合：takeTurn 传入 onDelta 时逐段回调叙事，结果与非流式一致且仍在互斥锁内', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '流式叙事世界', name: '甲', appearance: '乙' });
+  const id = world.id;
+
+  const deltas = [];
+  const res = await g.takeTurn(id, { action: '开始流式' }, (text) => deltas.push(text));
+  assert.ok(deltas.length >= 2, '应多次回调 delta');
+  assert.equal(deltas.join(''), res.narration, '回调拼接应等于完整叙事');
+  assert.ok(res.narration && res.narration.length >= 10);
+  assert.equal(res.state.turn, 1);
+  assertNoLeak(res);
+
+  // 后续回合仍可流式，且互斥锁保证同世界串行推进。
+  const deltas2 = [];
+  const res2 = await g.takeTurn(id, { action: '继续流式' }, (text) => deltas2.push(text));
+  assert.equal(res2.state.turn, 2);
+  assert.equal(deltas2.join(''), res2.narration);
+  assertNoLeak(res2);
+
+  // 同一世界并发两个流式回合仍严格串行（turn 依次 3、4）。
+  const [a, b] = await Promise.all([
+    g.takeTurn(id, { action: '并发甲' }, () => {}),
+    g.takeTurn(id, { action: '并发乙' }, () => {}),
+  ]);
+  assert.deepEqual([a.state.turn, b.state.turn].sort((x, y) => x - y), [3, 4]);
+});

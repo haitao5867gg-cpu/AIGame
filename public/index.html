@@ -248,6 +248,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       <div id="g-title" class="game-head-title">无限世界</div>
       <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
       <button id="btn-panel" class="btn tiny">角色面板</button>
+      <button id="btn-export" class="btn tiny">导出</button>
     </header>
     <div class="g-subhead">
       <span id="g-place" class="g-place"></span>
@@ -316,7 +317,6 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   var currentWorldId = null;
   var currentState = null;
   var busy = false;
-  var typer = null;
   var toastTimer = null;
   var pendingTimer = null;
   var pendingStart = 0;
@@ -346,11 +346,20 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     toastTimer = setTimeout(function () { t.hidden = true; }, 4200);
   }
 
+  // 导出世界：GET 附件接口，用临时 <a download> 触发下载，不跳转页面。
+  function exportWorld(id) {
+    var a = document.createElement('a');
+    a.href = '/api/worlds/' + encodeURIComponent(id) + '/export';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   // ---- 路由 ----
   function hideAllViews() {
     ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
     $('panel').dataset.open = 'false';
-    if (typer) typer.skip();
     clearInterval(pendingTimer);
     pendingTimer = null;
   }
@@ -391,6 +400,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 
       var footer = el('div', 'card-footer');
       footer.appendChild(el('span', 'go', '进入世界 ›'));
+      var exp = el('button', 'btn tiny', '导出');
+      exp.addEventListener('click', function (e) {
+        e.stopPropagation();
+        exportWorld(w.id);
+      });
+      footer.appendChild(exp);
       var del = el('button', 'btn danger tiny', '删除');
       var armed = false;
       del.addEventListener('click', function (e) {
@@ -510,7 +525,6 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 
   // ---- 游戏页 ----
   function clearStream() {
-    if (typer) typer.skip();
     $('stream').textContent = '';
   }
 
@@ -610,29 +624,24 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     return s;
   }
 
-  function typewrite(p, text) {
-    if (typer) typer.skip();
-    var i = 0;
-    var done = false;
-    function finish() {
-      if (done) return;
-      done = true;
-      p.textContent = text;
-      typer = null;
-      scrollBottom();
-    }
-    var timer = setInterval(function () {
-      i = Math.min(text.length, i + 30); // 约 30 字/帧
-      p.textContent = text.slice(0, i);
-      scrollBottom();
-      if (i >= text.length) { clearInterval(timer); finish(); }
-    }, 60);
-    typer = { skip: function () { clearInterval(timer); finish(); } };
-  }
-
-  function appendNarration(text, badges, instant) {
+  // 流式叙事：先建一个空叙事块，delta 到来时边到边追加（不再使用打字机效果）。
+  function beginStreamNarration() {
     var wrap = el('div', 'narration-block');
     var p = el('p', 'narration');
+    wrap.appendChild(p);
+    $('stream').appendChild(wrap);
+    return { wrap: wrap, p: p };
+  }
+
+  function appendStreamDelta(block, text) {
+    block.p.textContent += text;
+    scrollBottom();
+  }
+
+  // 一次性渲染完整叙事（历史回放 / result 最终补齐）。
+  function appendNarration(text, badges) {
+    var wrap = el('div', 'narration-block');
+    var p = el('p', 'narration', text);
     wrap.appendChild(p);
     if (badges && badges.length) {
       var bd = el('div', 'badges');
@@ -640,8 +649,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       wrap.appendChild(bd);
     }
     $('stream').appendChild(wrap);
-    if (instant) { p.textContent = text; scrollBottom(); }
-    else typewrite(p, text);
+    scrollBottom();
   }
 
   function appendEventCard(ev) {
@@ -671,7 +679,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
     if (rec.event) appendEventCard(rec.event);
-    if (rec.narration) appendNarration(rec.narration, rec.badges || [], true);
+    if (rec.narration) appendNarration(rec.narration, rec.badges || []);
     if (rec.settlement) appendSettlementCard(rec.settlement);
     if (rec.death) appendDivider('第 ' + rec.life + ' 世 · 终');
   }
@@ -940,30 +948,108 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     }
   }
 
+  // POST 不能用 EventSource，只能自己解析 fetch 返回的 text/event-stream。
+  async function readEventStream(res, onEvent) {
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder('utf-8');
+    var buf = '';
+    var cur = { event: 'message', data: '' };
+    function dispatch() {
+      if (cur.data === '' && cur.event === 'message') return;
+      onEvent(cur.event, cur.data);
+    }
+    function line(lineText) {
+      if (lineText === '') { dispatch(); cur = { event: 'message', data: '' }; return; }
+      if (lineText.charAt(0) === ':') return; // 注释行
+      var colon = lineText.indexOf(':');
+      var field = colon < 0 ? lineText : lineText.slice(0, colon);
+      var value = colon < 0 ? '' : lineText.slice(colon + 1);
+      if (value.charAt(0) === ' ') value = value.slice(1);
+      if (field === 'event') cur.event = value;
+      else if (field === 'data') cur.data += (cur.data ? '\n' : '') + value;
+    }
+    while (true) {
+      var r = await reader.read();
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      var idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        line(buf.slice(0, idx).replace(/\r$/, ''));
+        buf = buf.slice(idx + 1);
+      }
+    }
+    buf += decoder.decode(); // flush 未完成的多字节序列
+    if (buf) line(buf.replace(/\r$/, ''));
+    dispatch();
+  }
+
+  // 发起流式回合：delta 边到边显示，返回最后的 result（与普通 /turn 响应体相同）。
+  async function streamTurn(action, block) {
+    var res = await fetch('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action }),
+    });
+    if (!res.ok || !res.body) throw new Error('流式请求失败（' + res.status + '）');
+    var result = null;
+    var streamError = null;
+    await readEventStream(res, function (event, data) {
+      try {
+        if (event === 'delta') {
+          var d = JSON.parse(data);
+          if (typeof d.text === 'string') appendStreamDelta(block, d.text);
+        } else if (event === 'result') {
+          result = JSON.parse(data);
+        } else if (event === 'error') {
+          var e = JSON.parse(data);
+          streamError = new Error(e.error || '流式回合失败');
+        }
+      } catch (_) { /* 忽略单条解析错误，继续读流 */ }
+    });
+    if (streamError) throw streamError;
+    if (!result) throw new Error('流式响应缺少 result');
+    return result;
+  }
+
+  // result 到来（或普通 /turn 返回）后的统一渲染：叙事、徽章、事件/结算卡片、头部/面板/建议/死亡。
+  function renderResult(res) {
+    currentState = res.state;
+    renderHeader(res.state);
+    if (res.event) appendEventCard(res.event);
+    appendNarration(res.narration, badgesFromApplied(res.applied));
+    if (res.settlement) appendSettlementCard(res.settlement);
+    renderPanel(res.state);
+    renderEventBanner(res.state.activeEvent);
+    renderSuggestions(res.suggestions);
+    if (res.death) showDeath(res.state, res.death);
+  }
+
   async function sendAction() {
     if (busy || !currentWorldId) return;
     var input = $('action-input');
     var action = input.value.trim();
     if (!action) { toast('写点什么再发送吧'); return; }
     setBusy(true);
+    appendActionLine(action);
+    var block = beginStreamNarration();
     try {
-      var res = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
-        method: 'POST',
-        body: JSON.stringify({ action: action }),
-      });
+      var res = await streamTurn(action, block);
       input.value = ''; // 成功后才清空，失败时保留输入
-      currentState = res.state;
-      renderHeader(res.state);
-      appendActionLine(action);
-      if (res.event) appendEventCard(res.event);
-      appendNarration(res.narration, badgesFromApplied(res.applied), false);
-      if (res.settlement) appendSettlementCard(res.settlement);
-      renderPanel(res.state);
-      renderEventBanner(res.state.activeEvent);
-      renderSuggestions(res.suggestions);
-      if (res.death) showDeath(res.state, res.death);
+      if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      renderResult(res);
     } catch (err) {
-      toast(err.message); // 输入内容不丢
+      // 流式失败：移除半成品叙事块，自动回退普通 /turn。
+      if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      try {
+        var fb = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
+          method: 'POST',
+          body: JSON.stringify({ action: action }),
+        });
+        input.value = '';
+        renderResult(fb);
+      } catch (err2) {
+        toast(err2.message); // 输入内容不丢
+      }
     } finally {
       setBusy(false);
     }
@@ -982,7 +1068,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       var p = $('panel');
       p.dataset.open = p.dataset.open === 'true' ? 'false' : 'true';
     });
-    $('stream').addEventListener('click', function () { if (typer) typer.skip(); });
+    $('btn-export').addEventListener('click', function () {
+      if (currentWorldId) exportWorld(currentWorldId);
+    });
     document.querySelector('.stage').addEventListener('click', function () {
       if (window.innerWidth < 860) $('panel').dataset.open = 'false';
     });

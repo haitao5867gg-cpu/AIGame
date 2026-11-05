@@ -145,3 +145,36 @@ test('前端：首页玩法简介（无世界醒目 / 有世界在列表下方�
   // 简介元素位于 world-list 之后（列表下方）
   assert.ok(html.indexOf('id="home-intro"') > html.indexOf('id="world-list"'));
 });
+
+test('前端：行动改走 fetch 流式读取并自解析 SSE，失败自动回退普通 /turn', () => {
+  // 流式回合：POST /turn/stream，用 fetch 而非 EventSource（POST 不支持 EventSource）
+  assert.ok(/\/turn\/stream/.test(html), '应请求 /turn/stream');
+  assert.ok(/fetch\('\/api\/worlds\/'/.test(html), '应用 fetch 发起流式请求');
+  assert.ok(/method: 'POST'/.test(html), '应为 POST');
+  assert.equal(/new EventSource\(/.test(html), false, 'POST 不能用 EventSource');
+  // 手动解析 SSE：按字节读、UTF-8 流式解码、识别 event/data 行
+  assert.ok(/res\.body\.getReader\(\)/.test(html), '应用 getReader 读取流');
+  assert.ok(/new TextDecoder\('utf-8'\)/.test(html), '应用 UTF-8 解码器');
+  assert.ok(/stream: true/.test(html), '解码需 stream 模式以处理多字节中文');
+  assert.ok(/field === 'event'/.test(html) && /field === 'data'/.test(html), '应解析 SSE 的 event/data 字段');
+  // 三类事件：delta 边到边追加、result 结尾渲染、error 触发回退
+  assert.ok(/event === 'delta'/.test(html), '应处理 delta');
+  assert.ok(/event === 'result'/.test(html), '应处理 result');
+  assert.ok(/event === 'error'/.test(html), '应处理 error');
+  assert.ok(/appendStreamDelta\(/.test(html), 'delta 应边到边显示叙事');
+  assert.ok(/renderResult\(res\)/.test(html), 'result 应统一渲染徽章/建议/事件/结算');
+  // 去掉打字机效果
+  assert.equal(/typewrite|\btyper\b/.test(html), false, '流式显示不应再依赖打字机');
+  // 流式失败自动回退普通 /turn
+  assert.ok(/\/turn', \{/.test(html), '应保留普通 /turn 回退');
+  assert.ok(/renderResult\(fb\)/.test(html), '回退结果同样走统一渲染');
+});
+
+test('前端：世界卡片与游戏页都有「导出」按钮，走 /export 附件下载', () => {
+  assert.ok(/id="btn-export"/.test(html), '游戏页应有导出按钮');
+  assert.ok(/function exportWorld\(/.test(html), '应有 exportWorld 下载函数');
+  assert.ok(/\/export'/.test(html), '应请求 /export 接口');
+  assert.ok(/a\.download =/.test(html), '应用 <a download> 触发下载');
+  assert.ok(/exportWorld\(w\.id\)/.test(html), '世界卡片应能导出');
+  assert.ok(/exportWorld\(currentWorldId\)/.test(html), '游戏页应能导出当前世界');
+});

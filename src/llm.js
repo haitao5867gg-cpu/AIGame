@@ -51,6 +51,168 @@ function parseExtraBody(raw) {
   return {};
 }
 
+// ---- 流式叙事解码器 ----
+// LLM 流式返回的是「正在生成的整个 JSON 对象」的片段，叙事位于 "narration":"..." 字符串里。
+// 下面这组纯函数把累积的原始 JSON 文本增量解码出 narration 的纯文本：
+// 每次 push 都从累积文本重新推导（JSON 很小，开销可忽略），因此天然支持任意 chunk 边界
+// —— 键名、转义序列、\uXXXX、多字节中文都可能被从中间切开，也不会重复或漏发字符。
+
+const SIMPLE_ESCAPES = Object.freeze({
+  '"': '"', '\\': '\\', '/': '/',
+  b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
+});
+
+function isHex4(s) {
+  return /^[0-9a-fA-F]{4}$/.test(s);
+}
+
+// 读取从 start（指向开头引号）开始的一个 JSON 字符串 token（键或某个值）。
+// 返回 { value, end, complete }；complete=false 表示还没读到结束引号（被 chunk 切开）。
+function scanJsonString(raw, start) {
+  let i = start + 1;
+  let value = '';
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === '"') return { value, end: i + 1, complete: true };
+    if (c === '\\') {
+      if (i + 1 >= raw.length) return { value, end: raw.length, complete: false };
+      const e = raw[i + 1];
+      if (e === 'u') {
+        if (i + 6 > raw.length) return { value, end: raw.length, complete: false };
+        const hex = raw.slice(i + 2, i + 6);
+        value += isHex4(hex) ? String.fromCharCode(parseInt(hex, 16)) : '\uFFFD';
+        i += 6;
+      } else {
+        value += Object.prototype.hasOwnProperty.call(SIMPLE_ESCAPES, e)
+          ? SIMPLE_ESCAPES[e] : e;
+        i += 2;
+      }
+    } else {
+      value += c; // 普通字符，含多字节中文（在 JS 字符串里就是一个字符）
+      i += 1;
+    }
+  }
+  return { value, end: raw.length, complete: false };
+}
+
+// 从 narration 值的开头引号开始按 JSON 字符串规则增量解码，返回当前已能确定的前缀。
+function scanNarrationValue(raw, q) {
+  let i = q + 1;
+  let out = '';
+  let done = false;
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === '"') { done = true; break; } // 未转义的结束引号
+    if (c === '\\') {
+      if (i + 1 >= raw.length) break; // 转义序列被切开，等更多数据
+      const e = raw[i + 1];
+      if (e === 'u') {
+        if (i + 6 > raw.length) break; // \uXXXX 被切开，等更多数据
+        const hex = raw.slice(i + 2, i + 6);
+        // 逐码元解码：代理对被 slice 成两个码元先后发出，消费端拼接后仍是合法码点。
+        out += isHex4(hex) ? String.fromCharCode(parseInt(hex, 16)) : '\uFFFD';
+        i += 6;
+      } else {
+        out += Object.prototype.hasOwnProperty.call(SIMPLE_ESCAPES, e)
+          ? SIMPLE_ESCAPES[e] : e;
+        i += 2;
+      }
+    } else {
+      out += c; // 普通字符，含中文
+      i += 1;
+    }
+  }
+  return { text: out, done };
+}
+
+// 在累积的 JSON 文本里定位 "narration": 字段，返回其字符串值已解码出来的前缀。
+// 只看「字符串 token 后面跟冒号」的键，因此字符串值里即便含 "narration" 字样也不会误判；
+// narration 不是第一个字段时也能正确跳过前面的字段。
+function decodeNarration(raw) {
+  let i = 0;
+  const n = raw.length;
+  while (i < n) {
+    if (raw[i] !== '"') { i += 1; continue; }
+    const tok = scanJsonString(raw, i);
+    if (!tok.complete) return { text: '', done: false }; // 字符串被切开，等更多数据
+    let j = tok.end;
+    while (j < n && /\s/.test(raw[j])) j += 1;
+    if (j >= n) return { text: '', done: false };
+    if (raw[j] === ':' && tok.value === 'narration') {
+      j += 1;
+      while (j < n && /\s/.test(raw[j])) j += 1;
+      if (j >= n) return { text: '', done: false };
+      if (raw[j] !== '"') return { text: '', done: false }; // 非字符串值（如 null）
+      return scanNarrationValue(raw, j);
+    }
+    i = tok.end;
+  }
+  return { text: '', done: false };
+}
+
+// 状态机包装：push(片段) 增量喂入，每有解码出的新文本就回调 onDelta(newText)。
+function createNarrationDecoder(onDelta) {
+  let raw = '';
+  let emitted = 0;
+  return {
+    push(chunk) {
+      raw += chunk == null ? '' : String(chunk);
+      const { text } = decodeNarration(raw);
+      if (text.length > emitted) {
+        const delta = text.slice(emitted);
+        emitted = text.length;
+        if (typeof onDelta === 'function') onDelta(delta);
+      }
+    },
+    get value() { return decodeNarration(raw).text; },
+    get raw() { return raw; },
+  };
+}
+
+// ---- SSE 读取（流式 HTTP 用）----
+// 把 Web ReadableStream / async iterable / 字符串统一成可 for-await 的字节（或文本）块。
+function sseChunks(body) {
+  if (body == null) return [];
+  if (typeof body === 'string') return [body];
+  if (typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    return {
+      async *[Symbol.asyncIterator]() {
+        while (true) {
+          const r = await reader.read();
+          if (r.done) break;
+          yield r.value;
+        }
+      },
+    };
+  }
+  return body; // 已是 async iterable
+}
+
+function handleSSELine(line, onData) {
+  if (!line.startsWith('data:')) return;
+  let data = line.slice(5);
+  if (data.charAt(0) === ' ') data = data.slice(1);
+  onData(data);
+}
+
+// 逐行解析 SSE 的 data: 行；用 TextDecoder(stream:true) 正确处理跨 chunk 切开的多字节 UTF-8。
+async function readSSE(body, onData) {
+  const decoder = new TextDecoder('utf-8');
+  let buf = '';
+  for await (const chunk of sseChunks(body)) {
+    if (chunk == null) continue;
+    buf += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      handleSSELine(buf.slice(0, idx).replace(/\r$/, ''), onData);
+      buf = buf.slice(idx + 1);
+    }
+  }
+  buf += decoder.decode(); // flush 未完成的多字节序列
+  if (buf) handleSSELine(buf.replace(/\r$/, ''), onData);
+}
+
 // ---- 确定性假数据 ----
 
 function mockWorld(m) {
@@ -346,6 +508,88 @@ function createClient(cfg, dataDir) {
     };
   }
 
+  // 流式版 httpChat：请求带 stream:true，逐条读取 SSE 的 data: 行，累积 content，
+  // 并把每个 content 片段喂给叙事解码器（每有解码出的新文本回调 onDelta）。
+  // 返回 { content, usage }，content 为拼接后的完整文本，交由上层照常解析/校验/落库。
+  async function httpChatStream(model, messages, responseFormat, onDelta) {
+    if (!base) {
+      const err = new Error('未配置 LLM_BASE，无法调用真实模型');
+      err.status = 500;
+      err.expose = true;
+      throw err;
+    }
+    const payload = Object.assign({}, extraBody, {
+      model,
+      messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
+      response_format: { type: responseFormat === false ? 'text' : 'json_object' },
+      stream: true,
+    });
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    let resp;
+    try {
+      resp = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if (err && err.name === 'AbortError') {
+        const e = new Error(`LLM 流式调用超时（${timeout} ms）`);
+        e.status = 504;
+        e.expose = true;
+        throw e;
+      }
+      const e = new Error(`LLM 网络请求失败：${err && err.message ? err.message : err}`);
+      e.status = 502;
+      e.expose = true;
+      throw e;
+    }
+    clearTimeout(timer);
+    if (!resp.ok) {
+      let text = '';
+      try { text = await resp.text(); } catch (_) { /* 忽略读取错误 */ }
+      const e = new Error(`LLM 接口返回 ${resp.status}：${clip(text, 200)}`);
+      e.status = 502;
+      e.expose = true;
+      throw e;
+    }
+    const decoder = createNarrationDecoder(onDelta);
+    let fullContent = '';
+    let prompt_tokens = 0;
+    let completion_tokens = 0;
+    await readSSE(resp.body, (dataLine) => {
+      if (!dataLine || dataLine === '[DONE]') return;
+      let chunk;
+      try { chunk = JSON.parse(dataLine); } catch (_) { return; }
+      // 部分实现把用量放在最后一个 chunk（需 stream_options.include_usage，这里被动接收）。
+      if (chunk && chunk.usage) {
+        prompt_tokens = Number(chunk.usage.prompt_tokens) || prompt_tokens;
+        completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
+      }
+      const choices = chunk && chunk.choices;
+      const delta = choices && choices[0] && choices[0].delta && choices[0].delta.content;
+      if (typeof delta === 'string' && delta) {
+        fullContent += delta;
+        decoder.push(delta);
+      }
+    });
+    // 用量缺失时按文本估算，保证 events.jsonl 的 usage 聚合不为 0。
+    if (prompt_tokens === 0 && completion_tokens === 0) {
+      const est = fakeTokens(messages, fullContent);
+      prompt_tokens = est.prompt_tokens;
+      completion_tokens = est.completion_tokens;
+    }
+    return {
+      content: fullContent,
+      usage: { prompt_tokens, completion_tokens },
+    };
+  }
+
   // 返回 { content, model, usage:{prompt_tokens,completion_tokens}, ms, ok }
   async function complete(opts) {
     const o = opts || {};
@@ -385,6 +629,59 @@ function createClient(cfg, dataDir) {
     }
   }
 
+  // 流式版 complete：参数与 complete 一致，额外接收 onDelta(新叙事文本)。
+  // 返回 { content, model, usage, ms, ok }，content 为流结束后的完整文本；
+  // 上层拿到 content 后的解析/校验/落库流程与非流式完全一致。
+  async function completeStream(opts, onDelta) {
+    const o = opts || {};
+    const now = Date.now();
+    assertLimit(now);
+    const purpose = o.purpose || PURPOSES.TURN;
+    const model = o.model || cfg.LLM_MODEL;
+    const messages = o.messages || [];
+
+    if (mock) {
+      const content = JSON.stringify(mockFor(purpose, o.mock));
+      let narration = '';
+      try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed.narration === 'string') narration = parsed.narration;
+      } catch (_) { /* 无 narration 字段时不回调 */ }
+      // 把假叙事切成小块，每块间隔约 30ms 回调，模拟流式。
+      const size = 6;
+      for (let i = 0; i < narration.length; i += size) {
+        await new Promise((r) => setTimeout(r, 30));
+        if (typeof onDelta === 'function') onDelta(narration.slice(i, i + size));
+      }
+      const ms = Date.now() - now;
+      const usage = fakeTokens(messages, content);
+      appendUsage({
+        ts: now, model, purpose,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        ms, ok: true,
+      });
+      return { content, model, usage, ms, ok: true };
+    }
+
+    const t0 = Date.now();
+    try {
+      const r = await httpChatStream(model, messages, o.responseFormat, onDelta);
+      const ms = Date.now() - t0;
+      appendUsage({
+        ts: now, model, purpose,
+        prompt_tokens: r.usage.prompt_tokens,
+        completion_tokens: r.usage.completion_tokens,
+        ms, ok: true,
+      });
+      return { content: r.content, model, usage: r.usage, ms, ok: true };
+    } catch (err) {
+      const ms = Date.now() - t0;
+      appendUsage({ ts: now, model, purpose, prompt_tokens: 0, completion_tokens: 0, ms, ok: false });
+      throw err;
+    }
+  }
+
   function summarizeUsage(now) {
     const ts = now == null ? Date.now() : now;
     const all = rows();
@@ -396,7 +693,10 @@ function createClient(cfg, dataDir) {
     };
   }
 
-  return { complete, summarizeUsage, mock, PURPOSES };
+  return { complete, completeStream, summarizeUsage, mock, PURPOSES };
 }
 
-module.exports = { createClient, PURPOSES, parseExtraBody };
+module.exports = {
+  createClient, PURPOSES, parseExtraBody,
+  createNarrationDecoder, decodeNarration, readSSE,
+};
