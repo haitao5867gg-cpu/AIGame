@@ -150,30 +150,32 @@ test('allocateAttrs: 自定义分配合计 6、每项 ≤3；非法分配抛错'
 
 // ---------- validateProposal 各边界 ----------
 
-test('validateProposal: 只接受白名单属性，非整数四舍五入', () => {
+test('validateProposal: 白名单、非整数四舍五入、单项正向最多 +1', () => {
   const s = makeState();
   const v = e.validateProposal(s, proposal({ state_diff: { 体魄: 1.6, 魅力: 1.4, 气运: -1.6, 武力: 5 } }));
-  assert.deepEqual(v.applied.state_diff, { 体魄: 2, 魅力: 1, 气运: -2 });
+  // 体魄 1.6→2 再被单项 +1 截断为 1；魅力 1.4→1；气运 -1.6→-2；武力非白名单丢弃
+  assert.deepEqual(v.applied.state_diff, { 体魄: 1, 魅力: 1, 气运: -2 });
   assert.ok(v.rejected.some((r) => r.includes('武力')));
   assert.equal(v.error, null);
 });
 
-test('validateProposal: 单项夹 [-2,+2]', () => {
+test('validateProposal: 单项正向最多 +1、负向最多 -2', () => {
   const v = e.validateProposal(makeState(), proposal({ state_diff: { 体魄: 9, 心智: -9 } }));
-  assert.equal(v.applied.state_diff['体魄'], 2);
+  assert.equal(v.applied.state_diff['体魄'], 1);
   assert.equal(v.applied.state_diff['心智'], -2);
-  assert.ok(v.rejected.some((r) => r.includes('超过 +2')));
+  assert.ok(v.rejected.some((r) => r.includes('超过 +1')));
   assert.ok(v.rejected.some((r) => r.includes('超过 -2')));
 });
 
-test('validateProposal: 正向变化总和 ≤ 3，超出按顺序截断', () => {
+test('validateProposal: 普通回合正向总预算 2、单项 +1，超出按顺序截断', () => {
   const v = e.validateProposal(
     makeState(),
     proposal({ state_diff: { 体魄: 2, 心智: 2, 魅力: 2 } }),
   );
-  assert.deepEqual(v.applied.state_diff, { 体魄: 2, 心智: 1 });
-  assert.ok(v.rejected.some((r) => r.includes('正向变化总和超过 3')));
-  assert.ok(v.rejected.some((r) => r.includes('正向变化总和已达 3')));
+  // 每项先夹到 +1；预算 2 只允许两项，第三项被忽略
+  assert.deepEqual(v.applied.state_diff, { 体魄: 1, 心智: 1 });
+  assert.ok(v.rejected.some((r) => r.includes('单项变化超过 +1')));
+  assert.ok(v.rejected.some((r) => r.includes('正向变化总和已达 2')));
 });
 
 test('validateProposal: 负向不限总和，但单项仍 ≤ 2', () => {
@@ -368,7 +370,10 @@ test('planTurn: 到点开新事件、事件中不重开、下一回合结算、n
   noThemes.bible.eventThemes = [];
   noThemes.turn = 100;
   noThemes.nextEventTurn = 1;
-  assert.equal(e.planTurn(noThemes, { rng: () => 0 }).opening, false);
+  // 主题为空时引擎用通用主题兜底，事件仍能开启（旧世界兼容）。
+  const legacy = e.planTurn(noThemes, { rng: () => 0 });
+  assert.equal(legacy.opening, true);
+  assert.ok(e.GENERIC_EVENT_THEMES.includes(legacy.theme));
 
   const c = makeState();
   c.turn = 19;
@@ -380,10 +385,12 @@ test('planTurn: 到点开新事件、事件中不重开、下一回合结算、n
 
 // ---------- 四档结算 ----------
 
+// 新公式：score = min(属性,20)*0.5 + response_quality*4 + rng(0~8)；阈值不变。
+// settle() 注入常量 rng，rand=floor(unit(rng)*9)。
 test('事件结算：蜕变 >=24（该属性 +3、声望 +2）', () => {
-  const out = settle({ 体魄: 20 }, 3, 0.9);
+  const out = settle({ 体魄: 20 }, 3, 0.9); // 10 + 12 + 8 = 30
   assert.equal(out.result.settlement.tier, '蜕变');
-  assert.equal(out.result.settlement.score, 38);
+  assert.equal(out.result.settlement.score, 30);
   assert.deepEqual(out.result.settlement.effects, { 体魄: 3, 声望: 2 });
   assert.equal(out.state.character.attrs['体魄'], 23);
   assert.equal(out.state.character.attrs['声望'], 8);
@@ -391,22 +398,22 @@ test('事件结算：蜕变 >=24（该属性 +3、声望 +2）', () => {
 });
 
 test('事件结算：险胜 >=16（+1）、代价 >=9（体魄 -2、资源 -2）', () => {
-  const win = settle({ 体魄: 12 }, 1, 0);
+  const win = settle({ 体魄: 20 }, 1, 0.25); // 10 + 4 + 2 = 16
   assert.equal(win.result.settlement.tier, '险胜');
   assert.equal(win.result.settlement.score, 16);
-  assert.equal(win.state.character.attrs['体魄'], 13);
+  assert.equal(win.state.character.attrs['体魄'], 21);
 
-  const cost = settle({ 体魄: 9 }, 0, 0);
+  const cost = settle({ 体魄: 10 }, 1, 0); // 5 + 4 + 0 = 9
   assert.equal(cost.result.settlement.tier, '代价');
   assert.equal(cost.result.settlement.score, 9);
-  assert.equal(cost.state.character.attrs['体魄'], 7);
+  assert.equal(cost.state.character.attrs['体魄'], 8);
   assert.equal(cost.state.character.attrs['资源'], 4);
 });
 
 test('事件结算：殒命 <9，触发死亡', () => {
-  const out = settle({ 体魄: 5 }, 0, 0);
+  const out = settle({ 体魄: 8 }, 1, 0); // 4 + 4 + 0 = 8
   assert.equal(out.result.settlement.tier, '殒命');
-  assert.equal(out.result.settlement.score, 5);
+  assert.equal(out.result.settlement.score, 8);
   assert.ok(out.result.death);
   assert.equal(out.result.death.reason, '事件殒命');
   assert.equal(out.state.life, 2);
@@ -414,34 +421,44 @@ test('事件结算：殒命 <9，触发死亡', () => {
 });
 
 test('事件结算：四档边界 24 / 23 / 16 / 9 / 8', () => {
-  assert.equal(settle({ 体魄: 15 }, 2, 0.2).result.settlement.tier, '蜕变'); // 15+8+1=24
-  assert.equal(settle({ 体魄: 15 }, 2, 0).result.settlement.tier, '险胜'); // 23
-  assert.equal(settle({ 体魄: 12 }, 1, 0).result.settlement.tier, '险胜'); // 16
-  assert.equal(settle({ 体魄: 9 }, 0, 0).result.settlement.tier, '代价'); // 9
-  assert.equal(settle({ 体魄: 8 }, 0, 0).result.settlement.tier, '殒命'); // 8
+  assert.equal(settle({ 体魄: 20 }, 3, 0.25).result.settlement.tier, '蜕变'); // 10+12+2=24
+  assert.equal(settle({ 体魄: 20 }, 3, 0.15).result.settlement.tier, '险胜'); // 10+12+1=23
+  assert.equal(settle({ 体魄: 20 }, 1, 0.25).result.settlement.tier, '险胜'); // 10+4+2=16
+  assert.equal(settle({ 体魄: 10 }, 1, 0).result.settlement.tier, '代价');   // 5+4+0=9
+  assert.equal(settle({ 体魄: 8 }, 1, 0).result.settlement.tier, '殒命');    // 4+4+0=8
+});
+
+test('事件结算：min(属性,20) 封顶，属性 40 也只贡献 10，不再必然蜕变', () => {
+  const capped = settle({ 体魄: 40 }, 0, 0); // 10 + 0 + 0 = 10 → 代价
+  assert.equal(capped.result.settlement.score, 10);
+  assert.equal(capped.result.settlement.tier, '代价');
+  const still = settle({ 体魄: 40 }, 3, 0.25); // 10 + 12 + 2 = 24 → 蜕变仍需质量+运气
+  assert.equal(still.result.settlement.score, 24);
+  assert.equal(still.result.settlement.tier, '蜕变');
 });
 
 test('事件结算：response_quality 夹 0~3、attr 非法回退、事件效果夹 [0,40]', () => {
-  const q = settle({ 体魄: 5 }, 9, 0);
+  const q = settle({ 体魄: 20 }, 9, 0); // q 夹到 3：10 + 12 + 0 = 22 → 险胜
   assert.equal(q.result.settlement.response_quality, 3);
-  assert.equal(q.result.settlement.tier, '险胜'); // 5+12+0=17
+  assert.equal(q.result.settlement.tier, '险胜');
+  assert.equal(q.result.settlement.score, 22);
 
-  const bad = settle({ 体魄: 5 }, 0, 0, {
+  const bad = settle({ 体魄: 20 }, 0, 0, {
     event_check: { attr: '武力', response_quality: 0 },
   });
   assert.equal(bad.result.settlement.attr, '体魄');
   assert.ok(bad.result.rejected.some((r) => r.includes('非白名单属性')));
 
-  const capped = settle({ 体魄: 39 }, 3, 0.9);
-  assert.equal(capped.state.character.attrs['体魄'], 40); // 39+3 夹到 40
+  const capped = settle({ 体魄: 39 }, 3, 0.9); // 10 + 12 + 8 = 30 → 蜕变，+3 夹到 40
+  assert.equal(capped.state.character.attrs['体魄'], 40);
 });
 
 test('事件回合不可回避：空行动仍按公式结算', () => {
-  const out = settle({ 体魄: 16 }, 0, 0, { action: '' });
+  const out = settle({ 体魄: 40 }, 2, 0, { action: '' }); // 10 + 8 + 0 = 18
   assert.ok(out.result.settlement);
-  assert.equal(out.result.settlement.score, 16); // 16 + 0*4 + 0
+  assert.equal(out.result.settlement.score, 18);
   assert.equal(out.result.settlement.tier, '险胜');
-  assert.equal(out.result.settlement.response_quality, 0);
+  assert.equal(out.result.settlement.response_quality, 2);
   assert.ok(out.result.rejected.some((r) => r.includes('不可回避')));
 });
 
@@ -643,6 +660,111 @@ test('recent：只保留最近 6 条，narration 截 300 字', () => {
   assert.equal(cur.recent[0].turn, 3);
   assert.equal(cur.recent[5].turn, 8);
   assert.equal(cur.recent[5].narration.length, 300);
+});
+
+// ---------- eventThemes 兜底 ----------
+
+test('createWorld: eventThemes 少于 4 个用通用主题补齐', () => {
+  const empty = e.createWorld({ id: 'w1', bible: { eventThemes: [] } }, { rng: () => 0 });
+  assert.deepEqual(empty.bible.eventThemes, e.GENERIC_EVENT_THEMES.slice());
+
+  const few = e.createWorld(
+    { id: 'w2', bible: { eventThemes: ['灯灭', '问斩'] } },
+    { rng: () => 0 },
+  );
+  assert.ok(few.bible.eventThemes.length >= 4);
+  assert.equal(few.bible.eventThemes[0], '灯灭');
+  assert.equal(few.bible.eventThemes[1], '问斩');
+  for (const g of e.GENERIC_EVENT_THEMES) {
+    assert.ok(few.bible.eventThemes.includes(g), `应补齐通用主题「${g}」`);
+  }
+
+  // 缺失 / 非数组也兜底
+  assert.deepEqual(
+    e.createWorld({ id: 'w3', bible: {} }, { rng: () => 0 }).bible.eventThemes,
+    e.GENERIC_EVENT_THEMES.slice(),
+  );
+  // 已有 ≥4 个时原样保留
+  const full = makeState();
+  assert.equal(full.bible.eventThemes.length, 6);
+  assert.equal(full.bible.eventThemes[0], '魔族入侵');
+});
+
+test('planTurn: 主题为空时用通用主题兜底，事件仍按节奏开启', () => {
+  const s = makeState();
+  s.bible.eventThemes = [];
+  s.turn = 6;
+  s.nextEventTurn = 7;
+  const plan = e.planTurn(s, { rng: () => 0 });
+  assert.equal(plan.opening, true);
+  assert.equal(plan.needEvent, true);
+  assert.ok(e.GENERIC_EVENT_THEMES.includes(plan.theme));
+});
+
+// ---------- 收益递减 ----------
+
+test('收益递减：低值属性 +1 生效，高值属性 +1 被静默丢弃', () => {
+  const s = makeState(); // 初始 6 → p=(30-6)/25=0.96
+  const low = e.resolveTurn(
+    s,
+    { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0, now: 1 },
+  );
+  assert.equal(low.result.applied.state_diff['心智'], 1);
+  assert.equal(low.state.character.attrs['心智'], 7);
+
+  const s2 = makeState();
+  s2.character.attrs['心智'] = 35; // p=clamp((30-35)/25,0.1,1)=0.1
+  const high = e.resolveTurn(
+    s2,
+    { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0.999999, now: 1 },
+  );
+  assert.equal(Object.prototype.hasOwnProperty.call(high.result.applied.state_diff, '心智'), false);
+  assert.equal(high.state.character.attrs['心智'], 35); // 静默丢弃
+});
+
+test('收益递减：p=clamp((30-v)/25, 0.1, 1) 的上下界', () => {
+  const s = makeState();
+  s.character.attrs['心智'] = 5; // p=1：rng 接近 1 仍生效
+  const upper = e.resolveTurn(
+    s, { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0.999999, now: 1 },
+  );
+  assert.equal(upper.result.applied.state_diff['心智'], 1);
+
+  s.character.attrs['心智'] = 30; // p=0.1（下界）
+  const dropped = e.resolveTurn(
+    s, { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0.5, now: 1 },
+  );
+  assert.equal(Object.prototype.hasOwnProperty.call(dropped.result.applied.state_diff, '心智'), false);
+  const lucky = e.resolveTurn(
+    s, { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0.05, now: 1 },
+  );
+  assert.equal(lucky.result.applied.state_diff['心智'], 1);
+});
+
+test('收益递减：丢弃记入 rejected 作内部原因，公开回合结果里被过滤（不给玩家看）', () => {
+  const s = makeState();
+  s.character.attrs['心智'] = 35;
+  const out = e.resolveTurn(
+    s, { action: 'a', proposal: proposal({ state_diff: { 心智: 1 } }) },
+    { rng: () => 0.999999, now: 1 },
+  );
+  const reason = out.result.rejected.find((r) => r.includes('收益递减'));
+  assert.ok(reason, '内部 rejected 应记录收益递减');
+  assert.equal(e.isInternalReject(reason), true);
+  const pub = e.toPublicTurnResult(out.result, out.state);
+  assert.equal(pub.rejected.some((r) => r.includes('收益递减')), false);
+});
+
+test('事件结算绕过普通回合限制：蜕变 +3 / 声望 +2 不受预算与收益递减影响', () => {
+  // settle 的结算 rng=0.9；事件效果直接套用，体魄 20→23、声望 6→8。
+  const out = settle({ 体魄: 20 }, 3, 0.9);
+  assert.equal(out.state.character.attrs['体魄'], 23);
+  assert.equal(out.state.character.attrs['声望'], 8);
 });
 
 // ---------- 30 回合循环（不联网，含至少 2 次事件） ----------

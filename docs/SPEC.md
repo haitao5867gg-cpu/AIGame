@@ -58,13 +58,14 @@ start.cmd              Windows 启动脚本：node server.js
 ## 4. 规则引擎（src/engine.js，全部纯函数，必须有单元测试）
 - 属性白名单：体魄 心智 魅力 气运 声望 资源。初始各 5；建角时玩家可额外分配 6 点（每项最多 +3），不传则平均。
 - `validateProposal(state, p)` → `{applied, rejected}`：
-  - `state_diff` 只接受白名单字段，非整数取整；单项夹在 [-2, +2]；**正向**变化总和 ≤ 3（超出时按顺序截断）；负向不限总和但单项仍 ≤ 2（事件结算除外）。
+  - `state_diff` 只接受白名单字段，非整数取整；单项夹在 [-2, +1]（正向最多 +1）；**普通回合正向**变化总和 ≤ 2（超出时按顺序截断）；负向不限总和但单项仍 ≤ 2（事件结算不受此限）。
+  - 收益递减：普通回合每个正向 +1 以概率 `p=clamp((30-当前值)/25, 0.1, 1)` 生效（用注入的 rng），未生效的静默丢弃并记入 rejected（内部原因，不进公开结果）；事件结算不受此限。
   - 属性下限 0、上限 40；到顶的增长直接丢弃（叙事照常）。
   - `items_add` 每回合最多 2 个，每个 ≤ 12 字；`items_remove` 只能移除已拥有的。
   - `npc_attitude` 只能针对 bible.npcs 里存在或叙事里新出现的人名，单人每回合 ±2，夹在 [-10, 10]；新 NPC 自动加入 npcAttitude。
   - `persona_tags` 只接受 6 个维度名，每个命中 +1，其他未命中维度向 50 回归 0.2，夹在 [0,100]。
   - 叙事长度 10~1200 字，超出截断，过短判为无效回合（不推进 turn，返回错误让前端重试）。
-- 世界性事件：`turn >= nextEventTurn` 且无 activeEvent 时，**本回合开始前**由引擎从 bible.eventThemes 随机选一个开启 activeEvent（标题/描述由该回合的 LLM 输出生成）。事件持续本回合，下一回合玩家的行动用于结算。结算：`score = 相关属性(由LLM在 event_check.attr 里指定 1 个白名单属性) + LLM 给的 response_quality(0~3)*4 + 随机 0~6`；`>=24 蜕变`（该属性 +3、声望 +2），`>=16 险胜`（+1），`>=9 代价`（体魄 -2、资源 -2），`<9 殒命`。结算后 nextEventTurn = turn + 随机 7~12。事件回合玩家不能选择「什么都不做」：动作为空或明显回避（LLM 判 response_quality=0）仍按公式结算。
+- 世界性事件：bible.eventThemes 少于 4 个时（建世界）用通用主题「天灾、瘟疫、战乱、权力更迭、神秘来客、资源枯竭」补齐；引擎开启事件时主题为空也用它们兜底。`turn >= nextEventTurn` 且无 activeEvent 时，**本回合开始前**由引擎从主题里随机选一个开启 activeEvent（标题/描述由该回合的 LLM 输出生成）。事件持续本回合，下一回合玩家的行动用于结算。结算：`score = min(相关属性,20)*0.5 + LLM 给的 response_quality(0~3)*4 + 随机 0~8 整数`（相关属性由 event_check.attr 指定 1 个白名单属性）；`>=24 蜕变`（该属性 +3、声望 +2），`>=16 险胜`（+1），`>=9 代价`（体魄 -2、资源 -2），`<9 殒命`。结算后 nextEventTurn = turn + 随机 7~12。事件回合玩家不能选择「什么都不做」：动作为空或明显回避（LLM 判 response_quality=0）仍按公式结算。
 - 死亡：体魄降到 0 或事件殒命 → 本世结束。`life+1`，新角色继承上一世声望的 20%（取整），其他属性重置为 5，物品清空，npcAttitude 保留（NPC 记得你），chronicle 追加一条「第 N 世终」。重生需要玩家提交新的名字/形象（接口见下）。
 - 隐晦顶点：每回合结束后检查 apex.condition；满足 → 记 achievedAt，highlightUntilTurn = turn+3（prompt 里告诉模型写高光但**不说破**），3 回合后用 LLM_MODEL_WORLD 生成新 apex（generation+1），不通知玩家。apex 绝不出现在任何接口返回里。
 - 编年史：turn % 20 == 0 时用 LLM_MODEL_WORLD 把这 20 回合的 events.jsonl 压成 ≤300 字一章。
@@ -78,7 +79,8 @@ start.cmd              Windows 启动脚本：node server.js
  "event":{"title":"...","desc":"..."},          // 仅当引擎要求开启事件时
  "event_check":{"attr":"体魄","response_quality":2}}  // 仅当结算事件时
 ```
-- 建世界 prompt：输入玩家一句话，输出 bible + apex JSON。要求名词具体、有张力、起点明确。
+- 建世界 prompt：输入玩家一句话，输出 bible + apex JSON。要求名词具体、有张力、起点明确；bible.npcs 每个带 `want`（此人想要什么 / 立场），回合 prompt 里一并带上。
+- 回合 system prompt 另含「叙事与状态规则」：大多数回合不改属性（只有实质成长/损失才给 state_diff）、越界要有具体世界内后果（NPC 态度下降 / 声望 -1 / 被盯上 / 被驱逐等）、同一场景或对话最多 3 回合且每回合至少一处变化、每个 NPC 按自身欲望与立场差异化反应。
 - 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败重试 1 次；再失败返回错误，不推进回合。
 
 ## 6. HTTP 接口（JSON）

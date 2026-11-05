@@ -20,6 +20,19 @@ const CONSTITUTION = [
   '- 你的状态变化只是「提议」，真正的数值由后端引擎裁定，可能与你提议的不同，叙事不要依赖数值一定生效。',
 ].join('\n');
 
+// 回合叙事与状态规则：约束真模型「每回合 +1」「越界冷处理」「原地打转」「NPC 复读机」等失衡行为。
+const TURN_RULES = [
+  '叙事与状态规则（务必遵守）：',
+  '- 大多数回合不要改属性：只有玩家本回合的行动带来实质成长或损失时才给 state_diff；平淡回合宁可不给，也不要每回合固定 +1。',
+  '- 玩家越界时（声称拥有不存在的神力/宝物、要求直接称王封王、强闯禁地、对 NPC 动粗），世界必须给出具体、可见的后果：',
+  '  相关 NPC 态度下降、声望 -1、被势力盯上/记档、被驱逐或触发守卫禁制等，写成叙事里真实发生的事，',
+  '  不能只冷处理、无人接话或轻描淡写带过。',
+  '- 节奏推进：同一场景、同一段对话或同一轮拉锯最多持续 3 回合，之后必须推进——给出新信息、新人物、转场或时间流逝；',
+  '  每回合都要有至少一处看得见的变化。',
+  '- 每个 NPC 都有自己的欲望与立场（见世界设定里的「想要」），对同一件事的反应要有差异、会主动趋利避害，',
+  '  不能只轮流充当信息出口或沉默旁观。',
+].join('\n');
+
 const TURN_OUTPUT_FORMAT = [
   '输出 JSON 格式（字段固定，数组可为空）：',
   '{"narration":"第二人称叙事，10~1200 字",',
@@ -44,10 +57,11 @@ const TURN_OUTPUT_FORMAT = [
 const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
-  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc}],',
+  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want}],',
   ' "start":{"place","situation","items":[str x2~3]},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
+  'npcs[].want 写清「这个人想要什么」（能驱使他的欲望/立场），每个 NPC 各不相同，用于让反应有差异；',
   'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
 ].join('\n');
@@ -56,7 +70,9 @@ function worldBibleText(bible) {
   const b = bible || {};
   const places = (b.places || []).map((p) => `${p.name}：${p.desc || ''}`).join('；');
   const factions = (b.factions || []).map((f) => `${f.name}（${f.stance || ''}）：${f.desc || ''}`).join('；');
-  const npcs = (b.npcs || []).map((n) => `${n.name}（${n.role || ''}）：${n.desc || ''}`).join('；');
+  const npcs = (b.npcs || [])
+    .map((n) => `${n.name}（${n.role || ''}）：${n.desc || ''}${n.want ? `；想要：${n.want}` : ''}`)
+    .join('；');
   return [
     `标题：${b.title || ''}`,
     `基调：${b.tone || ''}`,
@@ -101,6 +117,7 @@ function buildTurnMessages(state, plan, action) {
   const sys = [];
   sys.push(CONSTITUTION);
   sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
+  sys.push(section('叙事与状态规则', TURN_RULES));
 
   // 隐晦提示：apex.hint，只要求通过传闻 / 机会 / NPC 态度暗示，绝不点破。
   const hint = state.apex && state.apex.hint;

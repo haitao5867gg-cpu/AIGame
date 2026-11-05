@@ -54,9 +54,9 @@ function mockWorld(m) {
         { name: '缄默庭', desc: '不立文字的审判者', stance: '敌意未明' },
       ],
       npcs: [
-        { name: '守夜人', role: '引路者', desc: '总在雾里提一盏不灭的灯' },
-        { name: '铸剑师', role: '匠人', desc: '只肯为记得名字的人锻铁' },
-        { name: '拾骨少女', role: '线人', desc: '消息比刀快，笑里藏着价码' },
+        { name: '守夜人', role: '引路者', desc: '总在雾里提一盏不灭的灯', want: '守住钟声不乱，查清谁在偷改更漏' },
+        { name: '铸剑师', role: '匠人', desc: '只肯为记得名字的人锻铁', want: '寻回失传锻谱，重铸一把有名之剑' },
+        { name: '拾骨少女', role: '线人', desc: '消息比刀快，笑里藏着价码', want: '攒够钱离开灰烬港，不再替人卖命' },
       ],
       start: {
         place: '灰烬港',
@@ -96,7 +96,8 @@ function mockTurn(m) {
   }
   // 事件结算：仅当引擎要求时给出 event_check（attr 为白名单属性，quality 0~3）。
   if (m && m.needSettlement) {
-    // quality=3 保证结算分数 >=16（体魄 + 12 + 随机 0~6），不会掉进代价/殒命档，
+    // 新公式 score = min(体魄,20)*0.5 + quality*4 + rng(0~8)。
+    // quality=3 时体魄 6 起评 3+12+0~8 = 15~23，最差只到「代价」、绝不「殒命」，
     // 让 mock 的长时间循环确定性地不死亡。
     out.event_check = { attr: '体魄', response_quality: 3 };
   }

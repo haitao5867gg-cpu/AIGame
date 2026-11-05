@@ -20,8 +20,16 @@ const NPC_MAX = 10;
 const NPC_DIFF_MAX = 2;
 
 const DIFF_MIN = -2;
-const DIFF_MAX = 2;
-const DIFF_POSITIVE_TOTAL_MAX = 3;
+const DIFF_MAX = 1; // 普通回合单项正向最多 +1（负向仍以 DIFF_MIN=-2 为界）
+const DIFF_POSITIVE_TOTAL_MAX = 2; // 普通回合正向总预算；事件结算不受此限
+
+// 通用事件主题：建世界 eventThemes 少于 4 个时补齐；引擎开启事件时主题为空也用它兜底。
+const GENERIC_EVENT_THEMES = Object.freeze(
+  ['天灾', '瘟疫', '战乱', '权力更迭', '神秘来客', '资源枯竭'],
+);
+
+// 内部拒绝原因标记：记入 rejected 供内部日志，但不出现在公开回合结果里（不给玩家看）。
+const INTERNAL_REJECT_TAG = '[internal]';
 
 const ITEMS_ADD_MAX = 2;
 const ITEM_NAME_MAX = 12;
@@ -46,6 +54,27 @@ function toInt(v) {
 // 把 rng() 归一到 [0,1)，避免恰好返回 1 时下标越界。
 function unit(rng) {
   return clamp(Number(rng()), 0, 0.999999);
+}
+
+function internalReject(reason) {
+  return `${INTERNAL_REJECT_TAG}${reason}`;
+}
+
+function isInternalReject(reason) {
+  return typeof reason === 'string' && reason.startsWith(INTERNAL_REJECT_TAG);
+}
+
+// eventThemes 少于 4 个时用通用主题补齐（过滤无效项、去重）。
+function normalizeEventThemes(themes) {
+  const valid = (Array.isArray(themes) ? themes : [])
+    .filter((t) => typeof t === 'string' && t.trim())
+    .map((t) => t.trim());
+  if (valid.length >= 4) return valid;
+  const out = valid.slice();
+  for (const g of GENERIC_EVENT_THEMES) {
+    if (!out.includes(g)) out.push(g);
+  }
+  return out;
 }
 
 function cloneState(v) {
@@ -124,6 +153,8 @@ function createWorld(spec, opts) {
   const rng = options.rng || Math.random;
   const now = options.now == null ? Date.now() : options.now;
   const bible = cloneState(s.bible || {});
+  // 建世界校验：eventThemes 少于 4 个就用通用主题补齐，保证事件能正常开启。
+  bible.eventThemes = normalizeEventThemes(bible.eventThemes);
   return {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
@@ -178,7 +209,7 @@ function validateProposal(state, proposal) {
     return { applied, rejected, error: `叙事过短（少于 ${NARRATION_MIN} 字），本回合无效，请重试` };
   }
 
-  // state_diff：白名单 / 取整 / 单项 [-2,2] / 正向总和 ≤ 3（按顺序截断）/ 属性 [0,40]
+  // state_diff：白名单 / 取整 / 单项 [-2,+1] / 正向总和 ≤ 2（按顺序截断）/ 属性 [0,40]
   const diff = p.state_diff && typeof p.state_diff === 'object' ? p.state_diff : {};
   let positiveTotal = 0;
   for (const key of Object.keys(diff)) {
@@ -326,10 +357,12 @@ function planTurn(state, opts) {
   const options = opts || {};
   const rng = options.rng || Math.random;
   const nextTurn = state.turn + 1;
-  const themes =
+  let themes =
     state.bible && Array.isArray(state.bible.eventThemes)
       ? state.bible.eventThemes.filter((t) => typeof t === 'string' && t)
       : [];
+  // 主题为空（旧世界或异常设定）时用通用主题兜底，保证事件仍能开启。
+  if (themes.length === 0) themes = GENERIC_EVENT_THEMES.slice();
   const hasActive = !!state.activeEvent;
   const settling = hasActive && state.activeEvent.startedTurn < nextTurn;
   const opening = !hasActive && nextTurn >= state.nextEventTurn && themes.length > 0;
@@ -345,14 +378,16 @@ function planTurn(state, opts) {
   };
 }
 
-// 事件四档结算（纯函数）。score = 属性 + response_quality*4 + rng 0~6。
+// 事件四档结算（纯函数）。score = min(属性,20)*0.5 + response_quality*4 + rng 0~8。
+// 属性贡献封顶 10，避免高属性必然蜕变；阈值不变。
 function settleEvent(state, event, eventCheck, rng) {
   const check = eventCheck && typeof eventCheck === 'object' ? eventCheck : {};
   const attrValid = ATTRS.includes(check.attr);
   const attr = attrValid ? check.attr : '体魄';
   const quality = clamp(toInt(check.response_quality == null ? 0 : check.response_quality), 0, 3);
-  const rand = Math.floor(unit(rng) * 7); // 0~6
-  const score = state.character.attrs[attr] + quality * 4 + rand;
+  const rand = Math.floor(unit(rng) * 9); // 0~8 的整数
+  const attrPart = Math.min(state.character.attrs[attr], 20) * 0.5;
+  const score = attrPart + quality * 4 + rand;
   const effects = {};
   let tier;
   let death = false;
@@ -374,7 +409,7 @@ function settleEvent(state, event, eventCheck, rng) {
   return { tier, attr, response_quality: quality, rand, score, effects, death, invalidAttr: !attrValid, event };
 }
 
-// 直接套用数值效果（事件结算绕过 ±2 / 正向总和 3 的限制），仍夹在 [0,40]。
+// 直接套用数值效果（事件结算绕过普通回合的单项 +1 / 正向总预算 2 限制），仍夹在 [0,40]。
 function applyRawEffect(attrs, effects) {
   const out = Object.assign({}, attrs);
   for (const key of Object.keys(effects)) {
@@ -470,7 +505,8 @@ function toPublicTurnResult(result, state) {
   return {
     narration: result.narration,
     applied: result.applied,
-    rejected: result.rejected,
+    // 内部原因（如收益递减）只进内部日志，不给玩家看。
+    rejected: (result.rejected || []).filter((r) => !isInternalReject(r)),
     suggestions: result.suggestions,
     event: result.event,
     settlement: result.settlement,
@@ -496,6 +532,26 @@ function resolveTurn(state, input, opts) {
   }
   const applied = validation.applied;
   const rejected = validation.rejected.slice();
+
+  // 收益递减：普通回合每个正向 +1 以概率 p=clamp((30-v)/25, 0.1, 1) 生效（用注入的 rng）。
+  // 未生效的静默丢弃并记入 rejected（内部原因，不给玩家看）。事件结算绕过此处，不受此限。
+  for (const key of Object.keys(applied.state_diff)) {
+    const delta = applied.state_diff[key];
+    if (delta <= 0) continue;
+    let v = state.character.attrs[key];
+    let landed = 0;
+    for (let i = 0; i < delta; i++) {
+      const p = clamp((30 - v) / 25, 0.1, 1);
+      if (unit(rng) < p) {
+        landed += 1;
+        v += 1;
+      } else {
+        rejected.push(internalReject(`「${key}」+1 因收益递减未生效（当前值 ${v}）`));
+      }
+    }
+    if (landed === 0) delete applied.state_diff[key];
+    else applied.state_diff[key] = landed;
+  }
 
   let s = cloneState(state);
   const nextTurn = plan.nextTurn;
@@ -621,6 +677,9 @@ module.exports = {
   DIFF_MIN,
   DIFF_MAX,
   DIFF_POSITIVE_TOTAL_MAX,
+  GENERIC_EVENT_THEMES,
+  normalizeEventThemes,
+  isInternalReject,
   NARRATION_MIN,
   NARRATION_MAX,
   clamp,
