@@ -84,6 +84,21 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   padding-bottom:10px;margin-bottom:12px}
 .game-head-title{flex:1;min-width:120px;font-size:20px;font-weight:600}
 .game-head-meta{display:flex;gap:12px;font-family:var(--sans);font-size:13px;color:var(--muted)}
+/* ---- 用量面板（顶栏「用量」按钮弹出，不挡正文流） ---- */
+.game-head{position:relative}
+.usage-pop{position:absolute;right:0;top:100%;margin-top:6px;z-index:45;width:min(320px,100%);
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  font-family:var(--sans);font-size:13px;line-height:1.6;color:var(--ink);box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.usage-pop h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:1px}
+.usage-sec+.usage-sec{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.usage-main{font-size:14px}
+.usage-sub{font-size:12px;color:var(--muted)}
+.usage-bar{height:4px;border-radius:2px;background:var(--bg-2);margin:6px 0 4px;overflow:hidden}
+.usage-bar>i{display:block;height:100%;background:var(--up);border-radius:2px;transition:width .3s}
+.usage-bar>i.warn{background:#d9a441}.usage-bar>i.full{background:var(--accent-2)}
+.usage-cool{font-size:12px;color:#d9a441;margin-top:3px}
+.usage-note{margin-top:10px;font-size:11px;color:var(--muted);line-height:1.5}
+#btn-usage[aria-expanded="true"]{border-color:var(--accent-2)}
 .g-subhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px;min-height:1px}
 .g-place{font-family:var(--sans);font-size:13px;color:var(--muted);letter-spacing:1px}
 .omen-tag{font-family:var(--sans);font-size:11px;color:#e8a99d;background:rgba(192,57,43,.14);
@@ -289,8 +304,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       <button class="link" data-nav="#/">‹ 世界列表</button>
       <div id="g-title" class="game-head-title">无限世界</div>
       <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
+      <button id="btn-usage" class="btn tiny" aria-expanded="false" aria-controls="usage-pop">用量</button>
       <button id="btn-panel" class="btn tiny">角色面板</button>
       <button id="btn-export" class="btn tiny">导出</button>
+      <div id="usage-pop" class="usage-pop" hidden></div>
     </header>
     <div class="g-subhead">
       <span id="g-place" class="g-place"></span>
@@ -1394,6 +1411,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     // 撤回按钮保持原状：请求进行中由 busy 守卫拦住点击，result 到来后 renderResult 再按
     // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
     appendActionLine(action);
+    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
     var block = beginStreamNarration();
     try {
       var res = await streamTurn(action, block);
@@ -1415,6 +1433,90 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       }
     } finally {
       setBusy(false);
+      refreshUsage();
+    }
+  }
+
+  // ---- 用量面板：GET /api/usage/today；打开时每 10 秒刷新，关闭不轮询；每回合结束刷新一次 ----
+  var USAGE_POLL_MS = 10000;
+  var PROVIDER_ZH = { siliconflow: '硅基流动', zhipu: '智谱', local: '本地', gateway: '网关' };
+  var usageTimer = null;
+  var usageData = null;
+  var usageBeforeTurn = null; // 回合开始前的今日 token 总数，用来算「本回合」
+  var usageLastTurn = null;
+
+  function fmtWan(n) {
+    n = Number(n) || 0;
+    if (n < 10000) return String(n);
+    return (Math.round(n / 1000) / 10).toFixed(1).replace(/\.0$/, '') + '万';
+  }
+
+  function renderUsage() {
+    var box = $('usage-pop');
+    box.textContent = '';
+    var d = usageData;
+    if (!d) { box.appendChild(el('div', 'usage-sub', '读取中…')); return; }
+    var t = d.tokens || {};
+    var sec1 = el('div', 'usage-sec');
+    sec1.appendChild(el('h4', null, '今日对话 token'));
+    if (t.limit > 0) {
+      var pct = Math.min(100, (t.total / t.limit) * 100);
+      sec1.appendChild(el('div', 'usage-main', fmtWan(t.total) + ' / ' + fmtWan(t.limit) + '，剩 ' + fmtWan(t.remaining)));
+      var bar = el('div', 'usage-bar');
+      var fill = el('i', pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '');
+      fill.style.width = pct.toFixed(1) + '%';
+      bar.appendChild(fill);
+      sec1.appendChild(bar);
+    } else {
+      sec1.appendChild(el('div', 'usage-main', fmtWan(t.total) + '（不限）'));
+    }
+    sec1.appendChild(el('div', 'usage-sub', '输入 ' + fmtWan(t.prompt) + ' · 输出 ' + fmtWan(t.completion)
+      + (usageLastTurn != null ? ' · 本回合约 ' + fmtWan(usageLastTurn) : '')));
+
+    var im = d.images || {};
+    var by = im.byProvider || {};
+    // 当前出图链里的提供方都列出（0 也显示），再补上今天用过但已不在链里的。
+    var names = (im.chain || []).slice();
+    Object.keys(by).forEach(function (p) {
+      if (names.indexOf(p) < 0 && p.indexOf(',') < 0 && by[p].ok > 0) names.push(p);
+    });
+    var parts = names.map(function (p) {
+      return (PROVIDER_ZH[p] || p) + ' ' + ((by[p] && by[p].ok) || 0) + ' 张';
+    });
+    parts.push('失败 ' + ((im.total && im.total.fail) || 0));
+    var sec2 = el('div', 'usage-sec');
+    sec2.appendChild(el('h4', null, '今日出图'));
+    sec2.appendChild(el('div', 'usage-main', parts.join(' · ')));
+    Object.keys(im.cooling || {}).forEach(function (p) {
+      var min = Math.max(1, Math.ceil(im.cooling[p] / 60000));
+      sec2.appendChild(el('div', 'usage-cool', (PROVIDER_ZH[p] || p) + ' 冷却中 约 ' + min + ' 分钟'));
+    });
+    sec2.appendChild(el('div', 'usage-note', '硅基流动、智谱为免费模型，官方不公开剩余额度，只会临时限速。'));
+    box.appendChild(sec1);
+    box.appendChild(sec2);
+  }
+
+  async function refreshUsage() {
+    try {
+      usageData = await api('/api/usage/today');
+      if (usageBeforeTurn != null && usageData.tokens) {
+        usageLastTurn = Math.max(0, usageData.tokens.total - usageBeforeTurn);
+        usageBeforeTurn = null;
+      }
+    } catch (_) { /* 读取失败保留上次数据 */ }
+    if (!$('usage-pop').hidden) renderUsage();
+  }
+
+  function setUsageOpen(open) {
+    var box = $('usage-pop');
+    box.hidden = !open;
+    $('btn-usage').setAttribute('aria-expanded', open ? 'true' : 'false');
+    clearInterval(usageTimer);
+    usageTimer = null;
+    if (open) {
+      renderUsage();
+      refreshUsage();
+      usageTimer = setInterval(refreshUsage, USAGE_POLL_MS);
     }
   }
 
@@ -1436,6 +1538,14 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       var p = $('panel');
       p.dataset.open = p.dataset.open === 'true' ? 'false' : 'true';
     });
+    $('btn-usage').addEventListener('click', function (e) {
+      e.stopPropagation();
+      setUsageOpen($('usage-pop').hidden);
+    });
+    document.addEventListener('click', function (e) {
+      if (!$('usage-pop').hidden && !$('usage-pop').contains(e.target) && e.target !== $('btn-usage')) setUsageOpen(false);
+    });
+    window.addEventListener('hashchange', function () { setUsageOpen(false); });
     $('btn-export').addEventListener('click', function () {
       if (currentWorldId) exportWorld(currentWorldId);
     });
