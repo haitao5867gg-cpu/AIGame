@@ -701,3 +701,58 @@ test('modelscope：一直 RUNNING 到超时则失败', async (t) => {
   assert.equal(n, 90);
   assert.equal(Object.values(images.readIndex(dataDir))[0].status, 'failed');
 });
+
+// ---- Cloudflare Workers AI ----
+function cfFetch(calls, behavior) {
+  const b = behavior || {};
+  return async (url, opts) => {
+    const body = opts && typeof opts.body === 'string' ? JSON.parse(opts.body) : undefined;
+    if (calls) calls.push({ url, headers: opts && opts.headers, body });
+    if (url.startsWith(images.CLOUDFLARE_API_BASE)) {
+      if (b.fail) return { ok: false, status: 429, json: async () => ({ success: false, errors: [{ code: 4006, message: 'daily free allocation used' }] }) };
+      return { ok: true, status: 200, json: async () => ({ success: true, errors: [], result: { image: JPEG.toString('base64') } }) };
+    }
+    return freeFetch(null)(url, opts);
+  };
+}
+
+test('cloudflare：URL 带账户与模型、Bearer Token、steps=4、英文提示词，base64 解码落盘', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t' }),
+    { fetchImpl: cfFetch(calls), translate: async () => 'old brass oil lamp' });
+  const st = oneItemState('wcf');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, images.CLOUDFLARE_API_BASE + 'acc1/ai/run/@cf/black-forest-labs/flux-1-schnell');
+  assert.equal(calls[0].headers.Authorization, 'Bearer cf-t');
+  assert.equal(calls[0].body.steps, 4);
+  assert.match(calls[0].body.prompt, /^old brass oil lamp, single object centered/);
+  const e = Object.values(images.readIndex(dataDir))[0];
+  assert.equal(e.status, 'ready');
+  assert.equal(e.provider, 'cloudflare');
+  assert.match(e.file, /\.jpg$/);
+  assert.deepEqual(fs.readFileSync(path.join(dataDir, 'images', e.file)), JPEG);
+});
+
+test('cloudflare：额度用完（success:false）换下一家；账户或 Token 缺一就跳过不请求', async (t) => {
+  stubWarn(t);
+  const st = oneItemState('wcff');
+  const dataDir = tmpDir(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: cfFetch(calls, { fail: true }), translate: async () => 'lamp' });
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(Object.values(images.readIndex(dataDir))[0].provider, 'zhipu');
+
+  const dataDir2 = tmpDir(t);
+  const calls2 = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: '', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: cfFetch(calls2), translate: async () => 'lamp' });
+  images.ensureImages(dataDir2, st, images.listForState(st));
+  await images.waitIdle();
+  assert.ok(!calls2.some((c) => c.url.startsWith(images.CLOUDFLARE_API_BASE)));
+  assert.equal(Object.values(images.readIndex(dataDir2))[0].provider, 'zhipu');
+});

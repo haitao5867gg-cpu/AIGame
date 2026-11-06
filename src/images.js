@@ -29,6 +29,8 @@ const ZHIPU_URL = 'https://open.bigmodel.cn/api/paas/v4/images/generations';
 const MODELSCOPE_URL = 'https://api-inference.modelscope.cn/v1/images/generations';
 const MODELSCOPE_TASK_URL = 'https://api-inference.modelscope.cn/v1/tasks/';
 const MODELSCOPE_POLL_MS = 2000;
+// Cloudflare Workers AI：同步返回 {result:{image:<base64 JPEG>}}；flux 对中文提示词基本无效，走英文提示词。
+const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4/accounts/';
 // 实测 Z-Image-Turbo 排队 + 出图 80~100 秒，留余量取 180 秒。
 const MODELSCOPE_TIMEOUT_MS = 180000;
 const FREE_SIZE = '1024x1024';             // 硅基流动 / 智谱都支持
@@ -238,6 +240,9 @@ function createImages(cfg, opts) {
   const sfModel = String(c.IMAGE_SILICONFLOW_MODEL || 'Kwai-Kolors/Kolors');
   const zpKey = String(c.ZHIPU_API_KEY || '');
   const zpModel = String(c.IMAGE_ZHIPU_MODEL || 'cogview-3-flash');
+  const cfAccount = String(c.CLOUDFLARE_ACCOUNT_ID || '');
+  const cfToken = String(c.CLOUDFLARE_API_TOKEN || '');
+  const cfModel = String(c.IMAGE_CLOUDFLARE_MODEL || '@cf/black-forest-labs/flux-1-schnell');
   const msKey = String(c.MODELSCOPE_API_KEY || '');
   const msModel = String(c.IMAGE_MODELSCOPE_MODEL || 'Tongyi-MAI/Z-Image-Turbo');
   const providerCooldown = new Map(); // provider → 冷却截止时间
@@ -422,11 +427,32 @@ function createImages(cfg, opts) {
     throw new Error(`魔搭任务超时（${MODELSCOPE_TIMEOUT_MS}ms）`);
   }
 
+  // Cloudflare Workers AI（flux-1-schnell，每日免费 Neurons 额度）：同步返回 base64 图片。
+  async function callCloudflare(prompt) {
+    if (!cfAccount || !cfToken) throw new Error('未配置 CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN');
+    const url = CLOUDFLARE_API_BASE + encodeURIComponent(cfAccount) + '/ai/run/' + cfModel;
+    const data = await postJson(url, { Authorization: `Bearer ${cfToken}` }, { prompt, steps: 4 });
+    if (data && data.success === false) {
+      const e = Array.isArray(data.errors) && data.errors[0];
+      throw new Error('Cloudflare 错误：' + clip((e && e.message) || JSON.stringify(data.errors), 200));
+    }
+    const b64 = data && data.result && data.result.image;
+    if (typeof b64 !== 'string' || !b64) throw new Error('Cloudflare 返回缺少 result.image');
+    return Buffer.from(b64, 'base64');
+  }
+
   // 用单个提供方出一张图：返回 {bytes, prompt, enPrompt, model}。
   async function runProvider(p, job) {
     if (p === 'siliconflow') {
       const prompt = gatewayPrompt(job);
       return { bytes: await callSiliconflow(prompt), prompt, enPrompt: '', model: sfModel };
+    }
+    if (p === 'cloudflare') {
+      // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
+      let enPrompt = await translate(job);
+      if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
+      const prompt = localPrompt(enPrompt, job.kind, job.style.en);
+      return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
     }
     if (p === 'modelscope') {
       const prompt = gatewayPrompt(job);
@@ -657,7 +683,7 @@ module.exports = {
   // 纯函数
   inferStyle, imageKey, listForState, readIndex, serveImage,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
-  SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL,
+  SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   // 默认实例委托
   ensureImages, imageList, waitIdle,
 };

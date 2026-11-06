@@ -36,6 +36,9 @@ const DEFAULTS = Object.freeze({
   ZHIPU_API_KEY: '',
   IMAGE_ZHIPU_MODEL: 'cogview-3-flash',
   MODELSCOPE_API_KEY: '',
+  CLOUDFLARE_ACCOUNT_ID: '',
+  CLOUDFLARE_API_TOKEN: '',
+  IMAGE_CLOUDFLARE_MODEL: '@cf/black-forest-labs/flux-1-schnell',
   IMAGE_MODELSCOPE_MODEL: 'Tongyi-MAI/Z-Image-Turbo',
   // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
   IMAGE_LOCAL_PYTHON: '',
@@ -94,7 +97,7 @@ function isMock(value) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
-const IMAGE_PROVIDERS = Object.freeze(['siliconflow', 'modelscope', 'zhipu', 'gateway', 'local']);
+const IMAGE_PROVIDERS = Object.freeze(['siliconflow', 'cloudflare', 'modelscope', 'zhipu', 'gateway', 'local']);
 
 function normalizeProviders(value) {
   const parts = String(value == null ? '' : value).toLowerCase().split(/[,\s]+/).filter(Boolean);
@@ -156,7 +159,7 @@ function getConfig() {
 function withoutKey(cfg) {
   const out = Object.assign({}, cfg);
   for (const key of Object.keys(out)) {
-    if (/api.?key/i.test(key) || /key$/i.test(key)) delete out[key];
+    if (/api.?key/i.test(key) || /key$/i.test(key) || /token$/i.test(key)) delete out[key];
   }
   return out;
 }
