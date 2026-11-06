@@ -5,7 +5,7 @@ OpenAI-style endpoint: POST /v1/images/generations
   returns: {"data": [{"b64_json": "<jpeg base64>"}]}
 GET /health -> {"ok": true, "loaded": bool, "model": ..., "availMB": ...}
 The model loads on the first request, unloads after 10 idle minutes, and is not loaded at all when
-the PC has less than IMG_MIN_AVAIL_MB of free RAM / commit (returns 503 instead).
+the PC has less than IMG_MIN_PHYS_MB free RAM or IMG_MIN_COMMIT_MB available commit (503 instead).
 
 Model: SDXL base 1.0 (fp16) + ByteDance SDXL-Lightning 4-step LoRA. Listens on 127.0.0.1:8790.
 Memory: UNet/VAE on the GPU, text encoders on the CPU (see load()); ~3-5 GB RAM, ~6-7 GB VRAM.
@@ -36,7 +36,10 @@ STEPS = int(os.environ.get("IMG_STEPS", "4"))
 GPU_LOCK = threading.Lock()
 ENCODERS = []  # [(tokenizer, text_encoder)] on the CPU, filled by load()
 IDLE_UNLOAD_S = int(os.environ.get("IMG_IDLE_UNLOAD_S", "600"))  # free RAM/VRAM when nobody draws
-MIN_AVAIL_MB = int(os.environ.get("IMG_MIN_AVAIL_MB", "6500"))   # refuse to load below this
+# Refuse to load below these. Measured on the 16 GB home PC: the loaded server takes ~4 GB of RAM but
+# ~10 GB of commit (WDDM backs the GPU allocations with system commit), so commit is what runs out.
+MIN_PHYS_MB = int(os.environ.get("IMG_MIN_PHYS_MB", "4500"))
+MIN_COMMIT_MB = int(os.environ.get("IMG_MIN_COMMIT_MB", "12000"))
 LAST_USE = [time.time()]
 
 
@@ -67,7 +70,7 @@ def ensure_loaded():
     if PIPE is not None:
         return
     phys, commit = avail_mb()
-    if phys < MIN_AVAIL_MB or commit < MIN_AVAIL_MB:
+    if phys < MIN_PHYS_MB or commit < MIN_COMMIT_MB:
         raise LowMemory("low memory: %d MB free, %d MB commit available" % (phys, commit))
     PIPE = load()
 
@@ -97,8 +100,8 @@ def log(*a):
 def load():
     """Low-RAM layout for a 16 GB / 8 GB-VRAM PC.
 
-    UNet + VAE live on the GPU in fp16 (~5.3 GB VRAM); both text encoders stay on the CPU in bf16
-    (~1.4 GB RAM). The earlier "CPU offload" layout kept the whole 7 GB pipeline in RAM and starved
+    UNet + VAE live on the GPU in fp16 (~5.3 GB VRAM); both text encoders stay on the CPU in fp32
+    (~3 GB RAM; bf16 on this CPU made each image take ~47 s instead of ~5 s). The earlier "CPU offload" layout kept the whole 7 GB pipeline in RAM and starved
     the machine. The UNet is loaded straight to the GPU so peak RAM stays around 5 GB.
     """
     t = time.time()
@@ -119,7 +122,7 @@ def load():
     pipe.vae.enable_slicing()
     # Keep the CLIP encoders outside the pipeline so the pipeline's execution device is the GPU.
     ENCODERS[:] = [
-        (pipe.tokenizer, pipe.text_encoder.to(torch.bfloat16)),
+        (pipe.tokenizer, pipe.text_encoder.to(torch.float32)),
         (pipe.tokenizer_2, pipe.text_encoder_2.to(torch.bfloat16)),
     ]
     pipe.register_modules(text_encoder=None, text_encoder_2=None)
