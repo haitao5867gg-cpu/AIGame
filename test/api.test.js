@@ -403,6 +403,72 @@ test('接口层 /undo：撤回成功 / 无可撤回 409 / 流式与普通回合�
   });
 });
 
+test('接口层 /images：列表只含当前物品与 NPC；文件校验 / Content-Type / 长缓存头', async () => {
+  await withServer(async ({ base, dataDir }) => {
+    // 建世界（mock）：触发起始物品 + bible.npcs 的图片排队。
+    let r = await req(base, 'POST', '/api/worlds', {
+      seed: '蒸汽朋克长安', name: '旅人', appearance: '灰袍',
+    });
+    assert.equal(r.status, 201, r.text);
+    const id = r.json.id;
+    const world = (await req(base, 'GET', `/api/worlds/${id}`)).json;
+
+    r = await req(base, 'GET', `/api/worlds/${id}/images`);
+    assert.equal(r.status, 200, r.text);
+    assertNoLeak(r.text, r.json);
+    assert.ok(r.json.items && r.json.npcs);
+    // 只返回当前 character.items 与 npcAttitude 里的名字
+    assert.deepEqual(Object.keys(r.json.items).sort(), world.character.items.slice().sort());
+    assert.deepEqual(Object.keys(r.json.npcs).sort(), Object.keys(world.npcAttitude).slice().sort());
+    for (const k of Object.keys(r.json.items)) {
+      assert.ok(['ready', 'pending', 'failed', 'none'].includes(r.json.items[k].status));
+      assert.ok('url' in r.json.items[k]);
+    }
+    for (const k of Object.keys(r.json.npcs)) {
+      assert.ok(['ready', 'pending', 'failed', 'none'].includes(r.json.npcs[k].status));
+    }
+
+    // 非法 / 不存在的世界 ID
+    r = await req(base, 'GET', '/api/worlds/bad%20id/images');
+    assert.equal(r.status, 400);
+    r = await req(base, 'GET', '/api/worlds/w-nope/images');
+    assert.equal(r.status, 404);
+
+    // ---- 文件服务：手动放 jpg / svg 验证类型与缓存头 ----
+    const imgDir = path.join(dataDir, 'images');
+    fs.mkdirSync(imgDir, { recursive: true });
+    fs.writeFileSync(path.join(imgDir, 'item-abcdef012345.jpg'), Buffer.from('JPEG'));
+    fs.writeFileSync(path.join(imgDir, 'npc-0123456789ab.svg'), '<svg/>');
+
+    let resp = await fetch(base + '/api/images/item-abcdef012345.jpg');
+    assert.equal(resp.status, 200);
+    assert.match(resp.headers.get('content-type') || '', /image\/jpeg/);
+    assert.match(resp.headers.get('cache-control') || '', /max-age=31536000/);
+    assert.match(resp.headers.get('cache-control') || '', /immutable/);
+    assert.equal(await resp.text(), 'JPEG');
+
+    resp = await fetch(base + '/api/images/npc-0123456789ab.svg');
+    assert.equal(resp.status, 200);
+    assert.match(resp.headers.get('content-type') || '', /image\/svg\+xml/);
+    assert.equal(await resp.text(), '<svg/>');
+
+    // 非法文件名 → 400
+    for (const bad of ['item-BAD.jpg', 'foo-abcdef012345.jpg', 'item-abcdef012345.png']) {
+      resp = await fetch(base + '/api/images/' + bad);
+      assert.equal(resp.status, 400, `非法文件名应 400：${bad}`);
+    }
+    // 合法但不存在 → 404
+    resp = await fetch(base + '/api/images/item-000000000000.jpg');
+    assert.equal(resp.status, 404);
+    // 编码的路径穿越被挡住（400 或 404，绝不读到外界文件）
+    resp = await fetch(base + '/api/images/%2e%2e%2f%2e%2e%2f.env.example');
+    assert.ok(resp.status === 400 || resp.status === 404);
+    // 非 GET 方法 → 405
+    resp = await fetch(base + '/api/images/item-abcdef012345.jpg', { method: 'POST' });
+    assert.equal(resp.status, 405);
+  });
+});
+
 test('备份轮转：启动备份复制 worlds，只保留最近 7 份，更旧的删除；失败只告警', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aigame-backup-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));

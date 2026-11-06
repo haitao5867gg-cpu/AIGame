@@ -184,3 +184,59 @@ test('getConfig 是可用函数', () => {
   assert.equal(typeof env.getConfig, 'function');
   assert.equal(typeof env.getConfig().LLM_MODEL, 'string');
 });
+
+// ---- 图片配置（第 7 节）----
+test('load: IMAGE_* 规格默认值（local / 1024x1024 / 40 / 1 / model）', () => {
+  const cfg = env.load(missingFile(), {});
+  assert.equal(cfg.IMAGE_PROVIDER, 'local');
+  assert.equal(cfg.IMAGE_BASE_URL, 'http://127.0.0.1:8790/v1');
+  assert.equal(cfg.IMAGE_MODEL, 'Doubao-seedream-4.0');
+  assert.equal(cfg.IMAGE_SIZE, '1024x1024');
+  assert.equal(cfg.IMAGE_MAX_PER_WORLD, 40);
+  assert.equal(cfg.IMAGE_CONCURRENCY, 1);
+  assert.equal(typeof cfg.IMAGE_MAX_PER_WORLD, 'number');
+  assert.equal(typeof cfg.IMAGE_CONCURRENCY, 'number');
+});
+
+test('load: IMAGE_PROVIDER 归一化（非法值回退 local、大小写不敏感）', () => {
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'GATEWAY' }).IMAGE_PROVIDER, 'gateway');
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'off' }).IMAGE_PROVIDER, 'off');
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'weird' }).IMAGE_PROVIDER, 'local');
+  assert.equal(env.load(missingFile(), {}).IMAGE_PROVIDER, 'local');
+});
+
+test('load: gateway 的默认 base = LLM base URL，可显式覆盖', () => {
+  // gateway 默认复用 LLM_BASE（即描述里的「LLM_BASE_URL」）。
+  const a = env.load(missingFile(), { IMAGE_PROVIDER: 'gateway', LLM_BASE: 'https://gw.example/v1' });
+  assert.equal(a.IMAGE_BASE_URL, 'https://gw.example/v1');
+  // 别名 LLM_BASE_URL 亦支持（可作为环境变量/文件项传入）。
+  const b = env.load(missingFile(), { IMAGE_PROVIDER: 'gateway', LLM_BASE_URL: 'https://alias.example/v1' });
+  assert.equal(b.IMAGE_BASE_URL, 'https://alias.example/v1');
+  // 显式 IMAGE_BASE_URL 优先级最高。
+  const c = env.load(missingFile(), {
+    IMAGE_PROVIDER: 'gateway', LLM_BASE: 'https://gw.example/v1', IMAGE_BASE_URL: 'https://img.example/v1',
+  });
+  assert.equal(c.IMAGE_BASE_URL, 'https://img.example/v1');
+  // local 不受 LLM_BASE 影响。
+  const d = env.load(missingFile(), { LLM_BASE: 'https://gw.example/v1' });
+  assert.equal(d.IMAGE_BASE_URL, 'http://127.0.0.1:8790/v1');
+});
+
+test('load: IMAGE_MAX_PER_WORLD / IMAGE_CONCURRENCY 数值转换与非法回退', () => {
+  assert.equal(env.load(missingFile(), { IMAGE_MAX_PER_WORLD: '3', IMAGE_CONCURRENCY: '4' }).IMAGE_MAX_PER_WORLD, 3);
+  assert.equal(env.load(missingFile(), { IMAGE_MAX_PER_WORLD: '3', IMAGE_CONCURRENCY: '4' }).IMAGE_CONCURRENCY, 4);
+  assert.equal(env.load(missingFile(), { IMAGE_CONCURRENCY: 'bad' }).IMAGE_CONCURRENCY, 1);
+  assert.equal(env.load(missingFile(), { IMAGE_MAX_PER_WORLD: '-1' }).IMAGE_MAX_PER_WORLD, 40);
+});
+
+test('withoutKey: 新增 IMAGE_* 后脱敏输出仍不含任何 Key', () => {
+  const cfg = env.load(missingFile(), {
+    IMAGE_PROVIDER: 'gateway', LLM_API_KEY: 'sk-super-secret',
+  });
+  const pub = env.withoutKey(cfg);
+  assert.equal(Object.prototype.hasOwnProperty.call(pub, 'LLM_API_KEY'), false);
+  assert.equal(JSON.stringify(pub).includes('sk-super-secret'), false, '脱敏输出不得含 Key 值');
+  assert.equal(/key/i.test(JSON.stringify(pub)), false, '脱敏输出不得残留 key 字段');
+  assert.equal(pub.IMAGE_PROVIDER, 'gateway'); // 其余配置保留
+  assert.equal(cfg.LLM_API_KEY, 'sk-super-secret'); // 原对象不被修改
+});

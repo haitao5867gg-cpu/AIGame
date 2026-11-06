@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const env = require('./src/env.js');
 const game = require('./src/game.js');
+const imagesMod = require('./src/images.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -150,7 +151,7 @@ function sseEvent(res, event, data) {
 
 // POST /api/worlds/:id/turn/stream：多次 event: delta，最后 event: result / event: error。
 // result 的 data 与普通 /turn 的响应体完全相同（来自同一个 takeTurn）。
-async function handleStreamTurn(req, res, g, id) {
+async function handleStreamTurn(req, res, g, id, images, dataDir) {
   startEventStream(res);
   let body;
   try {
@@ -163,6 +164,8 @@ async function handleStreamTurn(req, res, g, id) {
   }
   try {
     const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }));
+    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
+    triggerImages(images, dataDir, result && result.state);
     sseEvent(res, 'result', result);
     res.end();
   } catch (err) {
@@ -202,7 +205,18 @@ function serveStatic(req, res, pathname, isHead) {
   });
 }
 
-async function handle(req, res, cfg, g) {
+// 锁外异步触发图片排队：只用公开状态里的 character.items / npcAttitude / bible。
+// 完全不 await（ensureImages 内部同步登记后自行异步出图），异常只写日志，绝不影响响应。
+function triggerImages(images, dataDir, state) {
+  if (!images || !state) return;
+  try {
+    images.ensureImages(dataDir, state, images.listForState(state));
+  } catch (err) {
+    console.warn('[images] 触发异常（已忽略）：' + (err && err.message ? err.message : err));
+  }
+}
+
+async function handle(req, res, cfg, g, images, dataDir) {
   const method = (req.method || 'GET').toUpperCase();
   let pathname;
   let searchParams = null;
@@ -232,7 +246,10 @@ async function handle(req, res, cfg, g) {
   }
   if (pathname === '/api/worlds' && method === 'POST') {
     const body = await readJsonBody(req);
-    return sendJson(res, 201, await g.buildWorld(body));
+    const world = await g.buildWorld(body);
+    // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
+    triggerImages(images, dataDir, world);
+    return sendJson(res, 201, world);
   }
 
   // ---- 带世界 ID 的接口 ----
@@ -247,7 +264,7 @@ async function handle(req, res, cfg, g) {
       return sendError(res, 400, '非法的世界 ID');
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
-    return handleStreamTurn(req, res, g, id);
+    return handleStreamTurn(req, res, g, id, images, dataDir);
   }
 
   // 导出：GET /api/worlds/:id/export（打包 state + events 的 JSON 附件）。
@@ -262,6 +279,49 @@ async function handle(req, res, cfg, g) {
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
     return handleExport(res, g, id);
+  }
+
+  // 图片状态：GET /api/worlds/:id/images（只含当前物品 / NPC；顺手给老存档补图）。
+  const imagesMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/images$/);
+  if (imagesMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(imagesMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    const state = await g.getWorld(id);
+    return sendJson(res, 200, images.imageList(dataDir, state));
+  }
+
+  // 图片文件：GET /api/images/<file>（严格校验文件名，长缓存）。
+  const imageFileMatch = pathname.match(/^\/api\/images\/([^/]+)$/);
+  if (imageFileMatch) {
+    if (method !== 'GET' && method !== 'HEAD') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let filename;
+    try {
+      filename = decodeURIComponent(imageFileMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的图片文件名');
+    }
+    const info = images.serveImage(dataDir, filename);
+    if (info.status === 400) return sendError(res, 400, '非法的图片文件名');
+    if (info.status === 404) return sendError(res, 404, '图片不存在');
+    let data;
+    try {
+      data = fs.readFileSync(info.filePath);
+    } catch (_) {
+      return sendError(res, 404, '图片不存在');
+    }
+    res.writeHead(200, {
+      'Content-Type': info.contentType,
+      'Content-Length': data.length,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    });
+    res.end(method === 'HEAD' ? undefined : data);
+    return;
   }
 
   const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth|log|undo))?$/);
@@ -283,11 +343,17 @@ async function handle(req, res, cfg, g) {
     }
     if (sub === 'turn' && method === 'POST') {
       const body = await readJsonBody(req);
-      return sendJson(res, 200, await g.takeTurn(id, body));
+      const result = await g.takeTurn(id, body);
+      // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
+      triggerImages(images, dataDir, result && result.state);
+      return sendJson(res, 200, result);
     }
     if (sub === 'rebirth' && method === 'POST') {
       const body = await readJsonBody(req);
-      return sendJson(res, 200, await g.rebirth(id, body));
+      const result = await g.rebirth(id, body);
+      // 重生后排队新的起始物品（及仍在的 NPC）。
+      triggerImages(images, dataDir, result);
+      return sendJson(res, 200, result);
     }
     if (sub === 'undo' && method === 'POST') {
       return sendJson(res, 200, await g.undoTurn(id));
@@ -307,9 +373,10 @@ async function handle(req, res, cfg, g) {
 function createHttpServer(cfg) {
   const dataDir = env.resolveDataDir(cfg);
   const g = game.createGame(cfg, dataDir);
+  const images = imagesMod.createImages(cfg);
   const server = http.createServer((req, res) => {
     Promise.resolve()
-      .then(() => handle(req, res, cfg, g))
+      .then(() => handle(req, res, cfg, g, images, dataDir))
       .catch((err) => {
         const status = (err && err.expose && err.status) || 500;
         const message = err && err.expose && err.message ? err.message : '服务器内部错误';

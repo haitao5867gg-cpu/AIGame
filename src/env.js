@@ -18,12 +18,23 @@ const DEFAULTS = Object.freeze({
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
   LLM_EXTRA_BODY: '', // JSON 字符串，合并进 LLM 请求体；解析失败忽略并告警
+  LLM_BASE_URL: '',  // LLM_BASE 的别名；gateway 图片默认复用「LLM base URL」
   PORT: '8787',
   HOST: '0.0.0.0',
   DATA_DIR: './data',
+  // ---- 图片生成（第 7 节）----
+  IMAGE_PROVIDER: 'local',        // local | gateway | off
+  IMAGE_BASE_URL: '',              // 空则按提供方取默认（见 normalize）
+  IMAGE_MODEL: 'Doubao-seedream-4.0', // gateway 用
+  IMAGE_SIZE: '1024x1024',
+  IMAGE_MAX_PER_WORLD: '40',      // 仅 gateway 生效，防止花钱失控
+  IMAGE_CONCURRENCY: '1',
 });
 
-const NUMERIC_KEYS = Object.freeze(['LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'PORT']);
+const NUMERIC_KEYS = Object.freeze([
+  'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'PORT',
+  'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY',
+]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -76,6 +87,17 @@ function normalize(raw) {
   for (const key of NUMERIC_KEYS) {
     cfg[key] = toNumber(cfg[key], DEFAULTS[key]);
   }
+  // 归一化图片提供方；非法值一律回退 local（默认免费）。
+  const provider = String(cfg.IMAGE_PROVIDER == null ? '' : cfg.IMAGE_PROVIDER).trim().toLowerCase();
+  cfg.IMAGE_PROVIDER = (provider === 'gateway' || provider === 'off') ? provider : 'local';
+  // IMAGE_BASE_URL 未显式配置时按提供方取默认：
+  //  - gateway → LLM base URL（cfg.LLM_BASE，别名 LLM_BASE_URL 亦可）
+  //  - 其余（local / off）→ 本地显卡服务地址
+  if (!cfg.IMAGE_BASE_URL) {
+    cfg.IMAGE_BASE_URL = cfg.IMAGE_PROVIDER === 'gateway'
+      ? (cfg.LLM_BASE_URL || cfg.LLM_BASE || '')
+      : 'http://127.0.0.1:8790/v1';
+  }
   return cfg;
 }
 
@@ -106,9 +128,13 @@ function getConfig() {
 }
 
 // 接口返回前调用：绝不把 Key 带出去。
+// 新增的 IMAGE_* 配置里没有密钥；这里把所有名字含 key 的字段一并剔除，
+// 防止将来新增配置时把鉴权信息带进脱敏输出（gateway 的 Key 只用于请求头）。
 function withoutKey(cfg) {
   const out = Object.assign({}, cfg);
-  delete out.LLM_API_KEY;
+  for (const key of Object.keys(out)) {
+    if (/api.?key/i.test(key) || /key$/i.test(key)) delete out[key];
+  }
   return out;
 }
 

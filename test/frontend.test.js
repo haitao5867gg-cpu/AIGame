@@ -331,3 +331,46 @@ test('前端撤回：最后一段叙事下方有「↶ 撤回这一步」，二�
   assert.ok(/setUndoVisible\(!!(?:state|res\.state)\.undoAvailable\)/.test(html),
     '应按后端 undoAvailable 显隐按钮');
 });
+
+test('前端：随身物品卡片网格与 NPC 头像（图片 / 占位 / 首字 / 点击大图）', () => {
+  // 物品卡片：64px 方图（圆角、object-fit:cover）在上，名字在下
+  assert.ok(/item-grid/.test(html), '应有物品卡片网格容器');
+  assert.ok(/item-card/.test(html), '应有物品卡片');
+  assert.ok(/\.item-thumb\{[^}]*width:64px/.test(html), '物品图宽 64px');
+  assert.ok(/\.item-thumb\{[^}]*height:64px/.test(html), '物品图高 64px');
+  assert.ok(/\.item-thumb\{[^}]*object-fit:cover/.test(html), '物品图 object-fit:cover');
+  assert.ok(/\.item-thumb\{[^}]*border-radius:10px/.test(html), '物品图圆角');
+  // NPC：每行前 40px 圆形头像
+  assert.ok(/npc-avatar/.test(html), '应有 NPC 头像');
+  assert.ok(/\.npc-avatar\{[^}]*width:40px/.test(html), 'NPC 头像宽 40px');
+  assert.ok(/\.npc-avatar\{[^}]*border-radius:50%/.test(html), 'NPC 头像圆形');
+  // pending 柔和闪烁占位；failed / 无图 → 首字圆角色块
+  assert.ok(/img-pending/.test(html), 'pending 应有占位');
+  assert.ok(/@keyframes imgShimmer/.test(html), 'pending 应闪烁');
+  assert.ok(/img-fallback/.test(html), 'failed / 无图应有首字色块');
+  assert.ok(/firstChar\(/.test(html), '应有取首字逻辑');
+  // 点击图片/头像弹出大图，再点关闭
+  assert.ok(/id=["']image-viewer["']/.test(html), '应有大图查看器元素');
+  assert.ok(/openImageViewer\(/.test(html), '点击应打开大图');
+  assert.ok(/closeImageViewer/.test(html), '再点应关闭大图');
+  // 渲染函数
+  assert.ok(/function makeImageVisual/.test(html), '应有图位渲染函数');
+  assert.ok(/function renderItemGrid/.test(html), '应有物品卡片渲染');
+  assert.ok(/function renderNpcList/.test(html), '应有 NPC 头像渲染');
+  assert.ok(/function renderImages/.test(html), '应有统一重渲染');
+  // 375px 不横向溢出：自适应网格 + 长名换行 + 大图限宽
+  assert.ok(/minmax\(72px,1fr\)/.test(html), '卡片网格自适应不溢出');
+  assert.ok(/word-break:break-all/.test(html), '长名字不撑破布局');
+  assert.ok(/max-width:90vw/.test(html), '大图不超出手机宽度');
+});
+
+test('前端：进入世界/回合结果后请求 /images，pending 每 4 秒轮询最多 90 秒', () => {
+  assert.ok(/\/images'/.test(html), '应请求 /images 接口');
+  assert.ok(/function requestImages/.test(html), '应有请求入口');
+  assert.ok(/}, 4000\)/.test(html), 'pending 时每 4 秒轮询');
+  assert.ok(/90000/.test(html), '轮询最多 90 秒');
+  assert.ok(/hasPendingImage/.test(html), '按 pending 判定');
+  assert.ok(/async function showGame[\s\S]*?requestImages\(\)/.test(html), '进入世界应请求一次');
+  assert.ok(/function renderResult[\s\S]*?requestImages\(\)/.test(html), '回合结果后应请求一次');
+  assert.ok(/stopImagePoll\(\)/.test(html), '全部就绪 / 离开世界应停止轮询');
+});

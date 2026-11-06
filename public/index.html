@@ -173,8 +173,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:5px 0;line-height:1.6}
 .fact-item{color:var(--muted)}
 .muted{font-family:var(--sans);font-size:12px;color:var(--muted)}
-.npc-row{display:flex;justify-content:space-between;font-family:var(--sans);font-size:12px;margin:5px 0}
-.npc-attitude{color:var(--accent-2);letter-spacing:1px}
+.npc-row{display:flex;align-items:center;gap:8px;font-family:var(--sans);font-size:12px;margin:5px 0}
+.npc-name{flex:1;min-width:0;word-break:break-all;color:var(--ink)}
+.npc-attitude{color:var(--accent-2);letter-spacing:1px;white-space:nowrap}
 .chronicle-item{font-size:13px;color:var(--muted);margin:6px 0;border-left:2px solid var(--line);padding-left:8px}
 .past-life-item{border-left:2px solid var(--accent);padding-left:9px;margin:8px 0}
 .past-life-head{font-family:var(--sans);font-size:12px;color:var(--muted)}
@@ -213,6 +214,32 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .attr-tip-foot{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
   color:var(--muted);font-size:12px}
 .top-chip[data-attr],.attr-row[data-attr]{cursor:pointer}
+
+/* ---- 物品图 / NPC 头像 / 点击看大图 ---- */
+.item-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:10px}
+.item-card{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+.item-card-name{font-family:var(--sans);font-size:11px;color:var(--ink);text-align:center;
+  word-break:break-all;line-height:1.4}
+.item-thumb{width:64px;height:64px;border-radius:10px;object-fit:cover;display:block;
+  background:var(--bg);border:1px solid var(--line);flex:0 0 auto}
+.npc-avatar{width:40px;height:40px;border-radius:50%;object-fit:cover;display:block;
+  background:var(--bg);border:1px solid var(--line);flex:0 0 auto}
+/* pending：柔和闪烁占位 */
+.img-pending{background:linear-gradient(100deg,#26241c 30%,#343127 50%,#26241c 70%);
+  background-size:200% 100%;animation:imgShimmer 1.6s ease-in-out infinite}
+@keyframes imgShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+/* failed / 无图：首字圆角色块 */
+.img-fallback{display:flex;align-items:center;justify-content:center;color:#e6c9a0;
+  font-family:var(--serif);font-size:22px;
+  background:radial-gradient(circle at 35% 30%,rgba(192,57,43,.45),rgba(40,30,22,.9));
+  border-color:rgba(192,57,43,.5)}
+.npc-avatar.img-fallback{font-size:16px}
+.item-thumb[src],.npc-avatar[src]{cursor:zoom-in}
+/* 点击看大图（再点关闭） */
+.image-viewer{position:fixed;inset:0;z-index:90;background:rgba(9,8,6,.94);
+  display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
+.image-viewer img{max-width:90vw;max-height:86vh;border-radius:12px;
+  box-shadow:0 10px 40px rgba(0,0,0,.65)}
 </style>
 </head>
 <body>
@@ -293,6 +320,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 </div>
 <div id="attr-tip" class="attr-tip" hidden></div>
 <div id="toast" class="toast" hidden></div>
+<div id="image-viewer" class="image-viewer" hidden></div>
 
 <script>
 (function () {
@@ -403,6 +431,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   var undoBusy = false;       // 撤回请求进行中
   var undoArmed = false;      // 撤回按钮是否处于二次确认态
   var undoArmTimer = null;
+  // 图片：/images 状态、当前世界、轮询
+  var imageState = { items: {}, npcs: {} };
+  var imageWorldId = null;
+  var imagePollTimer = null;
+  var imagePollStart = 0;
 
   // ---- 网络 ----
   async function api(pathname, opts) {
@@ -563,6 +596,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     setUndoVisible(false); // 复位撤回按钮二次确认态，重新进入世界时按后端状态再显隐
     clearInterval(pendingTimer);
     pendingTimer = null;
+    stopImagePoll();     // 离开世界：停止 /images 轮询
+    closeImageViewer();  // 收起可能还开着的大图
   }
 
   function route() {
@@ -724,6 +759,127 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     }
   }
 
+  // ---- 图片：随身物品卡片 / NPC 头像 / 请求与轮询 ----
+  function firstChar(name) {
+    var s = String(name == null ? '' : name);
+    return s.length ? s.charAt(0) : '?';
+  }
+
+  // 依据 {status,url} 生成图位元素：ready→<img>、pending→柔和闪烁占位、
+  // failed / none→首字圆角色块。shapeClass 决定是 64px 方图还是 40px 圆头像。
+  function makeImageVisual(name, info, shapeClass) {
+    var st = info && info.status;
+    if (st === 'ready' && info.url) {
+      var img = el('img', shapeClass);
+      img.src = info.url;
+      img.alt = name;
+      img.addEventListener('click', function () { openImageViewer(info.url); });
+      return img;
+    }
+    if (st === 'pending') return el('div', shapeClass + ' img-pending');
+    var fb = el('div', shapeClass + ' img-fallback');
+    fb.textContent = firstChar(name);
+    return fb;
+  }
+
+  function renderItemGrid() {
+    var box = $('item-grid');
+    if (!box) return;
+    box.textContent = '';
+    var items = (currentState && currentState.character && currentState.character.items) || [];
+    if (!items.length) { box.appendChild(el('span', 'muted', '（无）')); return; }
+    items.forEach(function (name) {
+      var card = el('div', 'item-card');
+      card.appendChild(makeImageVisual(name, imageState.items[name], 'item-thumb'));
+      card.appendChild(el('div', 'item-card-name', name));
+      box.appendChild(card);
+    });
+  }
+
+  function renderNpcList() {
+    var box = $('npc-list');
+    if (!box) return;
+    box.textContent = '';
+    var npc = (currentState && currentState.npcAttitude) || {};
+    var names = Object.keys(npc);
+    if (!names.length) { box.appendChild(el('span', 'muted', '（尚无）')); return; }
+    names.forEach(function (name) {
+      var v = Math.max(-10, Math.min(10, Number(npc[name]) || 0));
+      var filled = Math.round(((v + 10) / 20) * 5);
+      var row = el('div', 'npc-row');
+      row.appendChild(makeImageVisual(name, imageState.npcs[name], 'npc-avatar'));
+      row.appendChild(el('span', 'npc-name', name));
+      row.appendChild(el('span', 'npc-attitude', '♥'.repeat(filled) + '♡'.repeat(5 - filled)));
+      box.appendChild(row);
+    });
+  }
+
+  function renderImages() {
+    renderItemGrid();
+    renderNpcList();
+  }
+
+  function openImageViewer(url) {
+    var v = $('image-viewer');
+    v.textContent = '';
+    var img = el('img');
+    img.src = url;
+    img.alt = '';
+    v.appendChild(img);
+    v.hidden = false;
+  }
+
+  function closeImageViewer() {
+    $('image-viewer').hidden = true;
+  }
+
+  function stopImagePoll() {
+    if (imagePollTimer) { clearInterval(imagePollTimer); imagePollTimer = null; }
+  }
+
+  function hasPendingImage(st) {
+    var vals = [];
+    var it = st.items || {}, np = st.npcs || {};
+    Object.keys(it).forEach(function (k) { vals.push(it[k]); });
+    Object.keys(np).forEach(function (k) { vals.push(np[k]); });
+    return vals.some(function (v) { return v && v.status === 'pending'; });
+  }
+
+  // 请求一次 /images；若仍有 pending，则每 4 秒轮询，最多 90 秒。
+  // 离开世界或全部就绪即停止。图片请求失败不影响游戏，静默忽略。
+  async function fetchImages(id) {
+    try {
+      var data = await api('/api/worlds/' + encodeURIComponent(id) + '/images');
+      if (id !== currentWorldId) return; // 已离开该世界：丢弃过期响应
+      imageState = { items: data.items || {}, npcs: data.npcs || {} };
+      renderImages();
+      if (!hasPendingImage(imageState)) stopImagePoll();
+    } catch (err) {
+      // 忽略：图片是附加信息，绝不影响回合
+    }
+  }
+
+  // 进入世界 / 每回合 result 后调用：立即请求一次，并开启（或重置）本轮轮询。
+  function requestImages() {
+    stopImagePoll();
+    if (!currentWorldId) return;
+    var id = currentWorldId;
+    if (imageWorldId !== id) { // 换了世界：清空旧图，避免串图
+      imageState = { items: {}, npcs: {} };
+      imageWorldId = id;
+      renderImages();
+    }
+    imagePollStart = Date.now();
+    fetchImages(id);
+    imagePollTimer = setInterval(function () {
+      if (id !== currentWorldId || Date.now() - imagePollStart >= 90000) {
+        stopImagePoll(); // 离开世界 / 超过 90 秒
+        return;
+      }
+      fetchImages(id);
+    }, 4000);
+  }
+
   // ---- 游戏页 ----
   function clearStream() {
     $('stream').textContent = '';
@@ -757,6 +913,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       if (state.awaitingRebirth || !state.character.alive) showDeath(state, null);
       else hideDeath();
       scrollBottom();
+      requestImages();
     } catch (err) {
       toast(err.message);
     }
@@ -961,11 +1118,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     });
     panel.appendChild(attrSec);
 
-    var items = (s.character && s.character.items) || [];
+    // 随身物品：小卡片网格（64px 方图在上，物品名在下）。
     var itemsSec = el('div', 'panel-section');
     itemsSec.appendChild(el('h4', 'panel-h', '随身物品'));
-    if (items.length) items.forEach(function (it) { itemsSec.appendChild(el('span', 'item-chip', it)); });
-    else itemsSec.appendChild(el('span', 'muted', '（无）'));
+    var itemGrid = el('div', 'item-grid');
+    itemGrid.id = 'item-grid';
+    itemsSec.appendChild(itemGrid);
     panel.appendChild(itemsSec);
 
     var rumors = s.rumors || [];
@@ -999,20 +1157,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       : [el('div', 'muted', '（尚无已确立的事实）')];
     panel.appendChild(collapsible('已知的事', factChildren));
 
+    // 认识的人：每行前 40px 圆形头像 + 名字 + 态度。
     var npcSec = el('div', 'panel-section');
     npcSec.appendChild(el('h4', 'panel-h', '认识的人'));
-    var npc = s.npcAttitude || {};
-    var names = Object.keys(npc);
-    if (names.length) {
-      names.forEach(function (name) {
-        var v = Math.max(-10, Math.min(10, Number(npc[name]) || 0));
-        var filled = Math.round(((v + 10) / 20) * 5);
-        var row = el('div', 'npc-row');
-        row.appendChild(el('span', '', name));
-        row.appendChild(el('span', 'npc-attitude', '♥'.repeat(filled) + '♡'.repeat(5 - filled)));
-        npcSec.appendChild(row);
-      });
-    } else npcSec.appendChild(el('span', 'muted', '（尚无）'));
+    var npcList = el('div', 'npc-list');
+    npcList.id = 'npc-list';
+    npcSec.appendChild(npcList);
     panel.appendChild(npcSec);
 
     var persona = s.persona || {};
@@ -1067,6 +1217,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     panel.appendChild(collapsible('世界设定', wsChildren));
 
     renderTopAttrs(s);
+    renderImages(); // 用当前 /images 状态填充物品卡片与 NPC 头像
   }
 
   function showDeath(state, death) {
@@ -1231,6 +1382,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     renderSuggestions(res.suggestions);
     setUndoVisible(!!res.state.undoAvailable);
     if (res.death) showDeath(res.state, res.death);
+    requestImages();
   }
 
   async function sendAction() {
@@ -1274,6 +1426,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     });
     // 属性说明卡：全局点击（含手机轻点）统一处理弹卡 / 切换 / 点空白关闭。
     document.addEventListener('click', onDocumentClick);
+    // 点击大图查看器（再点）关闭
+    $('image-viewer').addEventListener('click', closeImageViewer);
     $('btn-random').addEventListener('click', randomAlloc);
     $('btn-create').addEventListener('click', createWorld);
     $('btn-send').addEventListener('click', sendAction);
