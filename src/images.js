@@ -6,7 +6,8 @@
 //  - 全局共享缓存 DATA_DIR/images/ + index.json（原子写）。同名同画风的物品跨世界共用；
 //    NPC 因常重名但长相不同，key 额外带世界 id。
 //  - 进程内全局队列，并发受 IMAGE_CONCURRENCY 控制；ensureImages 完全异步、绝不阻塞回合。
-//  - 出图提供方：local（本地显卡服务，只懂英文）/ gateway（付费，中文）/ off（不生成）。
+//  - 出图提供方：siliconflow / zhipu（免费，中文）/ local（本地显卡服务，只懂英文）/ gateway（付费，中文）/ off。
+//    IMAGE_PROVIDER 可写成回退链 siliconflow,zhipu,local：前一家失败就换下一家。
 //  - 任何异常只写日志并标 failed，绝不让回合失败。
 
 const fs = require('node:fs');
@@ -21,6 +22,11 @@ const env = require('./env.js');
 const FILE_NAME_RE = /^(item|npc)-[0-9a-f]{12}\.(jpg|svg)$/;
 const FAILED_COOLDOWN_MS = 10 * 60 * 1000; // failed 10 分钟后才允许重试
 const IMAGE_TIMEOUT_MS = 60000;            // 单次出图 HTTP 超时
+const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 回退链里某家失败后 5 分钟内排到最后
+const SILICONFLOW_URL = 'https://api.siliconflow.cn/v1/images/generations';
+const ZHIPU_URL = 'https://open.bigmodel.cn/api/paas/v4/images/generations';
+const FREE_SIZE = '1024x1024';             // 硅基流动 / 智谱都支持
+const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 
 // ---- 画风推断：从 bible.title / tone 用简单关键词规则推一个画风（中英各一份）----
 // 顺序即优先级：先匹配先生效。
@@ -208,13 +214,22 @@ function buildImageList(dataDir, state, ensureFn) {
 function createImages(cfg, opts) {
   const c = cfg || {};
   const o = opts || {};
-  const provider = String(c.IMAGE_PROVIDER || 'local').toLowerCase();
-  let base = String(c.IMAGE_BASE_URL || '').replace(/\/+$/, '');
-  if (!base) {
-    base = provider === 'gateway'
-      ? String(c.LLM_BASE_URL || c.LLM_BASE || '').replace(/\/+$/, '')
-      : 'http://127.0.0.1:8790/v1';
-  }
+  const chain = String(c.IMAGE_PROVIDER || 'local').toLowerCase().split(/[,\s]+/).filter(Boolean);
+  if (!chain.length) chain.push('local');
+  const provider = chain.join(',');
+  const paid = chain.includes('gateway');
+  // IMAGE_BASE_URL 归链里第一个 HTTP 型提供方（gateway / local）用；另一个走自己的默认地址。
+  const firstHttp = chain.find((p) => p === 'gateway' || p === 'local');
+  const llmBase = String(c.LLM_BASE_URL || c.LLM_BASE || '').replace(/\/+$/, '');
+  const cfgBase = String(c.IMAGE_BASE_URL || '').replace(/\/+$/, '');
+  const gatewayBase = firstHttp === 'gateway' && cfgBase ? cfgBase : llmBase;
+  const localBase = firstHttp === 'local' && cfgBase ? cfgBase : LOCAL_DEFAULT_BASE;
+  const base = firstHttp === 'gateway' ? gatewayBase : localBase;
+  const sfKey = String(c.SILICONFLOW_API_KEY || '');
+  const sfModel = String(c.IMAGE_SILICONFLOW_MODEL || 'Kwai-Kolors/Kolors');
+  const zpKey = String(c.ZHIPU_API_KEY || '');
+  const zpModel = String(c.IMAGE_ZHIPU_MODEL || 'cogview-3-flash');
+  const providerCooldown = new Map(); // provider → 冷却截止时间
   const model = String(c.IMAGE_MODEL || 'Doubao-seedream-4.0');
   const size = String(c.IMAGE_SIZE || '768x768');
   // Seedream 要求至少 960x960 像素；配置偏小时 gateway 自动用 1024x1024。
@@ -226,7 +241,7 @@ function createImages(cfg, opts) {
   const maxPerWorld = Number.isFinite(rawMax) && rawMax >= 0 ? rawMax : 40;
   const concurrency = Math.max(1, Number(c.IMAGE_CONCURRENCY) || 1);
   const mock = !!c.LLM_MOCK;
-  const off = provider === 'off';
+  const off = chain[0] === 'off';
   const apiKey = String(c.LLM_API_KEY || '');
   const llmModel = String(c.LLM_MODEL || '');
   const doFetch = o.fetchImpl || ((...args) => globalThis.fetch(...args));
@@ -275,10 +290,57 @@ function createImages(cfg, opts) {
     }
   }
 
-  // 调用 /images/generations，返回图片二进制 Buffer。
+  // 带超时的 fetch；超时 / 网络错误统一翻成中文错误。
+  async function fetchWithTimeout(url, init) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+    try {
+      return await doFetch(url, Object.assign({}, init, { signal: controller.signal }));
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw new Error(`图片接口超时（${IMAGE_TIMEOUT_MS}ms）`);
+      throw new Error('图片接口网络失败：' + (err && err.message ? err.message : err));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // POST JSON，返回解析后的响应体；业务错误 / HTTP 错误都抛出。
+  async function postJson(url, headers, body) {
+    const resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+      body: JSON.stringify(body),
+    });
+    let data;
+    try {
+      data = typeof (resp && resp.json) === 'function' ? await resp.json() : resp;
+    } catch (_) {
+      throw new Error('图片接口返回不是合法 JSON' + (resp && resp.status ? `（HTTP ${resp.status}）` : ''));
+    }
+    if (data && data.error) {
+      throw new Error('图片接口错误：' + ((data.error && data.error.message) || JSON.stringify(data.error)));
+    }
+    if (resp && (resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400))) {
+      const msg = data && typeof data.message === 'string' ? '：' + clip(data.message, 200) : '';
+      throw new Error('图片接口 HTTP ' + resp.status + msg);
+    }
+    return data;
+  }
+
+  // 下载接口返回的临时图片 URL。
+  async function downloadUrl(url) {
+    const resp = await fetchWithTimeout(url, { method: 'GET' });
+    if (!resp || resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400)) {
+      throw new Error('下载图片失败 HTTP ' + (resp && resp.status));
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (!buf.length) throw new Error('下载图片为空');
+    return buf;
+  }
+
+  // gateway / local：OpenAI 格式 /images/generations，取 b64_json。
   async function callImageApi(prompt, isGateway) {
-    const url = base + '/images/generations';
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = {};
     let body;
     if (isGateway) {
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
@@ -286,39 +348,84 @@ function createImages(cfg, opts) {
     } else {
       body = { prompt, size, response_format: 'b64_json' };
     }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
-    let resp;
-    try {
-      resp = await doFetch(url, {
-        method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
-      });
-    } catch (err) {
-      clearTimeout(timer);
-      if (err && err.name === 'AbortError') throw new Error(`图片接口超时（${IMAGE_TIMEOUT_MS}ms）`);
-      throw new Error('图片接口网络失败：' + (err && err.message ? err.message : err));
-    }
-    clearTimeout(timer);
-    let data;
-    try {
-      data = typeof (resp && resp.json) === 'function' ? await resp.json() : resp;
-    } catch (_) {
-      throw new Error('图片接口返回不是合法 JSON');
-    }
-    if (data && data.error) {
-      throw new Error('图片接口错误：' + ((data.error && data.error.message) || JSON.stringify(data.error)));
-    }
-    if (resp && (resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400))) {
-      throw new Error('图片接口 HTTP ' + resp.status);
-    }
+    const data = await postJson((isGateway ? gatewayBase : localBase) + '/images/generations', headers, body);
     const b64 = data && data.data && data.data[0] && data.data[0].b64_json;
     if (typeof b64 !== 'string' || !b64) throw new Error('图片接口缺少 data[0].b64_json');
     return Buffer.from(b64, 'base64');
   }
 
+  // 硅基流动（Kolors，免费）：返回 images[0].url，需再下载。
+  async function callSiliconflow(prompt) {
+    if (!sfKey) throw new Error('未配置 SILICONFLOW_API_KEY');
+    const data = await postJson(SILICONFLOW_URL, { Authorization: `Bearer ${sfKey}` }, {
+      model: sfModel, prompt, negative_prompt: '文字，水印，签名，边框，模糊，畸形',
+      image_size: FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
+    });
+    const u = data && Array.isArray(data.images) && data.images[0] && data.images[0].url;
+    if (typeof u !== 'string' || !u) throw new Error('硅基流动返回缺少 images[0].url');
+    return downloadUrl(u);
+  }
+
+  // 智谱（cogview-3-flash，免费）：返回 data[0].url，需再下载。
+  async function callZhipu(prompt) {
+    if (!zpKey) throw new Error('未配置 ZHIPU_API_KEY');
+    const data = await postJson(ZHIPU_URL, { Authorization: `Bearer ${zpKey}` }, {
+      model: zpModel, prompt, size: FREE_SIZE, watermark_enabled: false,
+    });
+    const u = data && Array.isArray(data.data) && data.data[0] && data.data[0].url;
+    if (typeof u !== 'string' || !u) throw new Error('智谱返回缺少 data[0].url');
+    return downloadUrl(u);
+  }
+
+  // 用单个提供方出一张图：返回 {bytes, prompt, enPrompt, model}。
+  async function runProvider(p, job) {
+    if (p === 'siliconflow') {
+      const prompt = gatewayPrompt(job);
+      return { bytes: await callSiliconflow(prompt), prompt, enPrompt: '', model: sfModel };
+    }
+    if (p === 'zhipu') {
+      const prompt = gatewayPrompt(job);
+      return { bytes: await callZhipu(prompt), prompt, enPrompt: '', model: zpModel };
+    }
+    if (p === 'gateway') {
+      const prompt = gatewayPrompt(job);
+      return { bytes: await callImageApi(prompt, true), prompt, enPrompt: '', model };
+    }
+    // local：先翻译，再拼英文提示词。
+    let enPrompt = await translate(job);
+    if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
+    const prompt = localPrompt(enPrompt, job.kind, job.style.en);
+    return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
+  }
+
+  // 按回退链依次尝试；最近失败过的提供方排到最后。全部失败才抛错。
+  async function generate(job) {
+    const now = nowFn();
+    const fresh = chain.filter((p) => !(providerCooldown.get(p) > now));
+    const order = fresh.concat(chain.filter((p) => !fresh.includes(p)));
+    const errors = [];
+    for (const p of order) {
+      try {
+        const r = await runProvider(p, job);
+        providerCooldown.delete(p);
+        return Object.assign({ provider: p }, r);
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        errors.push(`${p}：${msg}`);
+        if (chain.length > 1) {
+          providerCooldown.set(p, nowFn() + PROVIDER_COOLDOWN_MS);
+          console.warn(`[images] ${p} 出图失败，换下一家：${msg}`);
+        }
+      }
+    }
+    throw new Error(errors.join('；'));
+  }
+
   async function processJob(job) {
     const t0 = nowFn();
     let ok = false;
+    let usedProvider = provider;
+    let usedModel = chain[0] === 'gateway' ? model : 'local';
     try {
       let filename;
       let bytes;
@@ -328,23 +435,20 @@ function createImages(cfg, opts) {
         // LLM_MOCK=1：不访问网络，写一张小的占位 SVG。
         filename = svgName(job.kind, job.key);
         bytes = Buffer.from(mockSvg(job.name), 'utf8');
-      } else if (provider === 'gateway') {
-        prompt = gatewayPrompt(job);
-        bytes = await callImageApi(prompt, true);
-        filename = jpgName(job.kind, job.key);
       } else {
-        // local：先翻译，再拼英文提示词。
-        enPrompt = await translate(job);
-        if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-        prompt = localPrompt(enPrompt, job.kind, job.style.en);
-        bytes = await callImageApi(prompt, false);
+        const r = await generate(job);
+        bytes = r.bytes;
+        prompt = r.prompt;
+        enPrompt = r.enPrompt;
+        usedProvider = r.provider;
+        usedModel = r.model;
         filename = jpgName(job.kind, job.key);
       }
       writeBinaryAtomic(path.join(imagesDir(job.dataDir), filename), bytes);
       updateEntry(job.dataDir, job.indexKey, {
         kind: job.kind, name: job.name, style: job.style.zh, worldId: job.worldId,
         file: filename, status: 'ready', ts: nowFn(),
-        enPrompt, prompt,
+        enPrompt, prompt, provider: usedProvider,
       });
       ok = true;
     } catch (err) {
@@ -357,8 +461,8 @@ function createImages(cfg, opts) {
     } finally {
       try {
         store.appendUsage(job.dataDir, {
-          ts: nowFn(), kind: 'image', provider,
-          model: provider === 'gateway' ? model : 'local',
+          ts: nowFn(), kind: 'image', provider: usedProvider,
+          model: usedModel,
           ok, ms: nowFn() - t0, worldId: job.worldId,
         });
       } catch (e) {
@@ -400,7 +504,7 @@ function createImages(cfg, opts) {
       const idx = readIndex(dataDir);
       let changed = false;
       let wcount = null;
-      if (provider === 'gateway') {
+      if (paid) {
         wcount = worldCount.get(worldId);
         if (wcount == null) {
           // 估算基线：索引里该世界已有的 npc 数（本次进程排队过的数量累加在 wcount 上）。
@@ -429,7 +533,7 @@ function createImages(cfg, opts) {
             if (nowFn() - (Number(cur.ts) || 0) < FAILED_COOLDOWN_MS) continue; // 冷却
           }
         }
-        if (provider === 'gateway' && wcount >= maxPerWorld) continue; // 花钱上限
+        if (paid && wcount >= maxPerWorld) continue; // 花钱上限（链里有付费 gateway 时生效）
         if (inFlight.has(ik)) continue;                                  // 同一 key 不重复排队
         idx[ik] = Object.assign({}, cur || {}, {
           kind, name, style: style.zh, worldId,
@@ -437,7 +541,7 @@ function createImages(cfg, opts) {
         });
         changed = true;
         inFlight.add(ik);
-        if (provider === 'gateway') { wcount += 1; worldCount.set(worldId, wcount); }
+        if (paid) { wcount += 1; worldCount.set(worldId, wcount); }
         queue.push({
           dataDir, indexKey: ik, kind, key, name, style, worldId,
           role: item && typeof item.role === 'string' ? item.role : '',
@@ -465,7 +569,7 @@ function createImages(cfg, opts) {
 
   return {
     ensureImages, imageList, waitIdle, serveImage, readIndex, listForState,
-    config: { provider, base, model, size, maxPerWorld, concurrency, mock, off },
+    config: { provider, providers: chain.slice(), base, model, size, maxPerWorld, concurrency, mock, off },
   };
 }
 
@@ -490,7 +594,8 @@ module.exports = {
   createImages, configure, reset,
   // 纯函数
   inferStyle, imageKey, listForState, readIndex, serveImage,
-  FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS,
+  FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
+  SILICONFLOW_URL, ZHIPU_URL,
   // 默认实例委托
   ensureImages, imageList, waitIdle,
 };

@@ -240,3 +240,14 @@ test('withoutKey: 新增 IMAGE_* 后脱敏输出仍不含任何 Key', () => {
   assert.equal(pub.IMAGE_PROVIDER, 'gateway'); // 其余配置保留
   assert.equal(cfg.LLM_API_KEY, 'sk-super-secret'); // 原对象不被修改
 });
+
+test('load: IMAGE_PROVIDER 回退链（逗号分隔、去重、丢弃非法项；off 只能单独用）', () => {
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'SiliconFlow, zhipu,local' }).IMAGE_PROVIDER, 'siliconflow,zhipu,local');
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'zhipu,weird,zhipu' }).IMAGE_PROVIDER, 'zhipu');
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'weird,off' }).IMAGE_PROVIDER, 'local');
+  // 链里第一个 HTTP 型是 local → IMAGE_BASE_URL 默认本地服务
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'siliconflow,local' }).IMAGE_BASE_URL, 'http://127.0.0.1:8790/v1');
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'zhipu,gateway', LLM_BASE: 'https://gw.example/v1' }).IMAGE_BASE_URL, 'https://gw.example/v1');
+  const pub = env.withoutKey(env.load(missingFile(), { SILICONFLOW_API_KEY: 'sf-secret', ZHIPU_API_KEY: 'zp-secret' }));
+  assert.ok(!JSON.stringify(pub).includes('secret'));
+});

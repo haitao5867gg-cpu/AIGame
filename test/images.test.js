@@ -458,3 +458,104 @@ test('serveImage：文件名严格校验（非法 400 / 缺失 404 / 正确 200 
   fs.writeFileSync(path.join(dataDir, 'images', svg), '<svg/>');
   assert.equal(images.serveImage(dataDir, svg).contentType, 'image/svg+xml');
 });
+
+// ---- 免费提供方 + 回退链 ----
+// 假服务：硅基流动返回 images[0].url，智谱返回 data[0].url，下载 URL 返回 JPEG。
+function freeFetch(calls, behavior) {
+  const b = behavior || {};
+  return async (url, opts) => {
+    const body = opts && typeof opts.body === 'string' ? JSON.parse(opts.body) : undefined;
+    if (calls) calls.push({ url, headers: opts && opts.headers, body });
+    if (url === images.SILICONFLOW_URL) {
+      if (b.sf === 'fail') return { ok: false, status: 429, json: async () => ({ code: 50603, message: 'rate limited' }) };
+      return { ok: true, status: 200, json: async () => ({ images: [{ url: 'https://dl.test/sf.png' }] }) };
+    }
+    if (url === images.ZHIPU_URL) {
+      if (b.zp === 'fail') return { ok: false, status: 500, json: async () => ({ error: { message: 'zp down' } }) };
+      return { ok: true, status: 200, json: async () => ({ data: [{ url: 'https://dl.test/zp.png' }] }) };
+    }
+    if (url.startsWith('https://dl.test/')) {
+      return { ok: true, status: 200, arrayBuffer: async () => JPEG.buffer.slice(JPEG.byteOffset, JPEG.byteOffset + JPEG.length) };
+    }
+    throw new Error('意外的 URL ' + url);
+  };
+}
+
+function oneItemState(id) {
+  return makeState({
+    id, character: { items: ['旧铜灯'] }, npcAttitude: {},
+    bible: { title: '蒸汽朋克长安', tone: '', npcs: [] },
+  });
+}
+
+test('siliconflow：请求体 / 鉴权头 / 中文提示词正确，下载 URL 写 jpg，用量记 siliconflow', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(calls) });
+  const st = oneItemState('wsf');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, images.SILICONFLOW_URL);
+  assert.equal(calls[0].headers.Authorization, 'Bearer sf-k');
+  assert.equal(calls[0].body.model, 'Kwai-Kolors/Kolors');
+  assert.equal(calls[0].body.image_size, '1024x1024');
+  assert.match(calls[0].body.prompt, /旧铜灯/);
+  assert.equal(calls[1].url, 'https://dl.test/sf.png');
+  const idx = images.readIndex(dataDir);
+  const e = idx[Object.keys(idx)[0]];
+  assert.equal(e.status, 'ready');
+  assert.equal(e.provider, 'siliconflow');
+  assert.deepEqual(fs.readFileSync(path.join(dataDir, 'images', e.file)), JPEG);
+});
+
+test('回退链：siliconflow 失败换 zhipu；失败的一家进冷却，下一张直接先走 zhipu', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(calls, { sf: 'fail' }) });
+  const st = makeState({ id: 'wfb', npcAttitude: {}, bible: { title: '蒸汽朋克长安', tone: '', npcs: [] } });
+  images.ensureImages(dataDir, st, images.listForState(st)); // 两件物品
+  await images.waitIdle();
+  const urls = calls.map((c) => c.url);
+  assert.deepEqual(urls, [
+    images.SILICONFLOW_URL, images.ZHIPU_URL, 'https://dl.test/zp.png', // 第一张：sf 失败 → zp
+    images.ZHIPU_URL, 'https://dl.test/zp.png',                         // 第二张：sf 冷却中，先走 zp
+  ]);
+  assert.equal(calls[1].body.model, 'cogview-3-flash');
+  assert.equal(calls[1].body.watermark_enabled, false);
+  assert.equal(calls[1].headers.Authorization, 'Bearer zp-k');
+  const idx = images.readIndex(dataDir);
+  for (const k of Object.keys(idx)) {
+    assert.equal(idx[k].status, 'ready');
+    assert.equal(idx[k].provider, 'zhipu');
+  }
+});
+
+test('回退链：没配 Key 的一家不发请求直接跳过；全部失败标 failed', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(calls, { zp: 'fail' }) });
+  const st = oneItemState('wnk');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.deepEqual(calls.map((c) => c.url), [images.ZHIPU_URL]);
+  const idx = images.readIndex(dataDir);
+  assert.equal(idx[Object.keys(idx)[0]].status, 'failed');
+});
+
+test('回退链：免费链不受 IMAGE_MAX_PER_WORLD 限制；链里有 gateway 时才限', async (t) => {
+  const dataDir = tmpDir(t);
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k', IMAGE_MAX_PER_WORLD: 1 }),
+    { fetchImpl: freeFetch(null) });
+  const st = makeState({ id: 'wcap', npcAttitude: {}, bible: { title: 'x', tone: '', npcs: [] } });
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  const idx = images.readIndex(dataDir);
+  assert.equal(Object.values(idx).filter((e) => e.status === 'ready').length, 2);
+  assert.equal(images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu,gateway' })).config.providers.join(','), 'zhipu,gateway');
+});

@@ -23,12 +23,18 @@ const DEFAULTS = Object.freeze({
   HOST: '0.0.0.0',
   DATA_DIR: './data',
   // ---- 图片生成（第 7 节）----
-  IMAGE_PROVIDER: 'local',        // local | gateway | off
+  // 出图提供方，可写成逗号分隔的回退链，如 siliconflow,zhipu,local（前一家失败就换下一家）。
+  // 可选：siliconflow（硅基流动 Kolors，免费）| zhipu（智谱 cogview-3-flash，免费）| gateway（付费）| local | off
+  IMAGE_PROVIDER: 'local',
   IMAGE_BASE_URL: '',              // 空则按提供方取默认（见 normalize）
   IMAGE_MODEL: 'Doubao-seedream-4.0', // gateway 用
   IMAGE_SIZE: '768x768',          // 本地服务上限 768（8G 显存）；gateway 时请设 1024x1024
   IMAGE_MAX_PER_WORLD: '40',      // 仅 gateway 生效，防止花钱失控
   IMAGE_CONCURRENCY: '1',
+  SILICONFLOW_API_KEY: '',
+  IMAGE_SILICONFLOW_MODEL: 'Kwai-Kolors/Kolors',
+  ZHIPU_API_KEY: '',
+  IMAGE_ZHIPU_MODEL: 'cogview-3-flash',
   // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
   IMAGE_LOCAL_PYTHON: '',
   IMAGE_HF_HOME: '',
@@ -86,20 +92,30 @@ function isMock(value) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
+const IMAGE_PROVIDERS = Object.freeze(['siliconflow', 'zhipu', 'gateway', 'local']);
+
+function normalizeProviders(value) {
+  const parts = String(value == null ? '' : value).toLowerCase().split(/[,\s]+/).filter(Boolean);
+  if (parts.length === 1 && parts[0] === 'off') return 'off';
+  const chain = [];
+  for (const p of parts) if (IMAGE_PROVIDERS.includes(p) && !chain.includes(p)) chain.push(p);
+  return chain.length ? chain.join(',') : 'local';
+}
+
 function normalize(raw) {
   const cfg = Object.assign({}, raw);
   cfg.LLM_MOCK = isMock(cfg.LLM_MOCK);
   for (const key of NUMERIC_KEYS) {
     cfg[key] = toNumber(cfg[key], DEFAULTS[key]);
   }
-  // 归一化图片提供方；非法值一律回退 local（默认免费）。
-  const provider = String(cfg.IMAGE_PROVIDER == null ? '' : cfg.IMAGE_PROVIDER).trim().toLowerCase();
-  cfg.IMAGE_PROVIDER = (provider === 'gateway' || provider === 'off') ? provider : 'local';
-  // IMAGE_BASE_URL 未显式配置时按提供方取默认：
+  // 归一化图片提供方（可为逗号分隔的回退链）；非法项丢弃，全部非法则回退 local。
+  cfg.IMAGE_PROVIDER = normalizeProviders(cfg.IMAGE_PROVIDER);
+  // IMAGE_BASE_URL 未显式配置时按链里第一个 HTTP 型提供方（gateway / local）取默认：
   //  - gateway → LLM base URL（cfg.LLM_BASE，别名 LLM_BASE_URL 亦可）
-  //  - 其余（local / off）→ 本地显卡服务地址
+  //  - 其余 → 本地显卡服务地址（siliconflow / zhipu 地址固定，不用它）
   if (!cfg.IMAGE_BASE_URL) {
-    cfg.IMAGE_BASE_URL = cfg.IMAGE_PROVIDER === 'gateway'
+    const firstHttp = cfg.IMAGE_PROVIDER.split(',').find((p) => p === 'gateway' || p === 'local');
+    cfg.IMAGE_BASE_URL = firstHttp === 'gateway'
       ? (cfg.LLM_BASE_URL || cfg.LLM_BASE || '')
       : 'http://127.0.0.1:8790/v1';
   }
