@@ -153,6 +153,32 @@ function normalizeTimePasses(value) {
   return clamp(Math.round(n), TIME_PASSES_MIN, TIME_PASSES_MAX);
 }
 
+// 朗读提示校验：只保留合法条目，最多 8 条；坏数据一律丢弃/回退，绝不影响回合。
+// para 必须是非负整数（否则整条丢弃）；mood/pace 非法或缺省一律回退 calm/normal；
+// speaker 仅在该段是 NPC 台词时给（字符串、去空白、截 24 字），旁白段不输出该字段。
+const VOICE_HINT_MOODS = ['calm', 'tense', 'sad', 'joyful', 'angry', 'mysterious'];
+const VOICE_HINT_PACES = ['slow', 'normal', 'fast'];
+function normalizeVoiceHints(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const h of value) {
+    if (!h || typeof h !== 'object' || Array.isArray(h)) continue;
+    if (!Number.isInteger(h.para) || h.para < 0) continue;
+    const hint = {
+      para: h.para,
+      mood: VOICE_HINT_MOODS.includes(h.mood) ? h.mood : 'calm',
+      pace: VOICE_HINT_PACES.includes(h.pace) ? h.pace : 'normal',
+    };
+    if (typeof h.speaker === 'string') {
+      const s = h.speaker.trim().slice(0, 24);
+      if (s) hint.speaker = s;
+    }
+    out.push(hint);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 // 按推进时段数滚动 clock；返回全新对象，不改入参。
 function advanceClock(clock, passes) {
   const c = clock && typeof clock === 'object' ? clock : {};
@@ -336,6 +362,7 @@ module.exports = {
   normalizeThread,
   normalizeMoveTo,
   normalizeTimePasses,
+  normalizeVoiceHints,
   advanceClock,
   normalizeState,
   normalizeEventThemes,

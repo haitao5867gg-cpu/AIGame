@@ -346,6 +346,12 @@ function mockTurn(m) {
     // 让 mock 的长时间循环确定性地不死亡。
     out.event_check = { attr: '体魄', response_quality: 3 };
   }
+  // 朗读提示：旁白段只给 mood/pace；NPC 台词段额外给 speaker（NPC 设定原名）。
+  out.voice_hints = [
+    { para: 0, mood: 'mysterious', pace: 'slow' },
+    { para: 1, mood: 'tense', pace: 'normal', speaker: '守夜人' },
+    { para: 2, mood: 'calm', pace: 'normal' },
+  ];
   return out;
 }
 

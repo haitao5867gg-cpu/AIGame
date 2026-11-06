@@ -101,7 +101,7 @@ function postStream(base, id, body) {
 
 // 随机端口起服务；显式设置 LLM_MOCK=1 与临时 DATA_DIR。
 // cfgOverrides 可覆盖个别配置（默认强制 ACCESS_PASSWORD='' 走自动生成，保证测试稳定）。
-async function withServer(fn, cfgOverrides) {
+async function withServer(fn, cfgOverrides, serverOpts) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aigame-api-'));
   process.env.LLM_MOCK = '1';
   process.env.DATA_DIR = tmp;
@@ -110,7 +110,7 @@ async function withServer(fn, cfgOverrides) {
   process.env.HOST = '127.0.0.1';
   const cfg = Object.assign(env.getConfig(), { ACCESS_PASSWORD: '' }, cfgOverrides || {});
   const dataDir = env.resolveDataDir(cfg);
-  const server = createHttpServer(cfg);
+  const server = createHttpServer(cfg, serverOpts);
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);

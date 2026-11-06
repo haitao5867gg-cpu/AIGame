@@ -119,7 +119,8 @@ const TURN_OUTPUT_FORMAT = [
   ' "time_passes":1,',
   ' "scene":{"draw":false,"place":"地点（≤12 字）","cast":["在场人物的名字"],"items":["画面里用到的物品名"],"action":"≤40 字：谁在做什么、光线氛围"},',
   ' "event":{"title":"事件标题","desc":"事件描述"},',
-  ' "event_check":{"attr":"体魄","response_quality":2}}',
+  ' "event_check":{"attr":"体魄","response_quality":2},',
+  ' "voice_hints":[{"para":0,"mood":"tense","pace":"normal","speaker":"小林"}]}',
   '说明：',
   '- suggestions 固定给 3 条方向明显不同的行动：一条大胆冒险、一条谨慎稳妥、一条借人/用计（拉拢、交易、设局）；',
   '  不要三条都在打听同一件事。',
@@ -155,6 +156,11 @@ const TURN_OUTPUT_FORMAT = [
   '  attr 只能是 体魄/心智/魅力/气运/声望/资源 之一。',
   '- narration 必须分成 2~4 个短段落：每段 1~3 句、≤90 字，人物对白单独成段；',
   '  段落之间用 \\n\\n 分隔（即一个空行，JSON 字符串里写作 \\n\\n），不要输出成没有分段的一整段长文字。',
+  '- voice_hints 是可选的朗读提示，最多 8 条，按叙事段落从 0 开始编号（para）：',
+  '  mood 只能是 calm/tense/sad/joyful/angry/mysterious 之一，pace 只能是 slow/normal/fast 之一；',
+  '  缺省一律 calm/normal（不填或值非法时按缺省处理）。',
+  '  speaker 只在该段是某个 NPC 的台词时填该 NPC 的设定原名（与【人物】里的名字完全一致），旁白段不填、留空或省略；',
+  '  例：[{"para":0,"mood":"mysterious","pace":"slow"},{"para":2,"mood":"angry","speaker":"钟离"}]。',
 ].join('\n');
 
 const WORLD_OUTPUT_FORMAT = [

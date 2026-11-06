@@ -169,6 +169,7 @@ function toPublicLogRecord(rec) {
       reason: d.reason, life: d.life, inheritedReputation: d.inheritedReputation,
     } : null,
     ...(e.scene && e.scene.draw === true ? { scene: toPublicScene(e.scene) } : {}),
+    voice_hints: engine.normalizeVoiceHints(e.voice_hints),
     ts: e.ts,
   };
 }
@@ -536,6 +537,7 @@ function createGame(cfg, dataDir) {
         time_passes: out.time_passes,
         overstep: out.overstep, // 本回合玩家行为是否越界（引擎据此累计 state.oversteps）
         scene: out.scene, // 场景插图提议（draw/desc），交给引擎 normalizeScene 校验后写进回合结果
+        voice_hints: out.voice_hints, // 朗读提示，交给引擎 normalizeVoiceHints 校验
       };
       const data = {
         action,
@@ -624,6 +626,7 @@ function createGame(cfg, dataDir) {
         apex: resolved.result.apex || null,
         twist: resolved.result.twist || null, // 导演转折只进 events.jsonl，不进公开状态 / 公开 log
         scene: resolved.result.scene || null,
+        voice_hints: resolved.result.voice_hints || [],
         usage: usageAgg,
         ts: resolved.result.ts,
       });

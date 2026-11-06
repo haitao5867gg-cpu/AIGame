@@ -15,6 +15,7 @@ const context = require('./src/context.js');
 const store = require('./src/store.js');
 const llmMod = require('./src/llm.js');
 const prefs = require('./src/prefs.js');
+const ttsMod = require('./src/tts.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -314,6 +315,26 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { prefs: prefs.setPrefs(dataDir, player.id, body) });
   }
 
+  // ---- 朗读（Azure 语音服务）：需登录，错误按 status 返回 JSON ----
+  if (pathname === '/api/tts' && method === 'POST') {
+    const body = await readJsonBody(req);
+    const audio = await runtime.tts.synth(Object.assign({}, body, { playerId: player.id }));
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audio.length,
+      'Cache-Control': 'private, max-age=86400',
+    });
+    res.end(audio);
+    return;
+  }
+  if (pathname === '/api/tts/voices' && method === 'GET') {
+    return sendJson(res, 200, {
+      configured: runtime.tts.isConfigured(),
+      voices: ttsMod.VOICES,
+      moods: Object.keys(ttsMod.MOODS),
+    });
+  }
+
   // ---- 无世界 ID 的接口 ----
   if (pathname === '/api/health' && method === 'GET') {
     return sendJson(res, 200, { ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK });
@@ -544,8 +565,13 @@ function createHttpServer(cfg, opts) {
   const g = game.createGame(cfg, dataDir);
   const images = imagesMod.createImages(cfg);
   const access = accessMod.createAccess(cfg, dataDir);
+  // 朗读实例：opts.tts 可注入整实例；否则用 opts.ttsFetchImpl / opts.now 注入（测试用假 fetch）。
+  const tts = o.tts || ttsMod.createTts(cfg, dataDir, {
+    fetchImpl: o.ttsFetchImpl || o.fetchImpl,
+    now: o.ttsNow || o.now,
+  });
   // 隧道在 server.listen 之后才启动，用可写 holder 让路由拿到最新 tunnel（测试可经 opts.tunnel 注入）。
-  const runtime = { tunnel: o.tunnel || null };
+  const runtime = { tunnel: o.tunnel || null, tts };
   const server = http.createServer((req, res) => {
     Promise.resolve()
       .then(() => handle(req, res, cfg, g, images, dataDir, access, runtime))

@@ -31,6 +31,7 @@ function toPublicTurnResult(result, state) {
     settlement: result.settlement,
     death: result.death,
     scene: result.scene || { draw: false },
+    voice_hints: Array.isArray(result.voice_hints) ? result.voice_hints : [],
     state: toPublicState(state),
   };
 }

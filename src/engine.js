@@ -64,6 +64,7 @@ module.exports = {
   TIME_PASSES_DEFAULT: constants.TIME_PASSES_DEFAULT,
   normalizeMoveTo: util.normalizeMoveTo,
   normalizeTimePasses: util.normalizeTimePasses,
+  normalizeVoiceHints: util.normalizeVoiceHints,
   advanceClock: util.advanceClock,
   EPITAPH_MAX: constants.EPITAPH_MAX,
   applyEpitaph: life.applyEpitaph,

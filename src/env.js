@@ -59,12 +59,18 @@ const DEFAULTS = Object.freeze({
   IMAGE_HF_HOME: '',
   IMAGE_LORA: '',
   IMAGE_LOCAL_MIN_FREE_MB: '7000', // 空闲内存低于此值不启动本地画图服务（加载峰值约 5.7G）
+  // ---- 朗读（Azure 语音服务）----
+  AZURE_SPEECH_KEY: '',      // 语音服务订阅密钥；留空则朗读接口返回 503
+  AZURE_SPEECH_REGION: '',   // 语音服务区域，如 eastasia
+  TTS_PLAYER_DAILY_CHARS: '50000',  // 每位来客每日朗读字符上限；0 表示不限，主人 'host' 不受限
+  TTS_CACHE_MAX_MB: '300',          // 朗读音频缓存（DATA_DIR/tts/）总大小上限（MB），超出按修改时间删最旧
 });
 
 const NUMERIC_KEYS = Object.freeze([
   'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'LLM_PLAYER_DAILY_TOKEN_LIMIT', 'PORT',
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
   'CLOUDFLARE_DAILY_NEURONS', 'CLOUDFLARE_RESERVE_FROM',
+  'TTS_PLAYER_DAILY_CHARS', 'TTS_CACHE_MAX_MB',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

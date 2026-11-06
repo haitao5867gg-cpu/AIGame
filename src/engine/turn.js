@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
-const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
+const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
 const { apexConditionMet, applyDeath } = require('./life.js');
@@ -262,6 +262,7 @@ function resolveTurn(state, input, opts) {
     settlement,
     death,
     scene,
+    voice_hints: normalizeVoiceHints(prop.voice_hints), // 朗读提示：坏数据不影响回合
     apex: apexInfo, // 仅用于 events.jsonl 内部记录，接口返回前必须过滤
     twist,          // 本回合强制转折，仅写入 events.jsonl，绝不进公开状态 / 公开回合结果
     needChapter: !!(plan.needChapter && !chapter),
