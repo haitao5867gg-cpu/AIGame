@@ -277,6 +277,12 @@ function mockTurn(m) {
     // 越界升级：约每 7 回合模拟一次越界行为，让引擎累计 oversteps、覆盖升级阶梯链路。
     overstep: turn % 7 === 0,
   };
+  // 场景插图：每 3 回合给一幅值得画的画面，其余回合不出图。
+  if (turn % 3 === 1) {
+    out.scene = { draw: true, desc: '雾中钟楼下，提灯的年轻守夜人拦住去路，灰袍被风吹起' };
+  } else {
+    out.scene = { draw: false };
+  }
   // 事实账本：约每 5 回合确立一条客观事实（≤30 字），覆盖 new_facts 字段。
   if (turn % 5 === 1) {
     out.new_facts = ['第' + turn + '回合：钟楼在黄昏敲三下'];

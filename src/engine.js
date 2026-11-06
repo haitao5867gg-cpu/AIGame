@@ -152,6 +152,17 @@ function normalizeRumor(value) {
   return t.slice(0, RUMOR_MAX);
 }
 
+// 场景插图校验：desc 去空白并截断到 SCENE_DESC_MAX；draw 仅 raw.draw === true 才为 true，
+// forced 为 true 且存在 desc 时强制 draw=true。返回 {draw:true, desc} 或 {draw:false}。
+function normalizeScene(raw, forced) {
+  if (!raw || typeof raw !== 'object') return { draw: false };
+  if (typeof raw.desc !== 'string') return { draw: false };
+  const desc = raw.desc.trim().slice(0, SCENE_DESC_MAX);
+  if (!desc) return { draw: false };
+  const draw = raw.draw === true || forced === true;
+  return draw ? { draw: true, desc } : { draw: false };
+}
+
 // 事实校验：非字符串 / 空串忽略，超过 30 字截断，返回可直接入库的文本（无则 ''）。
 function normalizeFact(value) {
   if (typeof value !== 'string') return '';
@@ -814,6 +825,7 @@ function toPublicTurnResult(result, state) {
     event: result.event,
     settlement: result.settlement,
     death: result.death,
+    scene: result.scene || { draw: false },
     state: toPublicState(state),
   };
 }
@@ -1050,6 +1062,10 @@ function resolveTurn(state, input, opts) {
     s.sceneStreak = boring ? prevStreak + 1 : 0;
   }
 
+  // 关键回合（开启新事件 / 事件结算 / 死亡）强制出图，其余回合按 proposal.scene 决定。
+  const forced = !!(openedEvent || settlement || death);
+  const scene = normalizeScene(prop.scene, forced);
+
   const result = {
     turn: nextTurn,
     life: s.life,
@@ -1063,6 +1079,7 @@ function resolveTurn(state, input, opts) {
     event: openedEvent,
     settlement,
     death,
+    scene,
     apex: apexInfo, // 仅用于 events.jsonl 内部记录，接口返回前必须过滤
     twist,          // 本回合强制转折，仅写入 events.jsonl，绝不进公开状态 / 公开回合结果
     needChapter: !!(plan.needChapter && !chapter),
@@ -1107,6 +1124,7 @@ module.exports = {
   RUMOR_MAX,
   RUMORS_MAX,
   normalizeRumor,
+  normalizeScene,
   FACT_TEXT_MAX,
   FACTS_MAX,
   FACTS_PER_TURN_MAX,

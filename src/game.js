@@ -158,6 +158,7 @@ function toPublicLogRecord(rec) {
     death: d ? {
       reason: d.reason, life: d.life, inheritedReputation: d.inheritedReputation,
     } : null,
+    ...(e.scene && e.scene.draw === true ? { scene: { draw: true, desc: e.scene.desc } } : {}),
     ts: e.ts,
   };
 }
@@ -546,6 +547,7 @@ function createGame(cfg, dataDir) {
         death: resolved.result.death || null,
         apex: resolved.result.apex || null,
         twist: resolved.result.twist || null, // 导演转折只进 events.jsonl，不进公开状态 / 公开 log
+        scene: resolved.result.scene || null,
         usage: usageAgg,
         ts: resolved.result.ts,
       });
