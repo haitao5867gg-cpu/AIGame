@@ -437,7 +437,7 @@ test('serveImage：文件名严格校验（非法 400 / 缺失 404 / 正确 200 
     'item-ABCDEF012345.jpg',   // 大写
     'item-abcdef.jpg',         // 长度不足
     'foo-abcdef012345.jpg',    // 非法 kind
-    'item-abcdef012345.png',   // 非法扩展名
+    'item-abcdef012345.gif',   // 非法扩展名
     'item-abcdef012345.jpg.bak',
     '../item-abcdef012345.jpg',
     'npc-abcdef01234g.jpg',    // 非十六进制
@@ -558,4 +558,50 @@ test('回退链：免费链不受 IMAGE_MAX_PER_WORLD 限制；链里有 gateway
   const idx = images.readIndex(dataDir);
   assert.equal(Object.values(idx).filter((e) => e.status === 'ready').length, 2);
   assert.equal(images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu,gateway' })).config.providers.join(','), 'zhipu,gateway');
+});
+
+test('重启后遗留的 pending（不在本进程 inFlight 里）会重新排队并生成', async (t) => {
+  const dataDir = tmpDir(t);
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(null) });
+  const st = oneItemState('wstale');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  // 模拟上个进程留下的 pending：改写索引，再新建实例（inFlight 为空）。
+  const idx = images.readIndex(dataDir);
+  const k = Object.keys(idx)[0];
+  fs.unlinkSync(path.join(dataDir, 'images', idx[k].file));
+  idx[k] = Object.assign({}, idx[k], { status: 'pending', file: null });
+  store.atomicWriteJson(path.join(dataDir, 'images', 'index.json'), idx);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(calls) });
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(calls.length, 2, '应重新请求生成');
+  const e = images.readIndex(dataDir)[k];
+  assert.equal(e.status, 'ready');
+  assert.ok(fs.existsSync(path.join(dataDir, 'images', e.file)));
+});
+
+test('提供方返回 PNG 字节时存成 .png，serveImage 返回 image/png', async (t) => {
+  const dataDir = tmpDir(t);
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  const base = freeFetch(null);
+  const fetchImpl = async (url, opts) => {
+    if (url.startsWith('https://dl.test/')) {
+      return { ok: true, status: 200, arrayBuffer: async () => PNG.buffer.slice(PNG.byteOffset, PNG.byteOffset + PNG.length) };
+    }
+    return base(url, opts);
+  };
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sf-k' }), { fetchImpl });
+  const st = oneItemState('wpng');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  const idx = images.readIndex(dataDir);
+  const e = idx[Object.keys(idx)[0]];
+  assert.equal(e.status, 'ready');
+  assert.match(e.file, /^item-[0-9a-f]{12}\.png$/);
+  assert.deepEqual(fs.readFileSync(path.join(dataDir, 'images', e.file)), PNG);
+  const r = images.serveImage(dataDir, e.file);
+  assert.equal(r.status, 200);
+  assert.equal(r.contentType, 'image/png');
 });

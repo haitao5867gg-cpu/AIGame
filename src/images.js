@@ -19,7 +19,7 @@ const env = require('./env.js');
 
 // GET /api/images/<file> 严格校验：只允许 <kind>-<12位16进制>.<jpg|svg>。
 // 正则保证文件名里没有斜杠 / 多余的点，天然挡住路径穿越。
-const FILE_NAME_RE = /^(item|npc)-[0-9a-f]{12}\.(jpg|svg)$/;
+const FILE_NAME_RE = /^(item|npc)-[0-9a-f]{12}\.(jpg|png|svg)$/;
 const FAILED_COOLDOWN_MS = 10 * 60 * 1000; // failed 10 分钟后才允许重试
 const IMAGE_TIMEOUT_MS = 60000;            // 单次出图 HTTP 超时
 const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 回退链里某家失败后 5 分钟内排到最后
@@ -58,6 +58,7 @@ function imageKey(kind, name, style, worldId) {
 
 function indexKeyOf(kind, key) { return `${kind}-${key}`; }
 function jpgName(kind, key) { return `${kind}-${key}.jpg`; }
+function pngName(kind, key) { return `${kind}-${key}.png`; }
 function svgName(kind, key) { return `${kind}-${key}.svg`; }
 
 function imagesDir(dataDir) { return path.join(dataDir, 'images'); }
@@ -72,7 +73,9 @@ function writeIndex(dataDir, index) {
 }
 
 function contentTypeFor(filename) {
-  return /\.svg$/i.test(filename) ? 'image/svg+xml' : 'image/jpeg';
+  if (/\.svg$/i.test(filename)) return 'image/svg+xml';
+  if (/\.png$/i.test(filename)) return 'image/png';
+  return 'image/jpeg';
 }
 
 function clip(s, n) {
@@ -442,7 +445,9 @@ function createImages(cfg, opts) {
         enPrompt = r.enPrompt;
         usedProvider = r.provider;
         usedModel = r.model;
-        filename = jpgName(job.kind, job.key);
+        const isPng = bytes && bytes.length >= 4
+          && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+        filename = isPng ? pngName(job.kind, job.key) : jpgName(job.kind, job.key);
       }
       writeBinaryAtomic(path.join(imagesDir(job.dataDir), filename), bytes);
       updateEntry(job.dataDir, job.indexKey, {
@@ -528,7 +533,8 @@ function createImages(cfg, opts) {
             if (cur.file && fs.existsSync(path.join(imagesDir(dataDir), cur.file))) continue;
             // ready 但文件丢失 → 允许重新排队
           } else if (cur.status === 'pending') {
-            continue;
+            // 本进程正在生成才跳过；不在 inFlight 里的 pending 是上个进程（重启前）留下的，照常重新排队。
+            if (inFlight.has(ik)) continue;
           } else if (cur.status === 'failed') {
             if (nowFn() - (Number(cur.ts) || 0) < FAILED_COOLDOWN_MS) continue; // 冷却
           }

@@ -453,7 +453,7 @@ test('接口层 /images：列表只含当前物品与 NPC；文件校验 / Conte
     assert.equal(await resp.text(), '<svg/>');
 
     // 非法文件名 → 400
-    for (const bad of ['item-BAD.jpg', 'foo-abcdef012345.jpg', 'item-abcdef012345.png']) {
+    for (const bad of ['item-BAD.jpg', 'foo-abcdef012345.jpg', 'item-abcdef012345.gif']) {
       resp = await fetch(base + '/api/images/' + bad);
       assert.equal(resp.status, 400, `非法文件名应 400：${bad}`);
     }
