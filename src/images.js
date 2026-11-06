@@ -40,12 +40,12 @@ const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 // 顺序即优先级：先匹配先生效。
 const STYLE_RULES = Object.freeze([
 // 每条只给一种媒介 + 一种笔触（不混用「写实」与「水墨」），并给固定背景色调。
-  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, legacyZh: '水墨手绘插画', zh: '水墨淡彩插画', en: 'Chinese ink-wash painting with light color washes',
+  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, legacyZh: '水墨手绘插画', zh: '水墨淡彩插画', en: 'ink and watercolor illustration, fine ink linework with light color washes',
     eraZh: '中国古代仙侠', eraEn: 'ancient China, xianxia', avoidZh: '现代物品，科技，霓虹，赛博朋克，西装，枪械，塑料',
-    bgZh: '米白宣纸色背景', bgEn: 'plain off-white rice paper background' },
+    bgZh: '米白宣纸色背景', bgEn: 'plain light beige background' },
   { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, legacyZh: '复古蒸汽朋克手绘', zh: '复古铜版线描淡彩', en: 'vintage engraving line art with sepia washes',
     eraZh: '蒸汽机械时代', eraEn: 'steam-powered clockwork era', avoidZh: '现代电子产品，霓虹，塑料',
-    bgZh: '旧羊皮纸色背景', bgEn: 'plain aged parchment background' },
+    bgZh: '旧羊皮纸色背景', bgEn: 'plain light tan background' },
   { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, legacyZh: '科幻概念插画', zh: '数字厚涂概念插画', en: 'digital painterly concept art',
     eraZh: '未来科幻', eraEn: 'futuristic sci-fi', avoidZh: '古装，魔法',
     bgZh: '深灰蓝纯色背景', bgEn: 'plain dark slate blue background' },
@@ -62,7 +62,9 @@ const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh', 'bgZh', 'bgEn'];
 // 画风设定版本：新生成的条目带 v=2。为了不让老世界整体重画，旧条目（无 v）照用、缓存 key 保持旧格式。
 const ART_VERSION = 2;
 const NO_TEXT_ZH = '无文字，无印章，无书法字，无水印';
-const NO_TEXT_EN = 'no calligraphy, no seal stamps, no written characters, no text, no watermark';
+// flux 会把提示词里提到的东西画出来：写「no calligraphy / no seal stamps」反而招来题字和印章，
+// 「rice paper」也会带出国画题款。所以英文只用正面描述：干净空白背景、无落款。
+const NO_TEXT_EN = 'clean empty background, unsigned';
 const ART_RETRY_MS = 30 * 60 * 1000; // 画风 LLM 生成失败后，30 分钟内先用关键词规则兜底、不再重试
 
 function inferStyle(bible) {
@@ -81,8 +83,15 @@ function normalizeArt(a) {
   for (const f of ART_FIELDS) {
     const v = typeof a[f] === 'string' ? a[f].replace(/\s+/g, ' ').trim() : '';
     if (!v) return null;
-    out[f] = clip(v, 60);
+    out[f] = clip(v, /En$|^en$/.test(f) ? 120 : 60);
   }
+  // 国画暗示词会让 flux 自动加题字和印章：从英文画风里去掉（时代由 eraEn 负责锁定）。
+  out.en = out.en.replace(/\b(traditional\s+)?chinese\b\s*/gi, '')
+    .replace(/\bink[- ]?wash(\s+painting)?\b/gi, 'ink and watercolor')
+    .replace(/\b(guohua|sumi-?e|hanging\s+scroll|scroll\s+painting)\b/gi, 'illustration')
+    .replace(/\s+/g, ' ').trim();
+  out.bgEn = out.bgEn.replace(/\b(rice|xuan|mulberry)\s+paper\b/gi, 'light beige')
+    .replace(/\b(scroll|parchment|paper)\b/gi, 'plain').replace(/\s+/g, ' ').trim();
   return out;
 }
 
@@ -211,12 +220,13 @@ function gatewayPrompt(job) {
 // flux 不支持负面提示词：画风和时代放最前，用正面描述锁时代。
 // 物品与人物用同一背景色调；flux 爱加书法和印章，明确写 no calligraphy / no seal stamps。
 function localPrompt(enDesc, kind, styleEn, eraEn, bgEn) {
-  const head = eraEn ? `${styleEn}, ${eraEn} setting` : styleEn;
+  const era = eraEn ? `, ${eraEn} style` : '';
+  enDesc = String(enDesc).replace(/[.。\s]+$/, '');
   const bg = bgEn || DEFAULT_STYLE.bgEn;
   if (kind === 'npc') {
-    return `${head}. ${enDesc}, period-accurate clothing, half-body portrait, clear face, ${bg}, ${NO_TEXT_EN}`;
+    return `${styleEn}. ${enDesc}${era}, period-accurate clothing, half-body portrait, clear face, ${bg}, ${NO_TEXT_EN}`;
   }
-  return `${head}. ${enDesc}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
+  return `${styleEn}. ${enDesc}${era}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
 }
 
 // 翻译结果清洗：取首行、去引号、截断到 ≤25 个英文单词。
@@ -402,9 +412,12 @@ function createImages(cfg, opts) {
           + '画风只能是一种媒介加一种笔触（如「水墨淡彩插画」「铜版线描淡彩」「厚涂油画」），'
           + '不要把互相冲突的词并列（如「写实」和「水墨」、「照片」和「插画」），也不要写「写实」「照片」。'
           + '背景是一种与画风相配的纯色或纸张色，物品和人物共用。'
-          + '例：修仙世界 → {"zh":"水墨淡彩插画","en":"Chinese ink-wash painting with light color washes",'
+          + 'en 画风里不要出现 Chinese painting、Chinese ink-wash、guohua、sumi-e、scroll 这类国画暗示词'
+          + '（图像模型看到会自动加题字和印章），时代只写在 eraEn 里；bgEn 只写纯色（如 plain light beige background），'
+          + '不要写 rice paper、parchment、scroll 等纸张词。'
+          + '例：修仙世界 → {"zh":"水墨淡彩插画","en":"ink and watercolor illustration, fine ink linework with light color washes",'
           + '"eraZh":"中国古代修仙宗门","eraEn":"ancient China, cultivation sect",'
-          + '"avoidZh":"现代物品，科技，霓虹，赛博朋克，西装，枪械","bgZh":"米白宣纸色背景","bgEn":"plain off-white rice paper background"}',
+          + '"avoidZh":"现代物品，科技，霓虹，赛博朋克，西装，枪械","bgZh":"米白宣纸色背景","bgEn":"plain light beige background"}',
       },
       { role: 'user', content: brief },
     ];

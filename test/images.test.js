@@ -75,7 +75,7 @@ function stubWarn(t) {
 
 test('画风推断：六类关键词各推一份中英画风，缺省回退「手绘插画」', () => {
   const cases = [
-    ['修仙宗门外门杂役', '苍茫', '水墨淡彩插画', 'Chinese ink-wash painting with light color washes'],
+    ['修仙宗门外门杂役', '苍茫', '水墨淡彩插画', 'ink and watercolor illustration, fine ink linework with light color washes'],
     ['蒸汽朋克长安', '齿轮轰鸣', '复古铜版线描淡彩', 'vintage engraving line art with sepia washes'],
     ['赛博霓虹都市', '未来', '数字厚涂概念插画', 'digital painterly concept art'],
     ['深海殖民站', '幽暗', '数字厚涂概念插画', 'digital painterly concept art'],
@@ -312,7 +312,7 @@ test('local 翻译成功：英文提示词 + enPrompt 入索引；请求体无 m
   const entry = idx[Object.keys(idx)[0]];
   assert.equal(entry.status, 'ready');
   assert.equal(entry.enPrompt, 'a rusty brass lantern glowing in fog');
-  assert.match(entry.prompt, /^vintage engraving line art with sepia washes, steam-powered clockwork era setting\. a rusty brass lantern glowing in fog, period-accurate object, single object centered, game item icon, plain aged parchment background, no calligraphy, no seal stamps/);
+  assert.match(entry.prompt, /^vintage engraving line art with sepia washes\. a rusty brass lantern glowing in fog, steam-powered clockwork era style, period-accurate object, single object centered, game item icon, plain light tan background, clean empty background, unsigned$/);
   assert.match(entry.prompt, /vintage engraving line art with sepia washes/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].body.prompt, entry.prompt);
@@ -350,7 +350,7 @@ test('local 翻译失败：用英文兜底短语，仍能出图，不抛错', as
   let entry = idx[Object.keys(idx).find((k) => idx[k].kind === 'item')];
   assert.equal(entry.status, 'ready', '翻译失败仍要出图');
   assert.equal(entry.enPrompt, 'a mysterious item');
-  assert.match(entry.prompt, /a mysterious item, period-accurate object, single object centered/);
+  assert.match(entry.prompt, /a mysterious item, steam-powered clockwork era style, period-accurate object, single object centered/);
 
   // NPC 用另一个兜底短语
   const npcState = makeState({
@@ -733,7 +733,7 @@ test('cloudflare：URL 带账户与模型、Bearer Token、steps=4、英文提�
   assert.equal(calls[0].url, images.CLOUDFLARE_API_BASE + 'acc1/ai/run/@cf/black-forest-labs/flux-1-schnell');
   assert.equal(calls[0].headers.Authorization, 'Bearer cf-t');
   assert.equal(calls[0].body.steps, 4);
-  assert.match(calls[0].body.prompt, /\. old brass oil lamp, period-accurate object, single object centered/);
+  assert.match(calls[0].body.prompt, /\. old brass oil lamp, .* style, period-accurate object, single object centered/);
   const e = Object.values(images.readIndex(dataDir))[0];
   assert.equal(e.status, 'ready');
   assert.equal(e.provider, 'cloudflare');
@@ -853,9 +853,9 @@ test('画风设定：cloudflare 英文提示词以画风 + 时代开头，翻译
   assert.match(tMessages[0].content, /MUST fit the world's era/);
   assert.match(tMessages[1].content, /时代背景：中国古代修仙宗门/);
   assert.equal(calls[0].body.prompt,
-    'ancient Chinese xianxia ink-wash illustration, ancient China, cultivation sect setting. a tarnished bronze oil lamp, '
-    + 'period-accurate object, single object centered, game item icon, plain off-white rice paper background, '
-    + 'no calligraphy, no seal stamps, no written characters, no text, no watermark');
+    'ancient xianxia ink and watercolor illustration. a tarnished bronze oil lamp, ancient China, cultivation sect style, '
+    + 'period-accurate object, single object centered, game item icon, plain off-white light beige background, '
+    + 'clean empty background, unsigned');
 });
 
 test('画风设定：LLM 返回字段不全 → 关键词规则兜底，且不写 styles.json', async (t) => {
@@ -907,4 +907,23 @@ test('画风设定：已有旧图（无画风设定、key 只有画风词）的�
   assert.equal(directed, 0);
   assert.equal(calls.length, 0);
   assert.equal(list.items['旧铜灯'].status, 'ready');
+});
+
+test('画风设定：英文画风里的国画暗示词（Chinese ink-wash / Chinese painting / guohua）被替换，避免题字印章', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: 'a', CLOUDFLARE_API_TOKEN: 't' }), {
+    fetchImpl: cfFetch(calls),
+    artDirector: async (state, messages) => {
+      assert.match(messages[0].content, /不要出现 Chinese painting、Chinese ink-wash、guohua/);
+      return Object.assign({}, XIANXIA_ART, { en: 'traditional Chinese ink-wash painting, guohua style' });
+    },
+    translate: async () => 'a bronze lamp',
+  });
+  const st = xianxiaState('wguohua');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  const prompt = calls[0].body.prompt;
+  assert.ok(!/chinese ink|chinese painting|guohua|calligraphy|seal|rice paper/i.test(prompt), prompt);
+  assert.match(prompt, /^ink and watercolor, illustration style\. a bronze lamp, ancient China, cultivation sect style,/);
 });
