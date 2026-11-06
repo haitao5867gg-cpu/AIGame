@@ -668,3 +668,130 @@ test('流式回合：takeTurn 传入 onDelta 时逐段回调叙事，结果与�
   ]);
   assert.deepEqual([a.state.turn, b.state.turn].sort((x, y) => x - y), [3, 4]);
 });
+
+// ---------- 撤回上一步 ----------
+
+test('撤回：成功后恢复上一回合状态、追加 undo 标记、/log 跳过被撤回回合、只能一步', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港钟声', name: '甲', appearance: '乙' });
+  const id = world.id;
+
+  const r1 = await g.takeTurn(id, { action: '第一步：环顾' });
+  assert.equal(r1.state.turn, 1);
+  assert.equal(r1.state.undoAvailable, true, '回合后应可撤回');
+  assert.ok(store.hasUndoBackup(dataDir, id), '回合前应生成 state.prev.json');
+
+  const r2 = await g.takeTurn(id, { action: '第二步：探查' });
+  assert.equal(r2.state.turn, 2);
+
+  // 撤回：恢复到第 1 回合后的状态（turn=1）
+  const u = await g.undoTurn(id);
+  assert.equal(u.turn, 1, '撤回后应回到第 1 回合');
+  assert.equal(u.undoneTurn, 2, '应报告被撤回的回合号');
+  assert.equal(u.undoneAction, '第二步：探查', '应返回被撤回的行动文字（供前端回填）');
+  assert.equal(u.undoAvailable, false, '撤回后不再可撤回（只一步）');
+  assert.equal(store.hasUndoBackup(dataDir, id), false, '.prev 应被删除');
+
+  // events.jsonl 只追加：undo 标记追加、原回合记录仍在（不删除）
+  const events = store.readEvents(dataDir, id);
+  const markers = events.filter((e) => e.type === 'undo');
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].undoneTurn, 2);
+  assert.equal(typeof markers[0].ts, 'number');
+  assert.equal(events.filter((e) => e.turn === 2).length, 1, '原第 2 回合日志仍保留');
+
+  // /log 跳过被撤回的第 2 回合，也不把 undo 标记当公开记录
+  const log = await g.getWorldLog(id, 50);
+  assert.ok(log.every((rec) => rec.turn !== 2), '被撤回回合不应出现在 /log');
+  assert.equal(log.length, 1, '/log 只剩第 1 回合');
+  assert.ok(log.every((rec) => !('type' in rec)), 'undo 标记不应作为公开记录出现');
+
+  // 只能撤回一步
+  await assert.rejects(
+    () => g.undoTurn(id),
+    (err) => err && err.status === 409 && /没有可以撤回的回合/.test(err.message),
+  );
+
+  // 撤回后再走一步会复用回合号 2，新回合仍可见、可再次撤回
+  const r2b = await g.takeTurn(id, { action: '第二步（重来）' });
+  assert.equal(r2b.state.turn, 2);
+  assert.equal(r2b.state.undoAvailable, true);
+  const log2 = await g.getWorldLog(id, 50);
+  assert.equal(log2.filter((rec) => rec.turn === 2).length, 1, '重来的第 2 回合应可见');
+  assert.equal(log2[log2.length - 1].action, '第二步（重来）');
+});
+
+test('撤回：从未走过回合时返回 409「没有可以撤回的回合」', async (t) => {
+  const { g } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港', name: '甲', appearance: '乙' });
+  await assert.rejects(
+    () => g.undoTurn(world.id),
+    (err) => err && err.status === 409 && /没有可以撤回的回合/.test(err.message),
+  );
+  const got = await g.getWorld(world.id);
+  assert.equal(got.undoAvailable, false, '新世界无撤回');
+});
+
+test('撤回：死亡回合返回 409 并说明', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雪原', name: '甲', appearance: '乙' });
+  const id = world.id;
+  const s = store.loadWorld(dataDir, id);
+  s.character.attrs['体魄'] = 0;
+  s.nextEventTurn = 999;
+  s.activeEvent = null;
+  store.saveWorld(dataDir, s);
+  const res = await g.takeTurn(id, { action: '倒下' });
+  assert.ok(res.death, '本回合应触发死亡');
+  assert.equal(res.state.undoAvailable, false, '死亡回合不可撤回');
+  await assert.rejects(
+    () => g.undoTurn(id),
+    (err) => err && err.status === 409 && /死亡/.test(err.message),
+  );
+});
+
+test('撤回：重生之后不允许撤回上一世，返回 409 并说明', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雪原', name: '甲', appearance: '乙' });
+  const id = world.id;
+  const s = store.loadWorld(dataDir, id);
+  s.character.attrs['体魄'] = 0;
+  s.nextEventTurn = 999;
+  s.activeEvent = null;
+  store.saveWorld(dataDir, s);
+  await g.takeTurn(id, { action: '倒下' }); // 死亡回合（生成 .prev 快照）
+  await g.rebirth(id, { name: '二世', appearance: '红衣' }); // 重生
+  const got = await g.getWorld(id);
+  assert.equal(got.undoAvailable, false, '重生后不可撤回上一世');
+  await assert.rejects(
+    () => g.undoTurn(id),
+    (err) => err && err.status === 409 && /重生/.test(err.message),
+  );
+});
+
+test('撤回：流式回合与普通回合都在回合前生成 .prev 备份', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '流式备份世界', name: '甲', appearance: '乙' });
+  const id = world.id;
+  await g.takeTurn(id, { action: '普通' });
+  assert.equal(store.hasUndoBackup(dataDir, id), true, '普通回合应备份');
+  await g.takeTurn(id, { action: '流式' }, () => {});
+  assert.equal(store.hasUndoBackup(dataDir, id), true, '流式回合应备份');
+  const u = await g.undoTurn(id);
+  assert.equal(u.undoneAction, '流式', '撤回的是最近一次流式回合');
+  assert.equal(u.turn, 1, '恢复到第 1 回合后状态');
+});
+
+test('撤回日志过滤：undo 标记及其前一条同回合记录被跳过，复用回合号的新记录仍可见', () => {
+  const events = [
+    { turn: 1, action: 'a1', narration: 'n1' },
+    { turn: 2, action: 'a2', narration: 'n2' },
+    { type: 'undo', undoneTurn: 2, ts: 1 },
+    { turn: 2, action: 'a2-重来', narration: 'n2b' },
+  ];
+  const vis = game.visibleEventRecords(events);
+  assert.deepEqual(vis.map((e) => e.action), ['a1', 'a2-重来']);
+  assert.ok(vis.every((e) => e.type !== 'undo'), 'undo 标记本身不应出现');
+  // 撤回发生时尚无重来回合：取最近一条同回合记录
+  assert.equal(game.lastTurnAction(events.slice(0, 3), 2), 'a2');
+});

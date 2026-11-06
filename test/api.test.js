@@ -350,6 +350,59 @@ test('接口层 /export：下载 state（去 apex）+ events 公开字段，带�
   });
 });
 
+test('接口层 /undo：撤回成功 / 无可撤回 409 / 流式与普通回合都做了备份 / log 跳过', async () => {
+  await withServer(async ({ base, dataDir }) => {
+    let r = await req(base, 'POST', '/api/worlds', {
+      seed: '撤回测试之城', name: '旅人', appearance: '灰袍',
+    });
+    assert.equal(r.status, 201, r.text);
+    const id = r.json.id;
+    const prevPath = path.join(dataDir, 'worlds', id, 'state.prev.json');
+
+    // 无可撤回
+    r = await req(base, 'POST', `/api/worlds/${id}/undo`);
+    assert.equal(r.status, 409);
+    assert.match(r.json.error, /没有可以撤回的回合/);
+
+    // 普通回合 → 可撤回，且回合前已备份
+    r = await req(base, 'POST', `/api/worlds/${id}/turn`, { action: '普通第一步' });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.state.turn, 1);
+    assert.equal(r.json.state.undoAvailable, true);
+    assert.ok(fs.existsSync(prevPath), '普通回合前应备份 state.prev.json');
+
+    // 撤回 → 恢复、报告被撤回行动
+    r = await req(base, 'POST', `/api/worlds/${id}/undo`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.turn, 0);
+    assert.equal(r.json.undoneTurn, 1);
+    assert.equal(r.json.undoneAction, '普通第一步');
+    assert.equal(r.json.undoAvailable, false);
+    assert.equal(fs.existsSync(prevPath), false, '撤回后 .prev 应删除');
+
+    // 流式回合 → 同样做了备份、可撤回
+    const resp = await postStream(base, id, { action: '流式第一步' });
+    assert.equal(resp.status, 200);
+    const sse = parseSSE(await resp.text());
+    assert.ok(sse.some((e) => e.event === 'result'), '流式应返回 result');
+    assert.ok(fs.existsSync(prevPath), '流式回合前也应备份 state.prev.json');
+
+    r = await req(base, 'POST', `/api/worlds/${id}/undo`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.undoneAction, '流式第一步');
+
+    // /log 跳过所有被撤回回合，且不含 undo 标记
+    r = await req(base, 'GET', `/api/worlds/${id}/log?limit=50`);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.length, 0, '两次撤回后 /log 不含任何可见回合');
+    assertNoLeak(r.text, r.json);
+
+    // 不存在世界的 undo 仍 404
+    r = await req(base, 'POST', '/api/worlds/w-nope/undo');
+    assert.equal(r.status, 404, r.text);
+  });
+});
+
 test('备份轮转：启动备份复制 worlds，只保留最近 7 份，更旧的删除；失败只告警', (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aigame-backup-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));

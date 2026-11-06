@@ -115,7 +115,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .stream{flex:1;overflow-y:auto;max-height:60vh;padding:4px 2px 16px}
 @media(max-width:859px){.stream{max-height:50vh}}
 .narration-block{margin:14px 0}
-.narration{font-size:17px;line-height:1.95;white-space:pre-wrap;margin:0}
+.narration{font-size:17px;line-height:1.9;white-space:pre-wrap;margin:0 0 1.15em}
+.narration-block>.narration:last-of-type{margin-bottom:0}
 .opening{font-size:17px;line-height:1.95;white-space:pre-wrap;color:var(--ink);
   border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:8px 0 18px}
 .action-line{font-family:var(--sans);font-size:13px;color:var(--muted);margin:16px 0 4px;white-space:pre-wrap}
@@ -143,6 +144,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .composer-row{display:flex;gap:8px;align-items:flex-end}
 #action-input{flex:1;min-height:54px}
 .pending{font-family:var(--sans);font-size:13px;color:var(--muted);margin-top:8px}
+.undo-btn{display:block;margin:2px 0 10px;background:none;border:1px solid var(--line);
+  color:var(--muted);font-family:var(--sans);font-size:12px;border-radius:8px;padding:4px 12px}
+.undo-btn:hover{border-color:var(--accent-2);color:var(--accent-2)}
 
 /* ---- 侧面板 / 抽屉 ---- */
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
@@ -198,6 +202,17 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .toast{position:fixed;z-index:80;top:14px;left:50%;transform:translateX(-50%);max-width:90%;
   background:var(--accent);color:#fff;font-family:var(--sans);font-size:14px;padding:10px 16px;
   border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
+
+/* ---- 属性说明卡 ---- */
+.attr-tip{position:fixed;z-index:70;left:50%;top:64px;transform:translateX(-50%);
+  width:320px;max-width:88vw;background:var(--panel);border:1px solid var(--accent);
+  border-radius:10px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.55);
+  font-family:var(--sans);font-size:13px;line-height:1.7;color:var(--ink)}
+.attr-tip-name{font-size:15px;font-weight:600;color:var(--accent-2);margin-bottom:4px}
+.attr-tip-desc{color:var(--ink)}
+.attr-tip-foot{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
+  color:var(--muted);font-size:12px}
+.top-chip[data-attr],.attr-row[data-attr]{cursor:pointer}
 </style>
 </head>
 <body>
@@ -260,6 +275,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       <main class="stage">
         <div id="top-attrs" class="top-attrs"></div>
         <div id="stream" class="stream"></div>
+        <button id="btn-undo" class="undo-btn" hidden>↶ 撤回这一步</button>
         <div class="composer">
           <div id="suggestions" class="suggestions"></div>
           <div class="composer-row">
@@ -275,6 +291,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   </section>
 
 </div>
+<div id="attr-tip" class="attr-tip" hidden></div>
 <div id="toast" class="toast" hidden></div>
 
 <script>
@@ -292,6 +309,17 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     '被诅咒的中世纪王国：每当钟敲十三下，就有一个人忘记自己的名字',
   ];
   var DEFAULT_SUGGESTIONS = ['环顾四周', '向人打听消息', '查看随身物品'];
+  // 属性说明卡文案：点击（或手机上轻点）顶部属性条 / 侧面板任一属性弹出。
+  var ATTR_INFO = {
+    '体魄': '身体与伤势，归零即本世终结',
+    '心智': '洞察、学识、识破谎言',
+    '魅力': '说服、结交、让人信任',
+    '气运': '巧合与机缘，影响事件结算的运气',
+    '声望': '世人眼中的你，影响 NPC 态度和隐藏机会',
+    '资源': '钱财物资与人脉可调动的东西',
+  };
+  var ATTR_TIP_FOOTER = '属性上限 40，越高越难提升';
+  var attrTipOpen = null; // 当前打开的属性名，null 表示未打开
   // 玩法简介：无世界时醒目显示，有世界时在列表下方用小字显示。
   var HOME_INTRO = '一句话就能开一个世界。自由输入你想做的任何事——没有任务，也没有结局；'
     + '死亡只是一世的结束，下一世世界仍会记得你。';
@@ -304,6 +332,57 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     if (cls) n.className = cls;
     if (text != null) n.textContent = String(text);
     return n;
+  }
+
+  /* NARRATION_HELPERS_START */
+  // 按空行（\n\n，中间可含空白）把叙事切成段落；纯函数，供流式实时分段。
+  function splitByBlankLines(text) {
+    return String(text == null ? '' : text)
+      .split(/\n\s*\n/)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  // 完整叙事分段：
+  //  - 新叙事：按 \n\n 分成多个短段落；
+  //  - 旧存档（没有分段的一整段长文本）：按句号/问号/叹号分句，每约 80 字合并成一段显示。
+  function splitNarration(text) {
+    var t = String(text == null ? '' : text).trim();
+    if (!t) return [];
+    var parts = splitByBlankLines(t);
+    if (parts.length >= 2) return parts;
+    if (t.length <= 80) return [t];
+    var sentences = t.match(/[^。？！!?\.]+[。？！!?\.]*/g) || [t];
+    var out = [];
+    var buf = '';
+    for (var i = 0; i < sentences.length; i++) {
+      var s = sentences[i];
+      // 单句过长且没有句末标点：按约 80 字硬切，避免整段仍不分。
+      while (s.length > 90) {
+        if (buf) { out.push(buf); buf = ''; }
+        out.push(s.slice(0, 80));
+        s = s.slice(80);
+      }
+      if (buf && buf.length + s.length > 80) { out.push(buf); buf = ''; }
+      buf += s;
+    }
+    if (buf) out.push(buf);
+    return out.length ? out : [t];
+  }
+  /* NARRATION_HELPERS_END */
+
+  // 把段落数组渲染进叙事块：复用已有 <p>，只改文本与增删末尾，流式追加时不闪烁。
+  function renderParagraphs(wrap, paras) {
+    var nodes = wrap.querySelectorAll('p.narration');
+    var i;
+    for (i = 0; i < paras.length; i++) {
+      var node = nodes[i];
+      if (!node) { node = el('p', 'narration'); wrap.appendChild(node); }
+      if (node.textContent !== paras[i]) node.textContent = paras[i];
+    }
+    for (i = nodes.length - 1; i >= paras.length; i--) {
+      wrap.removeChild(nodes[i]);
+    }
   }
 
   // 濒死：后端公开状态带 danger:true；老数据缺该字段时按体魄 ≤ 2 兜底。
@@ -321,6 +400,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   var pendingTimer = null;
   var pendingStart = 0;
   var alloc = {};
+  var undoBusy = false;       // 撤回请求进行中
+  var undoArmed = false;      // 撤回按钮是否处于二次确认态
+  var undoArmTimer = null;
 
   // ---- 网络 ----
   async function api(pathname, opts) {
@@ -346,6 +428,72 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     toastTimer = setTimeout(function () { t.hidden = true; }, 4200);
   }
 
+  // ---- 属性说明卡 ----
+  /* ATTR_TIP_HELPERS_START */
+  // 纯逻辑（不依赖 DOM）：给定「当前打开的属性名」与「本次点到的属性名」，决定下一步动作。
+  //   clickedName 为空（点在空白/非属性处）→ 已打开则关闭、否则不动；
+  //   clickedName === openName（再点同一属性）→ 关闭；
+  //   否则 → 打开/切换到该属性。
+  // 返回 'hide' | 'show' | null（null 表示无需改动）。
+  function attrTipAction(openName, clickedName) {
+    if (!clickedName) return openName ? 'hide' : null;
+    if (openName === clickedName) return 'hide';
+    return 'show';
+  }
+  /* ATTR_TIP_HELPERS_END */
+
+  // 从点击目标向上找带 data-attr 的元素（顶部属性条 / 侧面板属性行）。
+  function closestAttr(node) {
+    while (node && node !== document) {
+      if (node.getAttribute && node.getAttribute('data-attr')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function hideAttrTip() {
+    $('attr-tip').hidden = true;
+    attrTipOpen = null;
+  }
+
+  function showAttrTip(name) {
+    var tip = $('attr-tip');
+    tip.textContent = '';
+    tip.appendChild(el('div', 'attr-tip-name', name));
+    tip.appendChild(el('div', 'attr-tip-desc', ATTR_INFO[name] || ''));
+    tip.appendChild(el('div', 'attr-tip-foot', ATTR_TIP_FOOTER));
+    tip.hidden = false;
+    attrTipOpen = name;
+  }
+
+  function onAttrClick(name) {
+    if (!ATTR_INFO[name]) return;
+    var action = attrTipAction(attrTipOpen, name);
+    if (action === 'hide') hideAttrTip();  // 再点同一属性 → 关闭
+    else if (action === 'show') showAttrTip(name);
+  }
+
+  // 全局点击：点属性 → 弹出/切换/关闭说明卡；点说明卡内部 → 保持打开；点空白 → 关闭。
+  // 手机轻点同样会触发 click，故 click 与 tap 一并覆盖。
+  function onDocumentClick(e) {
+    var tip = $('attr-tip');
+    if (tip.contains(e.target)) return; // 卡片内部（便于阅读/复制）不关闭
+    var attrEl = closestAttr(e.target);
+    if (attrEl) { onAttrClick(attrEl.getAttribute('data-attr')); return; }
+    var action = attrTipAction(attrTipOpen, null); // 点空白 / 非属性处
+    if (action === 'hide') hideAttrTip();
+  }
+
+  /* UNDO_HELPERS_START */
+  // 纯逻辑：撤回按钮「二次确认」状态机。
+  // armed=false（未确认）→ 进入确认态、不发请求；armed=true（已确认）→ 真正发起 /undo。
+  function undoClickAction(armed) {
+    return armed
+      ? { nextArmed: false, fire: true }
+      : { nextArmed: true, fire: false };
+  }
+  /* UNDO_HELPERS_END */
+
   // 导出世界：GET 附件接口，用临时 <a download> 触发下载，不跳转页面。
   function exportWorld(id) {
     var a = document.createElement('a');
@@ -356,10 +504,63 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     document.body.removeChild(a);
   }
 
+  // ---- 撤回上一步 ----
+  function resetUndoText() {
+    undoArmed = false;
+    $('btn-undo').textContent = '↶ 撤回这一步';
+  }
+
+  // 按后端 undoAvailable 显隐按钮；隐藏时顺带复位二次确认态。
+  function setUndoVisible(v) {
+    $('btn-undo').hidden = !v;
+    if (!v) {
+      clearTimeout(undoArmTimer);
+      resetUndoText();
+    }
+  }
+
+  function onUndoClick() {
+    if (undoBusy) return;
+    var r = undoClickAction(undoArmed);
+    undoArmed = r.nextArmed;
+    if (!r.fire) {
+      // 第一次点击：进入二次确认态，4 秒后自动复原。
+      $('btn-undo').textContent = '确认撤回这一步？';
+      clearTimeout(undoArmTimer);
+      undoArmTimer = setTimeout(resetUndoText, 4000);
+      return;
+    }
+    clearTimeout(undoArmTimer);
+    $('btn-undo').textContent = '↶ 撤回这一步';
+    doUndo();
+  }
+
+  async function doUndo() {
+    if (undoBusy || busy || !currentWorldId) return;
+    undoBusy = true;
+    try {
+      var res = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/undo', {
+        method: 'POST',
+      });
+      // 成功后重新加载该世界的叙事与状态（/log 会跳过被撤回的那一回合）。
+      await showGame(currentWorldId);
+      // 把被撤回的行动文字放回输入框。
+      $('action-input').value = res.undoneAction || '';
+      $('action-input').focus();
+      toast('已撤回上一步');
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      undoBusy = false;
+    }
+  }
+
   // ---- 路由 ----
   function hideAllViews() {
     ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
     $('panel').dataset.open = 'false';
+    hideAttrTip(); // 切换视图时收起可能还开着的属性说明卡
+    setUndoVisible(false); // 复位撤回按钮二次确认态，重新进入世界时按后端状态再显隐
     clearInterval(pendingTimer);
     pendingTimer = null;
   }
@@ -552,6 +753,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       renderPanel(state);
       renderEventBanner(state.activeEvent);
       renderSuggestions(null);
+      setUndoVisible(!!state.undoAvailable);
       if (state.awaitingRebirth || !state.character.alive) showDeath(state, null);
       else hideDeath();
       scrollBottom();
@@ -624,25 +826,28 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     return s;
   }
 
-  // 流式叙事：先建一个空叙事块，delta 到来时边到边追加（不再使用打字机效果）。
+  // 流式叙事：先建一个空叙事块，delta 到来时边到边按 \n\n 实时拆成多个 <p>。
   function beginStreamNarration() {
     var wrap = el('div', 'narration-block');
-    var p = el('p', 'narration');
-    wrap.appendChild(p);
+    wrap.appendChild(el('p', 'narration'));
     $('stream').appendChild(wrap);
-    return { wrap: wrap, p: p };
+    return { wrap: wrap, text: '' };
   }
 
   function appendStreamDelta(block, text) {
-    block.p.textContent += text;
+    block.text += text;
+    var paras = splitByBlankLines(block.text);
+    renderParagraphs(block.wrap, paras.length ? paras : ['']);
     scrollBottom();
   }
 
-  // 一次性渲染完整叙事（历史回放 / result 最终补齐）。
+  // 一次性渲染完整叙事（历史回放 / result 最终补齐）：按 \n\n 拆成多个 <p>，
+  // 旧存档没有分段的长段落按句末标点每约 80 字自动切段。
   function appendNarration(text, badges) {
     var wrap = el('div', 'narration-block');
-    var p = el('p', 'narration', text);
-    wrap.appendChild(p);
+    splitNarration(text).forEach(function (para) {
+      wrap.appendChild(el('p', 'narration', para));
+    });
     if (badges && badges.length) {
       var bd = el('div', 'badges');
       badges.forEach(function (b) { bd.appendChild(makeBadge(b)); });
@@ -725,7 +930,9 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var danger = isDanger(s);
     ATTRS.forEach(function (a) {
       var cls = a === '体魄' && danger ? 'top-chip danger-chip' : 'top-chip';
-      box.appendChild(el('span', cls, a + ' ' + (attrs[a] || 0)));
+      var chip = el('span', cls, a + ' ' + (attrs[a] || 0));
+      chip.setAttribute('data-attr', a); // 顶部属性条：点击弹说明卡
+      box.appendChild(chip);
     });
   }
 
@@ -741,6 +948,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     ATTRS.forEach(function (a) {
       var v = Number(attrs[a]) || 0;
       var row = el('div', 'attr-row');
+      row.setAttribute('data-attr', a); // 侧面板属性行：点击弹说明卡
       row.appendChild(el('span', 'attr-name', a));
       var bar = el('div', 'attr-bar');
       var fill = el('div', 'attr-fill');
@@ -1021,6 +1229,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     renderPanel(res.state);
     renderEventBanner(res.state.activeEvent);
     renderSuggestions(res.suggestions);
+    setUndoVisible(!!res.state.undoAvailable);
     if (res.death) showDeath(res.state, res.death);
   }
 
@@ -1030,6 +1239,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var action = input.value.trim();
     if (!action) { toast('写点什么再发送吧'); return; }
     setBusy(true);
+    // 撤回按钮保持原状：请求进行中由 busy 守卫拦住点击，result 到来后 renderResult 再按
+    // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
     appendActionLine(action);
     var block = beginStreamNarration();
     try {
@@ -1061,9 +1272,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     document.querySelectorAll('[data-nav]').forEach(function (n) {
       n.addEventListener('click', function () { location.hash = n.getAttribute('data-nav'); });
     });
+    // 属性说明卡：全局点击（含手机轻点）统一处理弹卡 / 切换 / 点空白关闭。
+    document.addEventListener('click', onDocumentClick);
     $('btn-random').addEventListener('click', randomAlloc);
     $('btn-create').addEventListener('click', createWorld);
     $('btn-send').addEventListener('click', sendAction);
+    $('btn-undo').addEventListener('click', onUndoClick);
     $('btn-panel').addEventListener('click', function () {
       var p = $('panel');
       p.dataset.open = p.dataset.open === 'true' ? 'false' : 'true';

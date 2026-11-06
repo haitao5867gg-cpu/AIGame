@@ -209,6 +209,54 @@ test('appendEvent / readEvents: 每回合一行完整记录，永不删除', () 
   }
 });
 
+test('撤回备份：回合前复制 state.json→state.prev.json，恢复后删除 .prev（只能一步）', () => {
+  const dir = tmpData();
+  try {
+    const id = 'w1';
+    const prevPath = path.join(dir, 'worlds', id, 'state.prev.json');
+    assert.equal(store.hasUndoBackup(dir, id), false);
+    assert.equal(store.readUndoBackup(dir, id), null);
+
+    // 回合前状态（turn=2）
+    store.saveWorld(dir, { id, turn: 2, life: 1, character: { alive: true } });
+    store.backupForUndo(dir, id);
+    assert.equal(store.hasUndoBackup(dir, id), true);
+    assert.ok(fs.existsSync(prevPath), '应生成 state.prev.json');
+    assert.equal(store.readUndoBackup(dir, id).turn, 2, '快照应为回合前状态');
+
+    // 本回合写入新状态（turn=3）
+    store.saveWorld(dir, { id, turn: 3, life: 1, character: { alive: true } });
+    assert.equal(store.loadWorld(dir, id).turn, 3);
+
+    // 撤回：恢复 turn=2、删除 .prev
+    store.restoreUndoBackup(dir, id);
+    assert.equal(store.loadWorld(dir, id).turn, 2, 'state.json 应恢复为快照');
+    assert.equal(store.hasUndoBackup(dir, id), false, '.prev 应被删除，只能撤回一步');
+    assert.equal(fs.existsSync(prevPath), false);
+    assert.equal(store.readUndoBackup(dir, id), null);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('撤回备份只针对 state.json：events.jsonl / usage.jsonl 不产生 .prev（只追加日志）', () => {
+  const dir = tmpData();
+  try {
+    const id = 'w1';
+    store.saveWorld(dir, { id, turn: 1 });
+    store.appendEvent(dir, id, { turn: 1, action: 'x' });
+    store.appendUsage(dir, { ts: 1 });
+    store.backupForUndo(dir, id);
+    const prevNames = fs.readdirSync(path.join(dir, 'worlds', id))
+      .filter((n) => n.endsWith('.prev.json'));
+    assert.deepEqual(prevNames, ['state.prev.json'], '只备份可变文件 state.json');
+    assert.equal(fs.existsSync(path.join(dir, 'usage.prev.json')), false,
+      '全局 usage.jsonl 只追加，不备份');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('deleteWorld: 移到 _trash，原目录消失，内容完整保留', () => {
   const dir = tmpData();
   try {

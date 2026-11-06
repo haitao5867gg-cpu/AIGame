@@ -160,6 +160,54 @@ function appendUsage(dataDir, record) {
   appendJsonl(usagePath(dataDir), record);
 }
 
+// ---- 撤回备份 ----
+// 每回合会改动的「每世界可变文件」：目前只有 state.json（saveWorld 覆盖写）。
+// events.jsonl 与全局 usage.jsonl 都是只追加日志，不属于可变文件，故不纳入备份。
+// 用数组描述，将来若新增每回合可变文件，只需在此登记即可一并备份/恢复。
+const UNDO_BACKUP_FILES = ['state.json'];
+
+function undoPrevName(name) {
+  // state.json -> state.prev.json
+  return name.replace(/\.json$/, '.prev.json');
+}
+
+function undoPrevPath(dataDir, worldId, name) {
+  return path.join(worldDir(dataDir, worldId), undoPrevName(name));
+}
+
+// 回合执行前调用：把当前各可变文件复制为 .prev 快照（只追加日志不在此列）。
+// 由 game.takeTurn 在该世界互斥锁内调用，流式与普通回合都经由它，故只备份一次。
+function backupForUndo(dataDir, worldId) {
+  const dir = worldDir(dataDir, worldId);
+  ensureDir(dir);
+  for (const name of UNDO_BACKUP_FILES) {
+    const src = path.join(dir, name);
+    if (!fs.existsSync(src)) continue;
+    fs.copyFileSync(src, undoPrevPath(dataDir, worldId, name));
+  }
+}
+
+function hasUndoBackup(dataDir, worldId) {
+  return UNDO_BACKUP_FILES.every((name) =>
+    fs.existsSync(undoPrevPath(dataDir, worldId, name)));
+}
+
+// 读取备份快照（完整内部 state），供死亡/重生判定使用；不存在时返回 null。
+function readUndoBackup(dataDir, worldId) {
+  return readJson(undoPrevPath(dataDir, worldId, 'state.json'), null);
+}
+
+// 撤回：把 .prev 快照写回原文件并删除 .prev（删除后只能撤回一步）。
+function restoreUndoBackup(dataDir, worldId) {
+  for (const name of UNDO_BACKUP_FILES) {
+    const prev = undoPrevPath(dataDir, worldId, name);
+    if (!fs.existsSync(prev)) continue;
+    const text = fs.readFileSync(prev, 'utf8');
+    atomicWriteText(path.join(worldDir(dataDir, worldId), name), text);
+    fs.unlinkSync(prev);
+  }
+}
+
 // GET /api/worlds 用的列表；updatedAt 取 state.json 的 mtime。
 function listWorlds(dataDir) {
   const dir = worldsDir(dataDir);
@@ -239,6 +287,10 @@ module.exports = {
   appendEvent,
   readEvents,
   appendUsage,
+  backupForUndo,
+  hasUndoBackup,
+  readUndoBackup,
+  restoreUndoBackup,
   listWorlds,
   deleteWorld,
 };

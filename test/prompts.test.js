@@ -402,6 +402,18 @@ test('新一世开场：buildRebirthOpeningMessages 结合世界设定/墓志铭
   assert.equal(/隐秘王冠|北方的钟声|\bapex\b/.test(all), false, '开场 prompt 不应夹带 apex');
 });
 
+test('回合 prompt：要求叙事分成 2~4 个短段落、对话单独成段、段落间用 \\n\\n 分隔', () => {
+  const [system, user] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  const all = system.content + '\n' + user.content;
+  assert.match(all, /2~4 个短段落/, '应要求 2~4 段');
+  assert.match(all, /1~3 句/, '每段 1~3 句');
+  assert.match(all, /90 字/, '每段 ≤90 字');
+  assert.match(all, /对白|对话/, '应提到对白/对话');
+  assert.match(all, /单独成段/, '对话单独成段');
+  assert.ok(all.includes('\\n\\n'), '应写明段落用 \\n\\n 分隔（JSON 里的字面量）');
+  assert.match(all, /不要写成一整段长文字|不要输出成没有分段/, '应禁止一整段长文字');
+});
+
 test('建世界 prompt：要求 start.facts 给 2~3 条关键时间/规则事实（如满月）', () => {
   const [system] = prompts.buildWorldMessages('一句世界观', { name: '旅人', appearance: '灰袍' });
   assert.match(system.content, /"facts":\[str x2~3\]/);

@@ -162,6 +162,38 @@ function toPublicLogRecord(rec) {
   };
 }
 
+// 从 events.jsonl 原始记录中挑出「可见」记录（供 /log 与导出回放）：
+//  - {type:'undo'} 是撤回标记，不是叙事，隐藏；
+//  - 每条撤回标记紧跟在被撤回回合记录之后（日志只追加不删除，且撤回在世界锁内紧接回合发生），
+//    因此把标记前一条 turn === undoneTurn 的记录一并隐藏。
+// 用「位置」而非全局回合号集合判定：撤回后再走一步会复用同一回合号，新记录位于标记之后、仍可见。
+function visibleEventRecords(events) {
+  const list = Array.isArray(events) ? events : [];
+  const hidden = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (!e || e.type !== 'undo') continue;
+    hidden.add(i);
+    const prev = list[i - 1];
+    if (prev && prev.type !== 'undo' && prev.turn === e.undoneTurn) hidden.add(i - 1);
+  }
+  const out = [];
+  for (let i = 0; i < list.length; i++) if (!hidden.has(i)) out.push(list[i]);
+  return out;
+}
+
+// 取被撤回回合的行动文字：最近一条 turn === undoneTurn 的回合记录，供前端填回输入框。
+function lastTurnAction(events, undoneTurn) {
+  const list = Array.isArray(events) ? events : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const e = list[i];
+    if (e && e.type !== 'undo' && e.rebirthOpening !== true && e.turn === undoneTurn) {
+      return typeof e.action === 'string' ? e.action : '';
+    }
+  }
+  return '';
+}
+
 function createGame(cfg, dataDir) {
   const client = llm.createClient(cfg, dataDir);
   const turnModel = cfg.LLM_MODEL;
@@ -270,6 +302,21 @@ function createGame(cfg, dataDir) {
     return engine.toPublicState(state);
   }
 
+  // 当前是否可撤回：存在 .prev 快照、非死亡待重生、且备份与当前处于同一世（未跨越重生）。
+  function undoAvailableFor(state, worldId) {
+    if (!store.hasUndoBackup(dataDir, worldId)) return false;
+    if (state.awaitingRebirth || (state.character && state.character.alive === false)) return false;
+    const prev = store.readUndoBackup(dataDir, worldId);
+    if (prev && Number(prev.life) !== Number(state.life)) return false;
+    return true;
+  }
+
+  // 把 undoAvailable 附加到公开状态上，供前端显隐「撤回这一步」按钮。
+  function withUndoFlag(publicState, state, worldId) {
+    publicState.undoAvailable = undoAvailableFor(state, worldId);
+    return publicState;
+  }
+
   // 读取世界状态；老存档缺少新玩法字段时自动补默认值，不报错。
   function loadState(worldId) {
     const state = store.loadWorld(dataDir, worldId);
@@ -316,7 +363,7 @@ function createGame(cfg, dataDir) {
     store.assertWorldId(worldId);
     const state = loadState(worldId);
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
-    return publicWorld(state);
+    return withUndoFlag(publicWorld(state), state, worldId);
   }
 
   function listWorlds() {
@@ -335,11 +382,12 @@ function createGame(cfg, dataDir) {
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
     return {
       state: engine.toPublicState(state),
-      events: store.readEvents(dataDir, worldId).map(toPublicLogRecord),
+      events: visibleEventRecords(store.readEvents(dataDir, worldId)).map(toPublicLogRecord),
     };
   }
 
   // GET /api/worlds/:id/log?limit=50：从 events.jsonl 读最近 N 条，只返回公开字段。
+  // 撤回标记本身不展示，被撤回的那一回合也跳过。
   function getWorldLog(worldId, rawLimit) {
     store.assertWorldId(worldId);
     if (!loadState(worldId)) {
@@ -348,8 +396,8 @@ function createGame(cfg, dataDir) {
     let limit = Number(rawLimit);
     if (!Number.isFinite(limit) || limit <= 0) limit = 50;
     limit = Math.min(Math.floor(limit), 200);
-    const all = store.readEvents(dataDir, worldId);
-    return all.slice(Math.max(0, all.length - limit)).map(toPublicLogRecord);
+    const visible = visibleEventRecords(store.readEvents(dataDir, worldId));
+    return visible.slice(Math.max(0, visible.length - limit)).map(toPublicLogRecord);
   }
 
   // ---- 执行一回合 ----
@@ -429,7 +477,7 @@ function createGame(cfg, dataDir) {
             narration: typeof out.narration === 'string' ? out.narration : '',
           };
           const chapterEvents = chapterEventWindow(
-            store.readEvents(dataDir, worldId), nextTurn, current,
+            visibleEventRecords(store.readEvents(dataDir, worldId)), nextTurn, current,
           );
           const cp = await callParsed(
             'chapter', worldModel,
@@ -470,6 +518,9 @@ function createGame(cfg, dataDir) {
         finalState = engine.applyEpitaph(finalState, entry);
       }
 
+      // 撤回备份：写本回合新状态之前，把当前可变文件（state.json）复制为 .prev 快照。
+      // 流式与普通回合都经由 takeTurn，且已在该世界互斥锁内，故在此统一备份一次。
+      store.backupForUndo(dataDir, worldId);
       store.saveWorld(dataDir, finalState);
 
       const usageAgg = { prompt_tokens: 0, completion_tokens: 0 };
@@ -495,7 +546,43 @@ function createGame(cfg, dataDir) {
         ts: resolved.result.ts,
       });
 
-      return engine.toPublicTurnResult(resolved.result, finalState);
+      const result = engine.toPublicTurnResult(resolved.result, finalState);
+      if (result.state) withUndoFlag(result.state, finalState, worldId);
+      return result;
+    });
+  }
+
+  // ---- 撤回上一步 ----
+  // 在该世界互斥锁内执行：有 .prev 快照才允许；死亡回合 / 重生之后返回 409 并说明。
+  // 恢复 state.json、删除 .prev（只能撤回一步），并向 events.jsonl 追加
+  // {type:'undo', undoneTurn, ts}（日志只追加不删除）。
+  async function undoTurn(worldId) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+      if (!store.hasUndoBackup(dataDir, worldId)) {
+        throw httpError(409, '没有可以撤回的回合');
+      }
+      if (state.awaitingRebirth || (state.character && state.character.alive === false)) {
+        throw httpError(409, '死亡回合不能撤回，请先重生开始新一世');
+      }
+      const prev = store.readUndoBackup(dataDir, worldId);
+      if (prev && Number(prev.life) !== Number(state.life)) {
+        throw httpError(409, '重生之后不能撤回上一世的回合');
+      }
+
+      const undoneTurn = state.turn;
+      const undoneAction = lastTurnAction(store.readEvents(dataDir, worldId), undoneTurn);
+
+      store.restoreUndoBackup(dataDir, worldId);
+      store.appendEvent(dataDir, worldId, { type: 'undo', undoneTurn, ts: Date.now() });
+
+      const restored = loadState(worldId);
+      const out = withUndoFlag(publicWorld(restored), restored, worldId);
+      out.undoneTurn = undoneTurn;
+      out.undoneAction = undoneAction;
+      return out;
     });
   }
 
@@ -556,13 +643,14 @@ function createGame(cfg, dataDir) {
 
   return {
     buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, getWorldLog,
-    exportWorld,
+    exportWorld, undoTurn,
   };
 }
 
 module.exports = {
   createGame, HttpError, httpError,
   chapterEventWindow, badgesFromApplied, toPublicLogRecord,
+  visibleEventRecords, lastTurnAction,
   templateEpitaph, epitaphFromParsed,
   templateRebirthOpening, openingFromParsed, rebirthInfo,
   REBIRTH_OPENING_MIN, REBIRTH_OPENING_MAX,

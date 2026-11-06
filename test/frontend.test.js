@@ -8,6 +8,39 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
+// 从标记之间抽出纯分段函数（不依赖 DOM），在 Node 里直接验证分段行为。
+function narrationHelpers() {
+  const start = '/* NARRATION_HELPERS_START */';
+  const end = '/* NARRATION_HELPERS_END */';
+  const i = html.indexOf(start);
+  const j = html.indexOf(end);
+  assert.ok(i >= 0 && j > i, '应存在 NARRATION_HELPERS 标记');
+  const src = html.slice(i + start.length, j);
+  return new Function(src + '\nreturn { splitNarration, splitByBlankLines };')();
+}
+
+// 抽出属性说明卡的纯开关逻辑（不依赖 DOM），在 Node 里直接验证弹卡/关闭行为。
+function attrTipHelpers() {
+  const start = '/* ATTR_TIP_HELPERS_START */';
+  const end = '/* ATTR_TIP_HELPERS_END */';
+  const i = html.indexOf(start);
+  const j = html.indexOf(end);
+  assert.ok(i >= 0 && j > i, '应存在 ATTR_TIP_HELPERS 标记');
+  const src = html.slice(i + start.length, j);
+  return new Function(src + '\nreturn { attrTipAction };')();
+}
+
+// 抽出撤回二次确认的纯状态机（不依赖 DOM）。
+function undoHelpers() {
+  const start = '/* UNDO_HELPERS_START */';
+  const end = '/* UNDO_HELPERS_END */';
+  const i = html.indexOf(start);
+  const j = html.indexOf(end);
+  assert.ok(i >= 0 && j > i, '应存在 UNDO_HELPERS 标记');
+  const src = html.slice(i + start.length, j);
+  return new Function(src + '\nreturn { undoClickAction };')();
+}
+
 test('前端：内联脚本语法合法（仅编译，不执行 DOM）', () => {
   const m = html.match(/<script>([\s\S]*?)<\/script>/);
   assert.ok(m, '应存在内联 <script>');
@@ -177,4 +210,124 @@ test('前端：世界卡片与游戏页都有「导出」按钮，走 /export �
   assert.ok(/a\.download =/.test(html), '应用 <a download> 触发下载');
   assert.ok(/exportWorld\(w\.id\)/.test(html), '世界卡片应能导出');
   assert.ok(/exportWorld\(currentWorldId\)/.test(html), '游戏页应能导出当前世界');
+});
+
+test('前端叙事分段：按 \\n\\n 分成多段、旧长段落按句末标点每约 80 字自动切段', () => {
+  const h = narrationHelpers();
+  // 新叙事：多段（含对话单独成段），空行两端空白被清理
+  assert.deepEqual(h.splitNarration('甲段落。\n\n  乙段落。 \n\n「丙对白」'),
+    ['甲段落。', '乙段落。', '「丙对白」']);
+  // 短文本 / 空文本不强行切段
+  assert.deepEqual(h.splitNarration('一句话的短叙事。'), ['一句话的短叙事。']);
+  assert.deepEqual(h.splitNarration(''), []);
+  // 旧存档：无分段的一整段长文本，按句末标点每约 80 字切成多段
+  const long = '你走进雾里，钟声更近了。守夜人抬眼看了你一眼，没有说话。'.repeat(4);
+  const parts = h.splitNarration(long);
+  assert.ok(parts.length >= 2, '长单段应自动切成多段');
+  parts.forEach((p) => assert.ok(p.length <= 90, `每段不应过长：${p.length}`));
+  assert.equal(parts.join(''), long, '切段不应丢字或改字');
+  // 无标点超长单段也要按约 80 字硬切
+  const noPunct = '啊'.repeat(200);
+  const hard = h.splitNarration(noPunct);
+  assert.ok(hard.length >= 2 && hard.join('') === noPunct, '无标点长段也要硬切');
+});
+
+test('前端叙事分段：流式按空行实时拆分（含 \\n\\n 跨 delta 到达）', () => {
+  const h = narrationHelpers();
+  assert.deepEqual(h.splitByBlankLines('甲\n\n乙\n\n丙'), ['甲', '乙', '丙']);
+  assert.deepEqual(h.splitByBlankLines('甲\n'), ['甲'], '单个换行不分段');
+  assert.deepEqual(h.splitByBlankLines('甲\n\n'), ['甲'], '结尾空行不产生空段');
+  assert.deepEqual(h.splitByBlankLines(''), []);
+});
+
+test('前端叙事分段：渲染按段落生成多个 <p>、段间距加大、行高 1.9、流式实时分段', () => {
+  // appendNarration 用 splitNarration 循环创建多个 <p class="narration">
+  assert.ok(/splitNarration\(text\)\.forEach/.test(html), '完整叙事应按段落循环渲染');
+  assert.ok(/wrap\.appendChild\(el\('p', 'narration', para\)\)/.test(html), '每段生成独立 <p>');
+  // 流式：delta 累积后按空行实时重排多个 <p>
+  assert.ok(/block\.text \+= text/.test(html), '流式应累积叙事文本');
+  assert.ok(/splitByBlankLines\(block\.text\)/.test(html), '流式应按空行实时分段');
+  assert.ok(/renderParagraphs\(block\.wrap/.test(html), '流式应实时重排 <p>');
+  assert.ok(/function renderParagraphs/.test(html));
+  // CSS：行高 1.9、段间距加大
+  assert.ok(/\.narration\{[^}]*line-height:1\.9/.test(html), '行高应为 1.9');
+  assert.ok(/\.narration\{[^}]*margin:0 0/.test(html), '段间距应加大');
+});
+
+test('前端属性说明卡：六项属性说明与「属性上限 40，越高越难提升」齐全', () => {
+  assert.ok(/id=["']attr-tip["']/.test(html), '应有说明卡容器');
+  assert.ok(/ATTR_INFO/.test(html), '应有属性说明映射');
+  const pairs = [
+    ['体魄', '身体与伤势，归零即本世终结'],
+    ['心智', '洞察、学识、识破谎言'],
+    ['魅力', '说服、结交、让人信任'],
+    ['气运', '巧合与机缘，影响事件结算的运气'],
+    ['声望', '世人眼中的你，影响 NPC 态度和隐藏机会'],
+    ['资源', '钱财物资与人脉可调动的东西'],
+  ];
+  pairs.forEach(([k, v]) => {
+    const re = new RegExp("'" + k + "'\\s*:\\s*'" + v + "'");
+    assert.ok(re.test(html), `应有 ${k}＝${v} 的精确文案`);
+  });
+  assert.ok(/属性上限 40，越高越难提升/.test(html), '应说明属性上限 40');
+  assert.ok(/ATTR_TIP_FOOTER/.test(html) && /attr-tip-foot/.test(html), '页脚文案与样式应齐全');
+});
+
+test('前端属性说明卡：再点同一项/点空白关闭、点不同项切换（纯逻辑）', () => {
+  const h = attrTipHelpers();
+  // 未打开时点任一属性 → 显示
+  assert.equal(h.attrTipAction(null, '心智'), 'show');
+  assert.equal(h.attrTipAction(undefined, '体魄'), 'show');
+  // 再点同一属性 → 关闭
+  assert.equal(h.attrTipAction('心智', '心智'), 'hide');
+  // 点另一属性 → 切换显示
+  assert.equal(h.attrTipAction('心智', '魅力'), 'show');
+  // 点空白（无属性名）：已打开→关闭；未打开→不变
+  assert.equal(h.attrTipAction('心智', null), 'hide');
+  assert.equal(h.attrTipAction('心智', ''), 'hide');
+  assert.equal(h.attrTipAction(null, null), null);
+});
+
+test('前端属性说明卡：顶部属性条与侧面板都标注 data-attr，全局点击处理弹卡/点空白关闭', () => {
+  // 两处渲染都设置 data-attr（顶部属性条 + 侧面板属性行）
+  assert.ok(/chip\.setAttribute\('data-attr', a\)/.test(html), '顶部属性条应设 data-attr');
+  assert.ok(/row\.setAttribute\('data-attr', a\)/.test(html), '侧面板属性行应设 data-attr');
+  assert.ok(/\.top-chip\[data-attr\],\.attr-row\[data-attr\]\{cursor:pointer\}/.test(html),
+    '可点区域应有 pointer 光标');
+  // 全局 click 监听（手机轻点也触发 click，故一并覆盖 tap）
+  assert.ok(/document\.addEventListener\('click', onDocumentClick\)/.test(html), '应有全局点击监听');
+  assert.ok(/function onDocumentClick/.test(html));
+  assert.ok(/closestAttr\(e\.target\)/.test(html), '应由点击目标向上找 data-attr');
+  assert.ok(/tip\.contains\(e\.target\)/.test(html), '点卡片内部应保持打开');
+  assert.ok(/attrTipAction\(attrTipOpen, null\)/.test(html), '点空白走关闭判定');
+  // 说明卡显示/隐藏与文案渲染、切换视图时收起
+  assert.ok(/function showAttrTip/.test(html) && /function hideAttrTip/.test(html));
+  assert.ok(/attr-tip-name/.test(html) && /attr-tip-desc/.test(html) && /attr-tip-foot/.test(html));
+  assert.ok(/function hideAllViews\(\)[\s\S]*?hideAttrTip\(\)/.test(html), '切换视图应收起说明卡');
+});
+
+test('前端撤回：二次确认状态机（第一次进入确认、第二次才发起 /undo）', () => {
+  const h = undoHelpers();
+  assert.deepEqual(h.undoClickAction(false), { nextArmed: true, fire: false });
+  assert.deepEqual(h.undoClickAction(true), { nextArmed: false, fire: true });
+});
+
+test('前端撤回：最后一段叙事下方有「↶ 撤回这一步」，二次确认后调用 /undo、重载世界、行动回填', () => {
+  assert.ok(/id=["']btn-undo["']/.test(html), '应有撤回按钮');
+  assert.ok(/↶ 撤回这一步/.test(html));
+  // 位置：stream（叙事）之后、composer 之前，即最后一段叙事下方
+  assert.ok(html.indexOf('id="btn-undo"') > html.indexOf('id="stream"'));
+  assert.ok(html.indexOf('id="btn-undo"') < html.indexOf('class="composer"'));
+  // 二次确认
+  assert.ok(/undoArmed/.test(html), '应有 armed 确认态');
+  assert.ok(/确认撤回这一步？/.test(html), '第一次点击应进入确认态');
+  assert.ok(/setTimeout\(resetUndoText, 4000\)/.test(html), '确认态应超时自动复原');
+  assert.ok(/\$\('btn-undo'\)\.addEventListener\('click', onUndoClick\)/.test(html), '应绑定点击');
+  // 调用 /undo（POST），成功后重载该世界叙事与状态、把被撤回行动放回输入框
+  assert.ok(/\/undo'\s*,\s*\{/.test(html), '应调用 /undo');
+  assert.ok(/await showGame\(currentWorldId\)/.test(html), '成功后应重新加载该世界叙事与状态');
+  assert.ok(/\$\('action-input'\)\.value = res\.undoneAction \|\| ''/.test(html),
+    '应把被撤回的行动文字放回输入框');
+  assert.ok(/setUndoVisible\(!!(?:state|res\.state)\.undoAvailable\)/.test(html),
+    '应按后端 undoAvailable 显隐按钮');
 });

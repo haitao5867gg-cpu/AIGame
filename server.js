@@ -264,7 +264,7 @@ async function handle(req, res, cfg, g) {
     return handleExport(res, g, id);
   }
 
-  const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth|log))?$/);
+  const m = pathname.match(/^\/api\/worlds\/([^/]+)(?:\/(turn|rebirth|log|undo))?$/);
   if (m) {
     let id;
     try {
@@ -288,6 +288,9 @@ async function handle(req, res, cfg, g) {
     if (sub === 'rebirth' && method === 'POST') {
       const body = await readJsonBody(req);
       return sendJson(res, 200, await g.rebirth(id, body));
+    }
+    if (sub === 'undo' && method === 'POST') {
+      return sendJson(res, 200, await g.undoTurn(id));
     }
     return sendError(res, 405, '该路径不支持此 HTTP 方法');
   }
