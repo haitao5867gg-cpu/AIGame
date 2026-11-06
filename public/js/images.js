@@ -45,6 +45,40 @@
     var npc = (currentState && currentState.npcAttitude) || {};
     var names = Object.keys(npc);
     if (!names.length) { box.appendChild(el('span', 'muted', '（尚无）')); return; }
+
+    // 追加：行下方音色下拉的构建（只追加，不改动 NPC 行现有结构与类名）。
+    function buildVoiceSelect(voiceRow, name, voices) {
+      voiceRow.textContent = '';
+      var sel = el('select', 'npc-voice-select');
+      var auto = el('option', null, '自动（按名字分配）');
+      auto.value = '';
+      sel.appendChild(auto);
+      (voices || []).forEach(function (v) {
+        var o = el('option', null, window.Tts.voiceLabel(v));
+        o.value = v.id;
+        sel.appendChild(o);
+      });
+      var cur = (typeof myPrefs !== 'undefined' && myPrefs.tts && myPrefs.tts.npcVoices) || {};
+      sel.value = cur[name] || '';
+      sel.addEventListener('change', function () {
+        var val = sel.value;
+        var tts = myPrefs.tts || (myPrefs.tts = {});
+        if (!tts.npcVoices) tts.npcVoices = {};
+        var map = tts.npcVoices;
+        var old = map[name];
+        if (val) map[name] = val; else delete map[name];
+        api('/api/prefs', { method: 'POST', body: JSON.stringify({ tts: tts }) })
+          .catch(function (err) {
+            if (old === undefined) delete map[name]; else map[name] = old;
+            sel.value = old || '';
+            if (typeof toast === 'function') toast((err && err.message) || '朗读设置保存失败');
+          });
+        var voiceId = val || window.Tts.npcVoiceFor(name);
+        window.Tts.previewVoice('（' + name + '）：这是我的声音。', voiceId);
+      });
+      voiceRow.appendChild(sel);
+    }
+
     names.forEach(function (name) {
       var v = Math.max(-10, Math.min(10, Number(npc[name]) || 0));
       var filled = Math.round(((v + 10) / 20) * 5);
@@ -52,7 +86,22 @@
       row.appendChild(makeImageVisual(name, imageState.npcs[name], 'npc-avatar'));
       row.appendChild(el('span', 'npc-name', name));
       row.appendChild(el('span', 'npc-attitude', '♥'.repeat(filled) + '♡'.repeat(5 - filled)));
+      // 追加：小喇叭按钮（小号、flex:none 不挤压名字）。
+      var voiceBtn = el('button', 'npc-voice-btn', '🔊');
+      voiceBtn.type = 'button';
+      voiceBtn.setAttribute('aria-label', '设置 ' + name + ' 的音色');
+      row.appendChild(voiceBtn);
       box.appendChild(row);
+      // 追加：行下方的下拉容器，默认收起；再次点喇叭收起。
+      var voiceRow = el('div', 'npc-voice-row');
+      voiceRow.hidden = true;
+      box.appendChild(voiceRow);
+      voiceBtn.addEventListener('click', function () {
+        if (!voiceRow.hidden) { voiceRow.hidden = true; return; }
+        voiceRow.hidden = false;
+        if (!window.Tts) return;
+        window.Tts.withVoices(function (voices) { buildVoiceSelect(voiceRow, name, voices); });
+      });
     });
   }
 

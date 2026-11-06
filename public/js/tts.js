@@ -235,11 +235,29 @@ var Tts = (function () {
     });
   }
 
+  // 音色显示名：友好中文，附性别 / 年龄；缺失的字段省略对应部分。
+  var GENDER_LABEL = { m: '男', f: '女' };
+  var AGE_LABEL = { child: '童声', young: '青年', adult: '成年', old: '老年' };
+  function voiceLabel(v) {
+    var parts = [];
+    if (v) {
+      if (GENDER_LABEL[v.gender]) parts.push(GENDER_LABEL[v.gender]);
+      if (AGE_LABEL[v.age]) parts.push(AGE_LABEL[v.age]);
+    }
+    var name = (v && v.name) || '';
+    return parts.length ? name + '（' + parts.join('·') + '）' : name;
+  }
+
+  // 供角色面板复用：拿到 /api/tts/voices 的音色数组（内部已缓存）。
+  function withVoices(cb) {
+    ensureVoices(function (d) { cb((d && d.voices) || []); });
+  }
+
   function makeSelect(voices, currentId) {
     var s = el('select', 'tts-select');
     var list = voices && voices.length ? voices : [{ id: currentId, name: '默认' }];
     list.forEach(function (v) {
-      var o = el('option', null, (v.name || '') + ' · ' + v.id);
+      var o = el('option', null, voiceLabel(v));
       o.value = v.id;
       s.appendChild(o);
     });
@@ -368,12 +386,20 @@ var Tts = (function () {
   window.addEventListener('beforeunload', stop);
   window.addEventListener('hashchange', stop);
 
+  // 角色面板试听：复用内部 speak（自带浏览器兜底），按指定音色播放一句。
+  function previewVoice(text, voice) {
+    speak(text, { voice: voice, mood: 'calm', pace: 'normal', speed: getTts().speed }, null);
+  }
+
   return {
     makeReadButton: makeReadButton,
     autoRead: autoRead,
     stop: stop,
     renderSettings: renderSettings,
     npcVoiceFor: npcVoiceFor,
+    voiceLabel: voiceLabel,
+    withVoices: withVoices,
+    previewVoice: previewVoice,
   };
 })();
 
