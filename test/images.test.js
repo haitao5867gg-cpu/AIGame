@@ -75,20 +75,20 @@ function stubWarn(t) {
 
 test('画风推断：六类关键词各推一份中英画风，缺省回退「手绘插画」', () => {
   const cases = [
-    ['修仙宗门外门杂役', '苍茫', '水墨手绘插画', 'Chinese ink wash illustration'],
-    ['蒸汽朋克长安', '齿轮轰鸣', '复古蒸汽朋克手绘', 'steampunk hand-drawn illustration'],
-    ['赛博霓虹都市', '未来', '科幻概念插画', 'sci-fi concept art illustration'],
-    ['深海殖民站', '幽暗', '科幻概念插画', 'sci-fi concept art illustration'],
-    ['民国上海滩', '谍影', '复古民国画报风', 'vintage 1930s poster illustration'],
-    ['末日尸潮', '荒凉', '末日写实插画', 'post-apocalyptic gritty illustration'],
-    ['一个普通小镇', '平淡', '手绘插画', 'hand-drawn game illustration'],
+    ['修仙宗门外门杂役', '苍茫', '水墨淡彩插画', 'Chinese ink-wash painting with light color washes'],
+    ['蒸汽朋克长安', '齿轮轰鸣', '复古铜版线描淡彩', 'vintage engraving line art with sepia washes'],
+    ['赛博霓虹都市', '未来', '数字厚涂概念插画', 'digital painterly concept art'],
+    ['深海殖民站', '幽暗', '数字厚涂概念插画', 'digital painterly concept art'],
+    ['民国上海滩', '谍影', '民国月份牌画风', '1930s Chinese calendar poster painting'],
+    ['末日尸潮', '荒凉', '粗粝炭笔素描淡彩', 'gritty charcoal sketch with muted color washes'],
+    ['一个普通小镇', '平淡', '手绘水彩插画', 'hand-drawn watercolor illustration'],
   ];
   for (const [title, tone, zh, en] of cases) {
     assert.deepEqual(images.inferStyle({ title, tone }), { zh, en }, title);
   }
-  assert.deepEqual(images.inferStyle(null), { zh: '手绘插画', en: 'hand-drawn game illustration' });
+  assert.deepEqual(images.inferStyle(null), { zh: '手绘水彩插画', en: 'hand-drawn watercolor illustration' });
   // tone 也能命中
-  assert.equal(images.inferStyle({ title: '无名之地', tone: '武侠江湖' }).zh, '水墨手绘插画');
+  assert.equal(images.inferStyle({ title: '无名之地', tone: '武侠江湖' }).zh, '水墨淡彩插画');
 });
 
 test('imageKey：物品跨世界同名同画风共享；NPC 按世界区分；12 位十六进制', () => {
@@ -312,8 +312,8 @@ test('local 翻译成功：英文提示词 + enPrompt 入索引；请求体无 m
   const entry = idx[Object.keys(idx)[0]];
   assert.equal(entry.status, 'ready');
   assert.equal(entry.enPrompt, 'a rusty brass lantern glowing in fog');
-  assert.match(entry.prompt, /^steampunk hand-drawn illustration, steam-powered clockwork era setting\. a rusty brass lantern glowing in fog, period-accurate object, single object centered, game item icon,/);
-  assert.match(entry.prompt, /steampunk hand-drawn illustration/);
+  assert.match(entry.prompt, /^vintage engraving line art with sepia washes, steam-powered clockwork era setting\. a rusty brass lantern glowing in fog, period-accurate object, single object centered, game item icon, plain aged parchment background, no calligraphy, no seal stamps/);
+  assert.match(entry.prompt, /vintage engraving line art with sepia washes/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].body.prompt, entry.prompt);
   assert.equal(calls[0].body.size, '1024x1024');
@@ -766,6 +766,7 @@ test('cloudflare：额度用完（success:false）换下一家；账户或 Token
 const XIANXIA_ART = {
   zh: '中国古风水墨仙侠插画', en: 'ancient Chinese xianxia ink-wash illustration',
   eraZh: '中国古代修仙宗门', eraEn: 'ancient China, cultivation sect', avoidZh: '现代物品，霓虹，赛博朋克',
+  bgZh: '米白宣纸色背景', bgEn: 'plain off-white rice paper background',
 };
 function xianxiaState(id) {
   return makeState({
@@ -790,12 +791,14 @@ test('画风设定：LLM 生成一次写入 styles.json，提示词带画风 / �
   assert.match(seenBrief, /外门/);
   const styles = JSON.parse(fs.readFileSync(path.join(dataDir, 'images', 'styles.json'), 'utf8'));
   assert.equal(styles.wart.zh, XIANXIA_ART.zh);
+  assert.equal(styles.wart.v, 2);
   const body = calls[0].body;
   assert.match(body.prompt, /^中国古风水墨仙侠插画。世界背景：杂役百年，中国古代修仙宗门。游戏道具图标：旧铜灯，该时代的器物/);
-  assert.match(body.prompt, /不要出现现代物品，霓虹，赛博朋克$/);
+  assert.match(body.prompt, /米白宣纸色背景，无文字，无印章，无书法字，无水印，不要出现现代物品，霓虹，赛博朋克$/);
+  assert.match(body.negative_prompt, /^文字，印章，书法，落款，/);
   assert.match(body.negative_prompt, /现代物品，霓虹，赛博朋克$/);
   const e = Object.values(images.readIndex(dataDir))[0];
-  assert.equal(e.style, '中国古风水墨仙侠插画｜中国古代修仙宗门');
+  assert.equal(e.style, '中国古风水墨仙侠插画｜中国古代修仙宗门｜米白宣纸色背景');
   assert.equal(e.status, 'ready');
 
   // 新实例（模拟重启）：直接读缓存，不再调 LLM，也不重画。
@@ -820,7 +823,7 @@ test('画风设定：bible.art 优先，不调 LLM；画风变了缓存 key 变�
   assert.equal(directed, 1);
   const before = Object.values(images.readIndex(dataDir));
   assert.equal(before.length, 1);
-  assert.equal(before[0].style, '水墨手绘插画｜中国古代仙侠'); // 关键词兜底也带时代
+  assert.equal(before[0].style, '水墨淡彩插画｜中国古代仙侠｜米白宣纸色背景'); // 关键词兜底也带时代和背景
 
   // bible 里写了画风 → 优先用它，key 变化 → 重新出图
   const st2 = Object.assign({}, st, { bible: Object.assign({}, st.bible, { art: XIANXIA_ART }) });
@@ -830,7 +833,7 @@ test('画风设定：bible.art 优先，不调 LLM；画风变了缓存 key 变�
   await images.waitIdle();
   assert.equal(directed, 1, 'bible.art 存在时不调 LLM');
   assert.equal(calls.filter((c) => c.url === images.ZHIPU_URL).length, 1, '画风变了应重画');
-  const after = Object.values(images.readIndex(dataDir)).filter((e) => e.style === '中国古风水墨仙侠插画｜中国古代修仙宗门');
+  const after = Object.values(images.readIndex(dataDir)).filter((e) => e.style === '中国古风水墨仙侠插画｜中国古代修仙宗门｜米白宣纸色背景');
   assert.equal(after.length, 1);
   assert.equal(after[0].status, 'ready');
 });
@@ -851,7 +854,8 @@ test('画风设定：cloudflare 英文提示词以画风 + 时代开头，翻译
   assert.match(tMessages[1].content, /时代背景：中国古代修仙宗门/);
   assert.equal(calls[0].body.prompt,
     'ancient Chinese xianxia ink-wash illustration, ancient China, cultivation sect setting. a tarnished bronze oil lamp, '
-    + 'period-accurate object, single object centered, game item icon, plain light background, no text');
+    + 'period-accurate object, single object centered, game item icon, plain off-white rice paper background, '
+    + 'no calligraphy, no seal stamps, no written characters, no text, no watermark');
 });
 
 test('画风设定：LLM 返回字段不全 → 关键词规则兜底，且不写 styles.json', async (t) => {
@@ -863,5 +867,23 @@ test('画风设定：LLM 返回字段不全 → 关键词规则兜底，且不�
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
   assert.ok(!fs.existsSync(path.join(dataDir, 'images', 'styles.json')));
-  assert.equal(Object.values(images.readIndex(dataDir))[0].style, '水墨手绘插画｜中国古代仙侠');
+  assert.equal(Object.values(images.readIndex(dataDir))[0].style, '水墨淡彩插画｜中国古代仙侠｜米白宣纸色背景');
+});
+
+test('画风设定：styles.json 里旧版本（无 v 或 v≠2）条目作废，重新生成并带上 v=2', async (t) => {
+  const dataDir = tmpDir(t);
+  fs.mkdirSync(path.join(dataDir, 'images'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'images', 'styles.json'), JSON.stringify({
+    wold: { zh: '水墨淡彩写实修仙', en: 'x', eraZh: 'y', eraEn: 'z', avoidZh: 'a', bgZh: 'b', bgEn: 'c' },
+  }));
+  let directed = 0;
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(null), artDirector: async () => { directed += 1; return XIANXIA_ART; } });
+  const st = xianxiaState('wold');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(directed, 1);
+  const styles = JSON.parse(fs.readFileSync(path.join(dataDir, 'images', 'styles.json'), 'utf8'));
+  assert.equal(styles.wold.v, 2);
+  assert.equal(styles.wold.zh, XIANXIA_ART.zh);
 });

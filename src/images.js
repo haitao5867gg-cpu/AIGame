@@ -39,19 +39,30 @@ const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 // ---- 画风推断：从 bible.title / tone 用简单关键词规则推一个画风（中英各一份）----
 // 顺序即优先级：先匹配先生效。
 const STYLE_RULES = Object.freeze([
-  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, zh: '水墨手绘插画', en: 'Chinese ink wash illustration',
-    eraZh: '中国古代仙侠', eraEn: 'ancient China, xianxia', avoidZh: '现代物品，科技，霓虹，赛博朋克，西装，枪械，塑料' },
-  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, zh: '复古蒸汽朋克手绘', en: 'steampunk hand-drawn illustration',
-    eraZh: '蒸汽机械时代', eraEn: 'steam-powered clockwork era', avoidZh: '现代电子产品，霓虹，塑料' },
-  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, zh: '科幻概念插画', en: 'sci-fi concept art illustration',
-    eraZh: '未来科幻', eraEn: 'futuristic sci-fi', avoidZh: '古装，魔法' },
-  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, zh: '复古民国画报风', en: 'vintage 1930s poster illustration',
-    eraZh: '1930 年代民国', eraEn: '1930s Republican China', avoidZh: '现代电子产品，未来科技' },
-  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, zh: '末日写实插画', en: 'post-apocalyptic gritty illustration',
-    eraZh: '末日废土', eraEn: 'post-apocalyptic wasteland', avoidZh: '整洁现代都市，魔法' },
+// 每条只给一种媒介 + 一种笔触（不混用「写实」与「水墨」），并给固定背景色调。
+  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, zh: '水墨淡彩插画', en: 'Chinese ink-wash painting with light color washes',
+    eraZh: '中国古代仙侠', eraEn: 'ancient China, xianxia', avoidZh: '现代物品，科技，霓虹，赛博朋克，西装，枪械，塑料',
+    bgZh: '米白宣纸色背景', bgEn: 'plain off-white rice paper background' },
+  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, zh: '复古铜版线描淡彩', en: 'vintage engraving line art with sepia washes',
+    eraZh: '蒸汽机械时代', eraEn: 'steam-powered clockwork era', avoidZh: '现代电子产品，霓虹，塑料',
+    bgZh: '旧羊皮纸色背景', bgEn: 'plain aged parchment background' },
+  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, zh: '数字厚涂概念插画', en: 'digital painterly concept art',
+    eraZh: '未来科幻', eraEn: 'futuristic sci-fi', avoidZh: '古装，魔法',
+    bgZh: '深灰蓝纯色背景', bgEn: 'plain dark slate blue background' },
+  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, zh: '民国月份牌画风', en: '1930s Chinese calendar poster painting',
+    eraZh: '1930 年代民国', eraEn: '1930s Republican China', avoidZh: '现代电子产品，未来科技',
+    bgZh: '暖米黄纯色背景', bgEn: 'plain warm cream background' },
+  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, zh: '粗粝炭笔素描淡彩', en: 'gritty charcoal sketch with muted color washes',
+    eraZh: '末日废土', eraEn: 'post-apocalyptic wasteland', avoidZh: '整洁现代都市，魔法',
+    bgZh: '灰褐纯色背景', bgEn: 'plain dusty grey-brown background' },
 ]);
-const DEFAULT_STYLE = Object.freeze({ zh: '手绘插画', en: 'hand-drawn game illustration' });
-const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh'];
+const DEFAULT_STYLE = Object.freeze({ zh: '手绘水彩插画', en: 'hand-drawn watercolor illustration',
+  bgZh: '浅米色纯色背景', bgEn: 'plain light beige background' });
+const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh', 'bgZh', 'bgEn'];
+// 画风设定版本：规则变了就升版本，styles.json 里旧版本条目作废、重新生成（图会按新画风重画）。
+const ART_VERSION = 2;
+const NO_TEXT_ZH = '无文字，无印章，无书法字，无水印';
+const NO_TEXT_EN = 'no calligraphy, no seal stamps, no written characters, no text, no watermark';
 const ART_RETRY_MS = 30 * 60 * 1000; // 画风 LLM 生成失败后，30 分钟内先用关键词规则兜底、不再重试
 
 function inferStyle(bible) {
@@ -63,7 +74,7 @@ function inferStyle(bible) {
   return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en };
 }
 
-// 规范化画风设定：五个字段都是非空短字符串才算有效。
+// 规范化画风设定：所有字段都是非空短字符串才算有效。
 function normalizeArt(a) {
   if (!a || typeof a !== 'object') return null;
   const out = {};
@@ -80,9 +91,12 @@ function ruleArt(bible) {
   const b = bible && typeof bible === 'object' ? bible : {};
   const text = `${b.title == null ? '' : b.title} ${b.tone == null ? '' : b.tone}`;
   for (const r of STYLE_RULES) {
-    if (r.re.test(text)) return { zh: r.zh, en: r.en, eraZh: r.eraZh, eraEn: r.eraEn, avoidZh: r.avoidZh };
+    if (r.re.test(text)) {
+      return { zh: r.zh, en: r.en, eraZh: r.eraZh, eraEn: r.eraEn, avoidZh: r.avoidZh, bgZh: r.bgZh, bgEn: r.bgEn };
+    }
   }
-  return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en, eraZh: '', eraEn: '', avoidZh: '' };
+  return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en, eraZh: '', eraEn: '', avoidZh: '',
+    bgZh: DEFAULT_STYLE.bgZh, bgEn: DEFAULT_STYLE.bgEn };
 }
 
 function stylesPath(dataDir) { return path.join(imagesDir(dataDir), 'styles.json'); }
@@ -97,15 +111,18 @@ function cachedArt(dataDir, state) {
   const fromBible = normalizeArt(s.bible && s.bible.art);
   if (fromBible) return fromBible;
   const worldId = String(s.id == null ? '' : s.id);
-  return normalizeArt(readStyles(dataDir)[worldId]);
+  const e = readStyles(dataDir)[worldId];
+  if (!e || Number(e.v) !== ART_VERSION) return null; // 旧版本条目作废，重新生成
+  return normalizeArt(e);
 }
 
-// job.style：zh 进缓存 key（画风或时代变了 → 旧图自动重画），其余字段给提示词用。
+// job.style：zh 进缓存 key（画风 / 时代 / 背景变了 → 旧图自动重画），其余字段给提示词用。
 function styleFromArt(art) {
   const a = art || ruleArt(null);
   return {
-    zh: a.eraZh ? `${a.zh}｜${a.eraZh}` : a.zh,
+    zh: [a.zh, a.eraZh, a.bgZh].filter(Boolean).join('｜'),
     en: a.en, artZh: a.zh, eraZh: a.eraZh || '', eraEn: a.eraEn || '', avoidZh: a.avoidZh || '',
+    bgZh: a.bgZh || DEFAULT_STYLE.bgZh, bgEn: a.bgEn || DEFAULT_STYLE.bgEn,
   };
 }
 
@@ -153,22 +170,25 @@ function gatewayPrompt(job) {
   const art = st.artZh || st.zh;
   const world = `世界背景：${title}${st.eraZh ? '，' + st.eraZh : ''}`;
   const avoid = st.avoidZh ? `，不要出现${st.avoidZh}` : '';
+  const bg = st.bgZh || DEFAULT_STYLE.bgZh;
   if (job.kind === 'npc') {
     return `${art}。${world}。游戏角色半身肖像：${job.name}，${job.role}，${clip(job.desc, 60)}，`
-      + `穿着符合该时代的服饰，面部清晰，简洁暗色背景，无文字，无水印${avoid}`;
+      + `穿着符合该时代的服饰，面部清晰，${bg}，${NO_TEXT_ZH}${avoid}`;
   }
   return `${art}。${world}。游戏道具图标：${job.name}，该时代的器物，单个物体居中，完整可辨认，`
-    + `浅色纯色背景，无文字，无水印${avoid}`;
+    + `${bg}，${NO_TEXT_ZH}${avoid}`;
 }
 
 // local 用英文：翻译出的一句画面描述 + 固定模板。
 // flux 不支持负面提示词：画风和时代放最前，用正面描述锁时代。
-function localPrompt(enDesc, kind, styleEn, eraEn) {
+// 物品与人物用同一背景色调；flux 爱加书法和印章，明确写 no calligraphy / no seal stamps。
+function localPrompt(enDesc, kind, styleEn, eraEn, bgEn) {
   const head = eraEn ? `${styleEn}, ${eraEn} setting` : styleEn;
+  const bg = bgEn || DEFAULT_STYLE.bgEn;
   if (kind === 'npc') {
-    return `${head}. ${enDesc}, period-accurate clothing, half-body portrait, clear face, simple dark background, no text`;
+    return `${head}. ${enDesc}, period-accurate clothing, half-body portrait, clear face, ${bg}, ${NO_TEXT_EN}`;
   }
-  return `${head}. ${enDesc}, period-accurate object, single object centered, game item icon, plain light background, no text`;
+  return `${head}. ${enDesc}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
 }
 
 // 翻译结果清洗：取首行、去引号、截断到 ≤25 个英文单词。
@@ -347,11 +367,16 @@ function createImages(cfg, opts) {
       {
         role: 'system',
         content: '你是游戏美术指导。根据世界设定，给这个世界的所有道具图标和人物肖像定一个统一画风，只输出 JSON：'
-          + '{"zh":"中文画风短语，≤16字","en":"English art style phrase, ≤12 words",'
+          + '{"zh":"中文画风，≤12字","en":"English art style, ≤10 words",'
           + '"eraZh":"时代与地域，≤16字","eraEn":"era and region in English, ≤10 words",'
-          + '"avoidZh":"不该出现在画面里、与时代冲突的元素，中文逗号分隔，≤30字"}。'
-          + '例：修仙世界 → {"zh":"中国古风水墨仙侠插画","en":"ancient Chinese xianxia ink-wash illustration",'
-          + '"eraZh":"中国古代修仙宗门","eraEn":"ancient China, cultivation sect","avoidZh":"现代物品，科技，霓虹，赛博朋克，西装，枪械"}',
+          + '"avoidZh":"不该出现在画面里、与时代冲突的元素，中文逗号分隔，≤30字",'
+          + '"bgZh":"所有图共用的纯色背景，≤10字","bgEn":"shared plain background in English, ≤8 words"}。'
+          + '画风只能是一种媒介加一种笔触（如「水墨淡彩插画」「铜版线描淡彩」「厚涂油画」），'
+          + '不要把互相冲突的词并列（如「写实」和「水墨」、「照片」和「插画」），也不要写「写实」「照片」。'
+          + '背景是一种与画风相配的纯色或纸张色，物品和人物共用。'
+          + '例：修仙世界 → {"zh":"水墨淡彩插画","en":"Chinese ink-wash painting with light color washes",'
+          + '"eraZh":"中国古代修仙宗门","eraEn":"ancient China, cultivation sect",'
+          + '"avoidZh":"现代物品，科技，霓虹，赛博朋克，西装，枪械","bgZh":"米白宣纸色背景","bgEn":"plain off-white rice paper background"}',
       },
       { role: 'user', content: brief },
     ];
@@ -381,7 +406,7 @@ function createImages(cfg, opts) {
         }
         if (art) {
           const all = readStyles(dataDir);
-          all[worldId] = Object.assign({}, art, { ts: nowFn() });
+          all[worldId] = Object.assign({}, art, { v: ART_VERSION, ts: nowFn() });
           fs.mkdirSync(imagesDir(dataDir), { recursive: true });
           store.atomicWriteJson(stylesPath(dataDir), all);
           console.log(`[images] 世界 ${worldId} 画风：${art.zh}｜${art.eraZh}`);
@@ -513,7 +538,7 @@ function createImages(cfg, opts) {
     if (!sfKey) throw new Error('未配置 SILICONFLOW_API_KEY');
     const data = await postJson(SILICONFLOW_URL, { Authorization: `Bearer ${sfKey}` }, {
       model: sfModel, prompt,
-      negative_prompt: '文字，水印，签名，边框，模糊，畸形' + (style && style.avoidZh ? '，' + style.avoidZh : ''),
+      negative_prompt: '文字，印章，书法，落款，水印，签名，边框，模糊，畸形' + (style && style.avoidZh ? '，' + style.avoidZh : ''),
       image_size: FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
     });
     const u = data && Array.isArray(data.images) && data.images[0] && data.images[0].url;
@@ -589,7 +614,7 @@ function createImages(cfg, opts) {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
       let enPrompt = await translate(job);
       if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-      const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn);
+      const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn, job.style.bgEn);
       return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
     }
     if (p === 'modelscope') {
@@ -607,7 +632,7 @@ function createImages(cfg, opts) {
     // local：先翻译，再拼英文提示词。
     let enPrompt = await translate(job);
     if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-    const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn);
+    const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn, job.style.bgEn);
     return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
   }
 
