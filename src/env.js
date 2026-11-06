@@ -33,11 +33,12 @@ const DEFAULTS = Object.freeze({
   IMAGE_LOCAL_PYTHON: '',
   IMAGE_HF_HOME: '',
   IMAGE_LORA: '',
+  IMAGE_LOCAL_MIN_FREE_MB: '10000', // 空闲内存低于此值不启动本地画图服务
 });
 
 const NUMERIC_KEYS = Object.freeze([
   'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'PORT',
-  'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY',
+  'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_LOCAL_MIN_FREE_MB',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

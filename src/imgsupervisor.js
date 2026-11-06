@@ -5,12 +5,17 @@
 // Every 30 s it asks /health; it starts the image server only when nothing answers, so a copy
 // left over from a previous game-server run keeps serving (no model reload on redeploy).
 
+const os = require('node:os');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const CHECK_MS = 30000;
 const START_GRACE_MS = 120000; // loading SDXL takes 20~50 s; don't start a second copy meanwhile
+const MAX_STARTS_PER_HOUR = 3;
+// The SDXL server needs ~9 GB of RAM (weights stay in RAM with CPU offload). Never start it on a
+// machine that is short of memory: on 2026-11-06 it starved the 16 GB home PC.
+const DEFAULT_MIN_FREE_MB = 10000;
 
 function healthUrlOf(baseUrl) {
   return String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '') + '/health';
@@ -28,6 +33,17 @@ function startImageSupervisor(cfg, opts) {
   const doSpawn = o.spawn || spawn;
   let child = null;
   let startedAt = 0;
+  const starts = [];
+  let lastSkipLog = 0;
+  const freeMb = o.freeMb || (() => os.freemem() / 1048576);
+  const minFree = Number(cfg.IMAGE_LOCAL_MIN_FREE_MB) || DEFAULT_MIN_FREE_MB;
+
+  function skip(msg) {
+    if (Date.now() - lastSkipLog > 600000) {
+      lastSkipLog = Date.now();
+      console.warn('[images] 不启动本地画图服务：' + msg);
+    }
+  }
 
   async function alive() {
     try {
@@ -42,6 +58,11 @@ function startImageSupervisor(cfg, opts) {
     if (child) return;
     if (Date.now() - startedAt < START_GRACE_MS) return;
     if (await alive()) return;
+    while (starts.length && Date.now() - starts[0] > 3600000) starts.shift();
+    if (starts.length >= MAX_STARTS_PER_HOUR) return skip('一小时内已启动 3 次，暂停自动重启');
+    const free = freeMb();
+    if (free < minFree) return skip(`空闲内存 ${Math.round(free)}MB 少于 ${minFree}MB`);
+    starts.push(Date.now());
     try {
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
       const out = fs.openSync(logFile, 'a');

@@ -17,10 +17,22 @@ test('does not spawn when health answers; spawns when it does not', async () => 
   let spawned = 0;
   const fakeSpawn = () => { spawned++; return { on() {}, unref() {} }; };
   const cfg = { IMAGE_PROVIDER: 'local', IMAGE_LOCAL_PYTHON: 'python', IMAGE_BASE_URL: 'http://127.0.0.1:1/v1' };
-  const up = startImageSupervisor(cfg, { fetch: async () => ({ status: 200 }), spawn: fakeSpawn });
+  const up = startImageSupervisor(cfg, { fetch: async () => ({ status: 200 }), spawn: fakeSpawn, freeMb: () => 20000 });
   await up.first; up.stop();
   assert.equal(spawned, 0);
-  const down = startImageSupervisor(cfg, { fetch: async () => { throw new Error('refused'); }, spawn: fakeSpawn });
+  const down = startImageSupervisor(cfg, { fetch: async () => { throw new Error('refused'); }, spawn: fakeSpawn, freeMb: () => 20000 });
   await down.first; down.stop();
   assert.equal(spawned, 1);
+});
+
+test('does not spawn when free memory is low', async () => {
+  let spawned = 0;
+  const cfg = { IMAGE_PROVIDER: 'local', IMAGE_LOCAL_PYTHON: 'python', IMAGE_BASE_URL: 'http://127.0.0.1:1/v1' };
+  const sup = startImageSupervisor(cfg, {
+    fetch: async () => { throw new Error('refused'); },
+    spawn: () => { spawned++; return { on() {}, unref() {} }; },
+    freeMb: () => 4000,
+  });
+  await sup.first; sup.stop();
+  assert.equal(spawned, 0);
 });
