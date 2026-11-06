@@ -1,6 +1,6 @@
 'use strict';
 
-const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
+const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, SCENE_PLACE_MAX, SCENE_NAME_MAX, SCENE_CAST_MAX, SCENE_ITEMS_MAX, SCENE_ACTION_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -53,15 +53,36 @@ function normalizeRumor(value) {
   return t.slice(0, RUMOR_MAX);
 }
 
-// 场景插图校验：desc 去空白并截断到 SCENE_DESC_MAX；draw 仅 raw.draw === true 才为 true，
-// forced 为 true 且存在 desc 时强制 draw=true。返回 {draw:true, desc} 或 {draw:false}。
+// 名字列表校验：字符串数组，去空白、去重、每条截到 12 字，最多 max 条。
+function normalizeSceneNames(value, max) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const v of value) {
+    if (typeof v !== 'string') continue;
+    const name = v.trim().slice(0, SCENE_NAME_MAX);
+    if (!name || out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+// 场景插图校验：只列名字（place / cast / items）与动作氛围（action），外貌交给已有参考图。
+// desc 给定时照旧去空白并截断；没给定时用 place + action 拼（去掉空部分）。
+// draw 仅 raw.draw === true 才为 true，forced 为 true 且存在 desc 时强制 draw=true。
+// 返回 {draw:true, desc, place, cast, items, action} 或 {draw:false}。
 function normalizeScene(raw, forced) {
   if (!raw || typeof raw !== 'object') return { draw: false };
-  if (typeof raw.desc !== 'string') return { draw: false };
-  const desc = raw.desc.trim().slice(0, SCENE_DESC_MAX);
+  const place = typeof raw.place === 'string' ? raw.place.trim().slice(0, SCENE_PLACE_MAX) : '';
+  const action = typeof raw.action === 'string' ? raw.action.trim().slice(0, SCENE_ACTION_MAX) : '';
+  const cast = normalizeSceneNames(raw.cast, SCENE_CAST_MAX);
+  const items = normalizeSceneNames(raw.items, SCENE_ITEMS_MAX);
+  const desc = (typeof raw.desc === 'string'
+    ? raw.desc.trim()
+    : [place, action].filter(Boolean).join('，')).slice(0, SCENE_DESC_MAX);
   if (!desc) return { draw: false };
   const draw = raw.draw === true || forced === true;
-  return draw ? { draw: true, desc } : { draw: false };
+  return draw ? { draw: true, desc, place, cast, items, action } : { draw: false };
 }
 
 // 事实校验：非字符串 / 空串忽略，超过 30 字截断，返回可直接入库的文本（无则 ''）。

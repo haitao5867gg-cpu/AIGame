@@ -284,9 +284,15 @@ function mockTurn(m) {
     // 越界升级：约每 7 回合模拟一次越界行为，让引擎累计 oversteps、覆盖升级阶梯链路。
     overstep: turn % 7 === 0,
   };
-  // 场景插图：每 3 回合给一幅值得画的画面，其余回合不出图。
+  // 场景插图：每 3 回合给一幅值得画的画面，其余回合不出图。scene 只列名字，外貌交给参考图。
   if (turn % 3 === 1) {
-    out.scene = { draw: true, desc: '雾中钟楼下，提灯的年轻守夜人拦住去路，灰袍被风吹起' };
+    out.scene = {
+      draw: true,
+      place: '雾中钟楼',
+      cast: ['你', '守夜人'],
+      items: [],
+      action: '你在左，提灯的守夜人在右拦住去路，雾气翻涌',
+    };
   } else {
     out.scene = { draw: false };
   }

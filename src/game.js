@@ -133,6 +133,16 @@ function badgesFromApplied(applied) {
   return badges;
 }
 
+// 场景插图公开字段：新格式字段「有就带」，兼容老存档只有 draw/desc 的记录。
+function toPublicScene(sc) {
+  const out = { draw: true, desc: sc.desc };
+  if (typeof sc.place === 'string') out.place = sc.place;
+  if (Array.isArray(sc.cast)) out.cast = sc.cast;
+  if (Array.isArray(sc.items)) out.items = sc.items;
+  if (typeof sc.action === 'string') out.action = sc.action;
+  return out;
+}
+
 // events.jsonl 的单条记录 → 只保留公开字段，绝不把 apex / twist / raw / proposal / rejected / usage 带出去。
 function toPublicLogRecord(rec) {
   const e = rec && typeof rec === 'object' ? rec : {};
@@ -158,7 +168,7 @@ function toPublicLogRecord(rec) {
     death: d ? {
       reason: d.reason, life: d.life, inheritedReputation: d.inheritedReputation,
     } : null,
-    ...(e.scene && e.scene.draw === true ? { scene: { draw: true, desc: e.scene.desc } } : {}),
+    ...(e.scene && e.scene.draw === true ? { scene: toPublicScene(e.scene) } : {}),
     ts: e.ts,
   };
 }

@@ -61,6 +61,13 @@ const RUMORS_MAX = 10;
 // 场景插图 desc 上限：引擎消毒时去首尾空白、截到 60 字（模型建议 ≤40 字）。
 const SCENE_DESC_MAX = 60;
 
+// 场景插图新字段：地点 ≤12 字；在场人物 / 物品名每条 ≤12 字，cast 最多 3、items 最多 2；动作 ≤60 字。
+const SCENE_PLACE_MAX = 12;
+const SCENE_NAME_MAX = 12;
+const SCENE_CAST_MAX = 3;
+const SCENE_ITEMS_MAX = 2;
+const SCENE_ACTION_MAX = 60;
+
 // 事实账本：本回合新确立的客观事实，[{turn,text}]；单条 ≤30 字，每回合 0~2 条，最多 40 条（丢最旧）。
 const FACT_TEXT_MAX = 30;
 const FACTS_MAX = 40;
@@ -135,6 +142,11 @@ module.exports = {
   RUMOR_MAX,
   RUMORS_MAX,
   SCENE_DESC_MAX,
+  SCENE_PLACE_MAX,
+  SCENE_NAME_MAX,
+  SCENE_CAST_MAX,
+  SCENE_ITEMS_MAX,
+  SCENE_ACTION_MAX,
   FACT_TEXT_MAX,
   FACTS_MAX,
   FACTS_PER_TURN_MAX,

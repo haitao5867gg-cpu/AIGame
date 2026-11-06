@@ -77,7 +77,7 @@ test('normalizeScene：desc 空 / 空白 / 非字符串返回 {draw:false}', () 
 test('normalizeScene：合法 scene 出图并去掉首尾空白', () => {
   assert.deepEqual(
     e.normalizeScene({ draw: true, desc: '  雾中钟楼，提灯守夜人  ' }),
-    { draw: true, desc: '雾中钟楼，提灯守夜人' },
+    { draw: true, desc: '雾中钟楼，提灯守夜人', place: '', cast: [], items: [], action: '' },
   );
 });
 
@@ -92,7 +92,7 @@ test('normalizeScene：desc 超长截到 60', () => {
 test('normalizeScene：forced 有 desc 强制 true、无 desc 仍 false', () => {
   assert.deepEqual(
     e.normalizeScene({ draw: false, desc: '关键一幕' }, true),
-    { draw: true, desc: '关键一幕' },
+    { draw: true, desc: '关键一幕', place: '', cast: [], items: [], action: '' },
   );
   assert.deepEqual(e.normalizeScene({ draw: false }, true), { draw: false });
   assert.deepEqual(e.normalizeScene({ draw: false, desc: '' }, true), { draw: false });
@@ -138,4 +138,92 @@ test('toPublicLogRecord：scene.draw=false 的记录不输出 scene 字段', () 
     scene: { draw: false },
   });
   assert.equal('scene' in pub, false);
+});
+
+// ---------- 新格式：scene 只列名字 ----------
+
+test('normalizeScene：cast/items 去空白去重、每条截 12 字、上限 3/2', () => {
+  const longName = '名'.repeat(20);
+  const out = e.normalizeScene({
+    draw: true,
+    place: '雾中钟楼',
+    cast: [' 你 ', '你', longName, longName, '守夜人', '长老', '铁匠'],
+    items: [' 旧币 ', '旧币', '提灯', '药瓶', longName],
+    action: '你在左，守夜人在右',
+  });
+  assert.equal(out.draw, true);
+  assert.deepEqual(out.cast, ['你', '名'.repeat(12), '守夜人']);
+  assert.deepEqual(out.items, ['旧币', '提灯']);
+});
+
+test('normalizeScene：action 截到 60 字', () => {
+  const out = e.normalizeScene({ draw: true, place: '钟楼', action: '动'.repeat(80) });
+  assert.equal(out.action, '动'.repeat(60));
+});
+
+test('normalizeScene：没给 desc 时用 place+action 拼，去掉空的部分', () => {
+  const out = e.normalizeScene({ draw: true, place: '雾中钟楼', action: '你在左，守夜人在右' });
+  assert.equal(out.desc, '雾中钟楼，你在左，守夜人在右');
+  assert.equal(out.place, '雾中钟楼');
+  assert.equal(out.action, '你在左，守夜人在右');
+  assert.equal(e.normalizeScene({ draw: true, place: '雾中钟楼' }).desc, '雾中钟楼');
+  assert.equal(e.normalizeScene({ draw: true, action: '雾气翻涌' }).desc, '雾气翻涌');
+});
+
+test('normalizeScene：place/action/desc 全空时 draw=false', () => {
+  assert.deepEqual(
+    e.normalizeScene({ draw: true, place: '  ', action: '', cast: ['你'], items: ['旧币'] }),
+    { draw: false },
+  );
+});
+
+test('normalizeScene：旧格式只有 desc 仍可用，新字段补默认值', () => {
+  assert.deepEqual(
+    e.normalizeScene({ draw: true, desc: '雾中钟楼下，守夜人拦住去路' }),
+    { draw: true, desc: '雾中钟楼下，守夜人拦住去路', place: '', cast: [], items: [], action: '' },
+  );
+});
+
+test('resolveTurn：新格式 scene 原样进 toPublicTurnResult 的 scene', () => {
+  const r = run(makeState(), {
+    action: '前行',
+    proposal: proposal({
+      scene: {
+        draw: true,
+        place: '雾中钟楼',
+        cast: ['你', '守夜人'],
+        items: [],
+        action: '你在左，守夜人在右',
+      },
+    }),
+  });
+  const pub = e.toPublicTurnResult(r.result, r.state);
+  assert.equal(pub.scene.draw, true);
+  assert.equal(pub.scene.place, '雾中钟楼');
+  assert.deepEqual(pub.scene.cast, ['你', '守夜人']);
+  assert.deepEqual(pub.scene.items, []);
+  assert.equal(pub.scene.action, '你在左，守夜人在右');
+  assert.equal(pub.scene.desc, '雾中钟楼，你在左，守夜人在右');
+});
+
+test('toPublicLogRecord：draw=true 且带新格式字段时 scene 带上 place/cast/items/action', () => {
+  const pub = game.toPublicLogRecord({
+    turn: 5, life: 1, action: '前行', narration: '你向前走去。',
+    scene: {
+      draw: true,
+      desc: '雾中钟楼，你在左，守夜人在右',
+      place: '雾中钟楼',
+      cast: ['你', '守夜人'],
+      items: ['提灯'],
+      action: '你在左，守夜人在右',
+    },
+  });
+  assert.deepEqual(pub.scene, {
+    draw: true,
+    desc: '雾中钟楼，你在左，守夜人在右',
+    place: '雾中钟楼',
+    cast: ['你', '守夜人'],
+    items: ['提灯'],
+    action: '你在左，守夜人在右',
+  });
 });
