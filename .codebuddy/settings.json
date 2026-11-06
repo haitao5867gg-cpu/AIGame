@@ -1,5 +1,11 @@
 {
   "permissions": {
-    "allow": ["Bash(node:*)", "Bash(ls:*)"]
+    "allow": [
+      "Bash(node:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)"
+    ]
   }
 }

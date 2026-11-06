@@ -6,7 +6,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const html = [
+  fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8'),
+  '<style>\n' + fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8') + '\n</style>',
+  ...fs.readdirSync(path.join(__dirname, '..', 'public', 'js'))
+    .filter((f) => f.endsWith('.js'))
+    .sort()
+    .map((f) => '<script>\n' + fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8') + '\n</script>'),
+].join('\n');
 
 // 从标记之间抽出纯分段函数（不依赖 DOM），在 Node 里直接验证分段行为。
 function narrationHelpers() {
