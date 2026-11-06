@@ -235,9 +235,13 @@ function triggerImages(images, dataDir, state) {
 function triggerScene(images, dataDir, result) {
   if (!images || !result || !result.scene || !result.scene.draw) return null;
   try {
-    return images.ensureScene(dataDir, result.state, {
-      turn: result.state.turn, desc: result.scene.desc,
-    });
+    const sc = result.scene;
+    const spec = {
+      turn: result.state.turn, desc: sc.desc, place: sc.place, action: sc.action,
+    };
+    if (Array.isArray(sc.cast)) spec.cast = sc.cast;
+    if (Array.isArray(sc.items)) spec.items = sc.items;
+    return images.ensureScene(dataDir, result.state, spec);
   } catch (err) {
     console.warn('[images] 场景触发异常（已忽略）：' + (err && err.message ? err.message : err));
     return null;

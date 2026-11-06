@@ -54,6 +54,16 @@
     });
   }
 
+  // 主角形象图：与 NPC 头像同款 40px 圆形，放在「认识的人」上方。
+  // 状态规则沿用 makeImageVisual：ready 显示图（点击看大图）、pending 闪烁、否则首字色块。
+  function renderHero() {
+    var box = $('hero-row');
+    if (!box) return;
+    box.textContent = '';
+    box.appendChild(makeImageVisual('你', imageState.hero, 'npc-avatar'));
+    box.appendChild(el('span', 'npc-name', '你'));
+  }
+
   // 场景插图：遍历 .scene-frame，按 data-scene 查 imageState.scenes 填图 / 占位 / 隐藏。
   function renderScenes() {
     var scenes = imageState.scenes || {};
@@ -83,6 +93,7 @@
 
   function renderImages() {
     renderItemGrid();
+    renderHero();
     renderNpcList();
     renderScenes();
   }
@@ -111,6 +122,7 @@
     Object.keys(it).forEach(function (k) { vals.push(it[k]); });
     Object.keys(np).forEach(function (k) { vals.push(np[k]); });
     Object.keys(sc).forEach(function (k) { vals.push(sc[k]); });
+    if (st.hero) vals.push(st.hero);
     if (vals.some(function (v) { return v && v.status === 'pending'; })) return true;
     // 页面上有 .scene-frame 但 scenes 里还没有对应项（刚出完回合，后端刚排队）也算 pending。
     var frames = document.querySelectorAll('.scene-frame');
@@ -128,7 +140,10 @@
     try {
       var data = await api('/api/worlds/' + encodeURIComponent(id) + '/images');
       if (id !== currentWorldId) return; // 已离开该世界：丢弃过期响应
-      imageState = { items: data.items || {}, npcs: data.npcs || {}, scenes: data.scenes || {} };
+      imageState = {
+        items: data.items || {}, npcs: data.npcs || {}, scenes: data.scenes || {},
+        hero: data.hero || {},
+      };
       renderImages();
       if (!hasPendingImage(imageState)) stopImagePoll();
     } catch (err) {
@@ -142,7 +157,7 @@
     if (!currentWorldId) return;
     var id = currentWorldId;
     if (imageWorldId !== id) { // 换了世界：清空旧图，避免串图
-      imageState = { items: {}, npcs: {}, scenes: {} };
+      imageState = { items: {}, npcs: {}, scenes: {}, hero: {} };
       imageWorldId = id;
       renderImages();
     }

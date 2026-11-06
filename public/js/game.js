@@ -368,6 +368,13 @@
       : [el('div', 'muted', '（尚无已确立的事实）')];
     panel.appendChild(collapsible('已知的事', factChildren));
 
+    // 主角形象：40px 圆形头像 + 「你」，放在「认识的人」上方（图由 public/js/images.js 填）。
+    var heroSec = el('div', 'panel-section');
+    var heroRow = el('div', 'npc-row');
+    heroRow.id = 'hero-row';
+    heroSec.appendChild(heroRow);
+    panel.appendChild(heroSec);
+
     // 认识的人：每行前 40px 圆形头像 + 名字 + 态度。
     var npcSec = el('div', 'panel-section');
     npcSec.appendChild(el('h4', 'panel-h', '认识的人'));

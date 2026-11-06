@@ -842,8 +842,12 @@ function createImages(cfg, opts) {
     const eraZh = st.eraZh || '';
     const place = String(job.place == null ? '' : job.place);
     const action = String(job.action == null ? '' : job.action);
-    const subject = `场景地点：${clip(place, 60)}；画面动作：${clip(action, 160)}；`
-      + `世界：${job.bibleTitle || ''}；时代背景：${eraZh}`;
+    const desc = String(job.desc == null ? '' : job.desc);
+    // 老格式只有 desc、place 和 action 都为空：别拿空字符串去翻译，改用 desc 作 subject。
+    const subject = (place.trim() || action.trim())
+      ? `场景地点：${clip(place, 60)}；画面动作：${clip(action, 160)}；`
+        + `世界：${job.bibleTitle || ''}；时代背景：${eraZh}`
+      : `场景：${clip(desc, 60)}；世界：${job.bibleTitle || ''}；时代背景：${eraZh}`;
     const enDesc = (await englishDesc(job, subject)) || 'a dramatic game scene';
     const parts = job.refs.map((r, i) => {
       if (r.type === 'item') {
