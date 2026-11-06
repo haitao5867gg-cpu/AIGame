@@ -605,3 +605,18 @@ test('提供方返回 PNG 字节时存成 .png，serveImage 返回 image/png', a
   assert.equal(r.status, 200);
   assert.equal(r.contentType, 'image/png');
 });
+
+test('providerStatus：返回出图链，只列仍在冷却的提供方及剩余毫秒', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  let now = 1_000_000;
+  const inst = images.createImages(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(null, { sf: 'fail' }), now: () => now });
+  assert.deepEqual(inst.providerStatus(), { chain: ['siliconflow', 'zhipu'], cooling: {} });
+  const st = oneItemState('wps');
+  inst.ensureImages(dataDir, st, inst.listForState(st));
+  await inst.waitIdle();
+  assert.deepEqual(inst.providerStatus().cooling, { siliconflow: images.PROVIDER_COOLDOWN_MS });
+  now += images.PROVIDER_COOLDOWN_MS + 1;
+  assert.deepEqual(inst.providerStatus().cooling, {});
+});

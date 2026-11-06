@@ -400,6 +400,31 @@ function sumUsage(rows, filterDay) {
   return { prompt_tokens: pt, completion_tokens: ct, total: pt + ct };
 }
 
+// /api/usage/today：今天的 token 汇总 + 出图按提供方的成功 / 失败张数（同一 dayKey 时区口径）。
+function summarizeToday(rows, now, limit) {
+  const day = dayKey(now);
+  const t = sumUsage(rows, day);
+  const lim = Number(limit) || 0;
+  const byProvider = {};
+  const total = { ok: 0, fail: 0 };
+  for (const r of rows) {
+    if (!r || typeof r !== 'object' || r.kind !== 'image' || dayKey(r.ts) !== day) continue;
+    const p = String(r.provider || 'unknown');
+    if (!byProvider[p]) byProvider[p] = { ok: 0, fail: 0 };
+    const k = r.ok ? 'ok' : 'fail';
+    byProvider[p][k] += 1;
+    total[k] += 1;
+  }
+  return {
+    date: day,
+    tokens: {
+      prompt: t.prompt_tokens, completion: t.completion_tokens, total: t.total,
+      limit: lim, remaining: lim > 0 ? Math.max(0, lim - t.total) : null,
+    },
+    images: { byProvider, total },
+  };
+}
+
 function createClient(cfg, dataDir) {
   const mock = !!cfg.LLM_MOCK;
   const timeout = cfg.LLM_TIMEOUT_MS > 0 ? cfg.LLM_TIMEOUT_MS : 90000;
@@ -698,10 +723,14 @@ function createClient(cfg, dataDir) {
     };
   }
 
-  return { complete, completeStream, summarizeUsage, mock, PURPOSES };
+  function usageToday(now) {
+    return summarizeToday(rows(), now == null ? Date.now() : now, dailyLimit);
+  }
+
+  return { complete, completeStream, summarizeUsage, usageToday, mock, PURPOSES };
 }
 
 module.exports = {
-  createClient, PURPOSES, parseExtraBody,
+  createClient, PURPOSES, parseExtraBody, summarizeToday,
   createNarrationDecoder, decodeNarration, readSSE,
 };

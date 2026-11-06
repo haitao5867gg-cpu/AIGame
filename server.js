@@ -241,6 +241,13 @@ async function handle(req, res, cfg, g, images, dataDir) {
   if (pathname === '/api/usage' && method === 'GET') {
     return sendJson(res, 200, g.usage());
   }
+  if (pathname === '/api/usage/today' && method === 'GET') {
+    const u = g.usageToday();
+    const st = images.providerStatus();
+    u.images.chain = st.chain;
+    u.images.cooling = st.cooling;
+    return sendJson(res, 200, u);
+  }
   if (pathname === '/api/worlds' && method === 'GET') {
     return sendJson(res, 200, g.listWorlds());
   }

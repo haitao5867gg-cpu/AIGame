@@ -520,3 +520,60 @@ test('备份轮转：启动备份复制 worlds，只保留最近 7 份，更旧�
     console.warn = originalWarn;
   }
 });
+
+// ---- GET /api/usage/today ----
+function seedUsage(dataDir, now) {
+  const day = 24 * 3600 * 1000;
+  const rows = [
+    { ts: now - 1000, model: 'm', purpose: 'turn', prompt_tokens: 100, completion_tokens: 20, ok: true },
+    { ts: now - 2000, model: 'm', purpose: 'turn', prompt_tokens: 50, completion_tokens: 5, ok: true },
+    { ts: now - 2 * day, model: 'm', purpose: 'turn', prompt_tokens: 9999, completion_tokens: 9999, ok: true },
+    { ts: now - 3000, kind: 'image', provider: 'siliconflow', model: 'Kwai-Kolors/Kolors', ok: true, ms: 5000 },
+    { ts: now - 4000, kind: 'image', provider: 'siliconflow', model: 'Kwai-Kolors/Kolors', ok: true, ms: 5000 },
+    { ts: now - 5000, kind: 'image', provider: 'zhipu', model: 'cogview-3-flash', ok: true, ms: 9000 },
+    { ts: now - 6000, kind: 'image', provider: 'local', model: 'local', ok: false, ms: 60000 },
+    { ts: now - 2 * day, kind: 'image', provider: 'zhipu', model: 'cogview-3-flash', ok: false, ms: 1 },
+  ];
+  fs.writeFileSync(store.usagePath(dataDir), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
+
+test('接口层 /api/usage/today：今日 token 汇总、剩余额度、出图按提供方计数，不带 Key', async () => {
+  await withServer(async ({ base, dataDir }) => {
+    const now = Date.now();
+    seedUsage(dataDir, now);
+    const r = await req(base, 'GET', '/api/usage/today');
+    assert.equal(r.status, 200, r.text);
+    const j = r.json;
+    assert.match(j.date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.deepEqual(j.tokens, { prompt: 150, completion: 25, total: 175, limit: 2000000, remaining: 2000000 - 175 });
+    assert.deepEqual(j.images.byProvider, {
+      siliconflow: { ok: 2, fail: 0 }, zhipu: { ok: 1, fail: 0 }, local: { ok: 0, fail: 1 },
+    });
+    assert.deepEqual(j.images.total, { ok: 3, fail: 1 });
+    assert.ok(Array.isArray(j.images.chain) && j.images.chain.length > 0);
+    assert.deepEqual(j.images.cooling, {});
+    assertNoLeak(r.text, j);
+    // 已有 /api/usage 不受影响
+    const old = await req(base, 'GET', '/api/usage');
+    assert.equal(old.status, 200);
+    assert.ok('cumulative' in old.json);
+  });
+});
+
+test('接口层 /api/usage/today：LLM_DAILY_TOKEN_LIMIT=0 表示不限，remaining 为 null', async () => {
+  const prev = process.env.LLM_DAILY_TOKEN_LIMIT;
+  process.env.LLM_DAILY_TOKEN_LIMIT = '0';
+  try {
+    await withServer(async ({ base, dataDir }) => {
+      seedUsage(dataDir, Date.now());
+      const r = await req(base, 'GET', '/api/usage/today');
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.tokens.limit, 0);
+      assert.equal(r.json.tokens.remaining, null);
+      assert.equal(r.json.tokens.total, 175);
+    });
+  } finally {
+    if (prev === undefined) delete process.env.LLM_DAILY_TOKEN_LIMIT;
+    else process.env.LLM_DAILY_TOKEN_LIMIT = prev;
+  }
+});

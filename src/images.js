@@ -573,8 +573,18 @@ function createImages(cfg, opts) {
     return new Promise((resolve) => idleWaiters.push(resolve));
   }
 
+  // 用量面板用：出图链 + 仍在冷却的提供方剩余毫秒（只列还在冷却的）。
+  function providerStatus() {
+    const now = nowFn();
+    const cooling = {};
+    for (const [p, until] of providerCooldown) {
+      if (until > now) cooling[p] = until - now;
+    }
+    return { chain: chain.slice(), cooling };
+  }
+
   return {
-    ensureImages, imageList, waitIdle, serveImage, readIndex, listForState,
+    ensureImages, imageList, waitIdle, serveImage, readIndex, listForState, providerStatus,
     config: { provider, providers: chain.slice(), base, model, size, maxPerWorld, concurrency, mock, off },
   };
 }

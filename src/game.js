@@ -374,6 +374,10 @@ function createGame(cfg, dataDir) {
     return client.summarizeUsage(Date.now());
   }
 
+  function usageToday() {
+    return client.usageToday(Date.now());
+  }
+
   // GET /api/worlds/:id/export：state.json（去掉 apex 等内部字段，用公开状态）
   // + events.jsonl 的公开字段，打包成一个可下载的对象。
   function exportWorld(worldId) {
@@ -642,7 +646,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, getWorldLog,
+    buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn,
   };
 }
