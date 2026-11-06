@@ -25,6 +25,12 @@ const IMAGE_TIMEOUT_MS = 60000;            // 单次出图 HTTP 超时
 const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 回退链里某家失败后 5 分钟内排到最后
 const SILICONFLOW_URL = 'https://api.siliconflow.cn/v1/images/generations';
 const ZHIPU_URL = 'https://open.bigmodel.cn/api/paas/v4/images/generations';
+// 魔搭 ModelScope：异步任务。提交返回 task_id，轮询 /v1/tasks/<id> 直到 SUCCEED / FAILED。
+const MODELSCOPE_URL = 'https://api-inference.modelscope.cn/v1/images/generations';
+const MODELSCOPE_TASK_URL = 'https://api-inference.modelscope.cn/v1/tasks/';
+const MODELSCOPE_POLL_MS = 2000;
+// 实测 Z-Image-Turbo 排队 + 出图 80~100 秒，留余量取 180 秒。
+const MODELSCOPE_TIMEOUT_MS = 180000;
 const FREE_SIZE = '1024x1024';             // 硅基流动 / 智谱都支持
 const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 
@@ -232,6 +238,8 @@ function createImages(cfg, opts) {
   const sfModel = String(c.IMAGE_SILICONFLOW_MODEL || 'Kwai-Kolors/Kolors');
   const zpKey = String(c.ZHIPU_API_KEY || '');
   const zpModel = String(c.IMAGE_ZHIPU_MODEL || 'cogview-3-flash');
+  const msKey = String(c.MODELSCOPE_API_KEY || '');
+  const msModel = String(c.IMAGE_MODELSCOPE_MODEL || 'Tongyi-MAI/Z-Image-Turbo');
   const providerCooldown = new Map(); // provider → 冷却截止时间
   const model = String(c.IMAGE_MODEL || 'Doubao-seedream-4.0');
   const size = String(c.IMAGE_SIZE || '768x768');
@@ -249,6 +257,7 @@ function createImages(cfg, opts) {
   const llmModel = String(c.LLM_MODEL || '');
   const doFetch = o.fetchImpl || ((...args) => globalThis.fetch(...args));
   const nowFn = o.now || (() => Date.now());
+  const sleepFn = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
 
   const queue = [];
   const inFlight = new Set();       // 已排队 / 处理中，避免同一 key 重复排队
@@ -380,11 +389,48 @@ function createImages(cfg, opts) {
     return downloadUrl(u);
   }
 
+  // 魔搭（Z-Image-Turbo 等，免费额度）：异步提交任务 → 每 2 秒轮询 → 下载 output_images[0]。
+  async function callModelscope(prompt) {
+    if (!msKey) throw new Error('未配置 MODELSCOPE_API_KEY');
+    const auth = { Authorization: `Bearer ${msKey}` };
+    const sub = await postJson(MODELSCOPE_URL, Object.assign({ 'X-ModelScope-Async-Mode': 'true' }, auth), {
+      model: msModel, prompt, size: FREE_SIZE,
+    });
+    const taskId = sub && sub.task_id;
+    if (typeof taskId !== 'string' || !taskId) throw new Error('魔搭返回缺少 task_id');
+    const maxPolls = Math.ceil(MODELSCOPE_TIMEOUT_MS / MODELSCOPE_POLL_MS);
+    for (let i = 0; i < maxPolls; i++) {
+      await sleepFn(MODELSCOPE_POLL_MS);
+      const resp = await fetchWithTimeout(MODELSCOPE_TASK_URL + encodeURIComponent(taskId), {
+        method: 'GET', headers: Object.assign({ 'X-ModelScope-Task-Type': 'image_generation' }, auth),
+      });
+      if (!resp || resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400)) {
+        throw new Error('魔搭任务查询 HTTP ' + (resp && resp.status));
+      }
+      const t = await resp.json();
+      const st = t && t.task_status;
+      if (st === 'SUCCEED') {
+        const u = Array.isArray(t.output_images) && t.output_images[0];
+        if (typeof u !== 'string' || !u) throw new Error('魔搭返回缺少 output_images[0]');
+        return downloadUrl(u);
+      }
+      if (st === 'FAILED') {
+        const why = (t.errors && (t.errors.message || JSON.stringify(t.errors))) || t.message || '';
+        throw new Error('魔搭任务失败' + (why ? '：' + clip(String(why), 200) : ''));
+      }
+    }
+    throw new Error(`魔搭任务超时（${MODELSCOPE_TIMEOUT_MS}ms）`);
+  }
+
   // 用单个提供方出一张图：返回 {bytes, prompt, enPrompt, model}。
   async function runProvider(p, job) {
     if (p === 'siliconflow') {
       const prompt = gatewayPrompt(job);
       return { bytes: await callSiliconflow(prompt), prompt, enPrompt: '', model: sfModel };
+    }
+    if (p === 'modelscope') {
+      const prompt = gatewayPrompt(job);
+      return { bytes: await callModelscope(prompt), prompt, enPrompt: '', model: msModel };
     }
     if (p === 'zhipu') {
       const prompt = gatewayPrompt(job);
@@ -611,7 +657,7 @@ module.exports = {
   // 纯函数
   inferStyle, imageKey, listForState, readIndex, serveImage,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
-  SILICONFLOW_URL, ZHIPU_URL,
+  SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL,
   // 默认实例委托
   ensureImages, imageList, waitIdle,
 };

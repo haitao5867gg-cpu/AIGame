@@ -1439,7 +1439,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 
   // ---- 用量面板：GET /api/usage/today；打开时每 10 秒刷新，关闭不轮询；每回合结束刷新一次 ----
   var USAGE_POLL_MS = 10000;
-  var PROVIDER_ZH = { siliconflow: '硅基流动', zhipu: '智谱', local: '本地', gateway: '网关' };
+  var PROVIDER_ZH = { siliconflow: '硅基流动', modelscope: '魔搭', zhipu: '智谱', local: '本地', gateway: '网关' };
   var usageTimer = null;
   var usageData = null;
   var usageBeforeTurn = null; // 回合开始前的今日 token 总数，用来算「本回合」
@@ -1491,7 +1491,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       var min = Math.max(1, Math.ceil(im.cooling[p] / 60000));
       sec2.appendChild(el('div', 'usage-cool', (PROVIDER_ZH[p] || p) + ' 冷却中 约 ' + min + ' 分钟'));
     });
-    sec2.appendChild(el('div', 'usage-note', '硅基流动、智谱为免费模型，官方不公开剩余额度，只会临时限速。'));
+    sec2.appendChild(el('div', 'usage-note', '硅基流动、魔搭、智谱为免费模型，接口不返回剩余额度，只会临时限速。'));
     box.appendChild(sec1);
     box.appendChild(sec2);
   }

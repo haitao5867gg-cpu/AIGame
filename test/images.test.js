@@ -620,3 +620,84 @@ test('providerStatus：返回出图链，只列仍在冷却的提供方及剩余
   now += images.PROVIDER_COOLDOWN_MS + 1;
   assert.deepEqual(inst.providerStatus().cooling, {});
 });
+
+// ---- 魔搭 ModelScope：异步任务 ----
+function msFetch(calls, statuses) {
+  const seq = (statuses || ['RUNNING', 'SUCCEED']).slice();
+  return async (url, opts) => {
+    const body = opts && typeof opts.body === 'string' ? JSON.parse(opts.body) : undefined;
+    if (calls) calls.push({ url, method: (opts && opts.method) || 'GET', headers: opts && opts.headers, body });
+    if (url === images.MODELSCOPE_URL) {
+      return { ok: true, status: 200, json: async () => ({ task_status: 'SUCCEED', task_id: 't-1', request_id: 'r' }) };
+    }
+    if (url === images.MODELSCOPE_TASK_URL + 't-1') {
+      const st = seq.length > 1 ? seq.shift() : seq[0];
+      if (st === 'SUCCEED') return { ok: true, status: 200, json: async () => ({ task_status: 'SUCCEED', output_images: ['https://dl.test/ms.png'] }) };
+      if (st === 'FAILED') return { ok: true, status: 200, json: async () => ({ task_status: 'FAILED', errors: { message: 'nsfw' } }) };
+      return { ok: true, status: 200, json: async () => ({ task_status: st }) };
+    }
+    if (url.startsWith('https://dl.test/')) {
+      return { ok: true, status: 200, arrayBuffer: async () => JPEG.buffer.slice(JPEG.byteOffset, JPEG.byteOffset + JPEG.length) };
+    }
+    return freeFetch(null)(url, opts);
+  };
+}
+
+test('modelscope：异步提交 → 轮询到 SUCCEED → 下载 output_images[0]，provider 记 modelscope', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  const sleeps = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
+    { fetchImpl: msFetch(calls, ['PENDING', 'RUNNING', 'SUCCEED']), sleep: async (ms) => { sleeps.push(ms); } });
+  const st = oneItemState('wms');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(calls[0].url, images.MODELSCOPE_URL);
+  assert.equal(calls[0].headers.Authorization, 'Bearer ms-k');
+  assert.equal(calls[0].headers['X-ModelScope-Async-Mode'], 'true');
+  assert.equal(calls[0].body.model, 'Tongyi-MAI/Z-Image-Turbo');
+  assert.match(calls[0].body.prompt, /旧铜灯/);
+  const polls = calls.filter((c) => c.url.startsWith(images.MODELSCOPE_TASK_URL));
+  assert.equal(polls.length, 3);
+  assert.equal(polls[0].headers['X-ModelScope-Task-Type'], 'image_generation');
+  assert.deepEqual(sleeps, [2000, 2000, 2000]);
+  assert.equal(calls[calls.length - 1].url, 'https://dl.test/ms.png');
+  const e = Object.values(images.readIndex(dataDir))[0];
+  assert.equal(e.status, 'ready');
+  assert.equal(e.provider, 'modelscope');
+});
+
+test('modelscope：任务 FAILED 换下一家（zhipu）；没配 Key 直接跳过', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: 'ms-k', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: msFetch(calls, ['FAILED']), sleep: async () => {} });
+  const st = oneItemState('wmsf');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.ok(calls.some((c) => c.url === images.ZHIPU_URL));
+  assert.equal(Object.values(images.readIndex(dataDir))[0].provider, 'zhipu');
+
+  const dataDir2 = tmpDir(t);
+  const calls2 = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: msFetch(calls2), sleep: async () => {} });
+  images.ensureImages(dataDir2, st, images.listForState(st));
+  await images.waitIdle();
+  assert.ok(!calls2.some((c) => c.url.startsWith('https://api-inference.modelscope.cn')));
+  assert.equal(Object.values(images.readIndex(dataDir2))[0].provider, 'zhipu');
+});
+
+test('modelscope：一直 RUNNING 到超时则失败', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  let n = 0;
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
+    { fetchImpl: msFetch(null, ['RUNNING']), sleep: async () => { n += 1; } });
+  const st = oneItemState('wmst');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(n, 90);
+  assert.equal(Object.values(images.readIndex(dataDir))[0].status, 'failed');
+});

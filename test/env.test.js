@@ -248,6 +248,7 @@ test('load: IMAGE_PROVIDER 回退链（逗号分隔、去重、丢弃非法项�
   // 链里第一个 HTTP 型是 local → IMAGE_BASE_URL 默认本地服务
   assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'siliconflow,local' }).IMAGE_BASE_URL, 'http://127.0.0.1:8790/v1');
   assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'zhipu,gateway', LLM_BASE: 'https://gw.example/v1' }).IMAGE_BASE_URL, 'https://gw.example/v1');
-  const pub = env.withoutKey(env.load(missingFile(), { SILICONFLOW_API_KEY: 'sf-secret', ZHIPU_API_KEY: 'zp-secret' }));
+  assert.equal(env.load(missingFile(), { IMAGE_PROVIDER: 'siliconflow, ModelScope,zhipu,local' }).IMAGE_PROVIDER, 'siliconflow,modelscope,zhipu,local');
+  const pub = env.withoutKey(env.load(missingFile(), { SILICONFLOW_API_KEY: 'sf-secret', ZHIPU_API_KEY: 'zp-secret', MODELSCOPE_API_KEY: 'ms-secret' }));
   assert.ok(!JSON.stringify(pub).includes('secret'));
 });

@@ -35,6 +35,8 @@ const DEFAULTS = Object.freeze({
   IMAGE_SILICONFLOW_MODEL: 'Kwai-Kolors/Kolors',
   ZHIPU_API_KEY: '',
   IMAGE_ZHIPU_MODEL: 'cogview-3-flash',
+  MODELSCOPE_API_KEY: '',
+  IMAGE_MODELSCOPE_MODEL: 'Tongyi-MAI/Z-Image-Turbo',
   // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
   IMAGE_LOCAL_PYTHON: '',
   IMAGE_HF_HOME: '',
@@ -92,7 +94,7 @@ function isMock(value) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
 }
 
-const IMAGE_PROVIDERS = Object.freeze(['siliconflow', 'zhipu', 'gateway', 'local']);
+const IMAGE_PROVIDERS = Object.freeze(['siliconflow', 'modelscope', 'zhipu', 'gateway', 'local']);
 
 function normalizeProviders(value) {
   const parts = String(value == null ? '' : value).toLowerCase().split(/[,\s]+/).filter(Boolean);
