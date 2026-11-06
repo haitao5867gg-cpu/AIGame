@@ -106,6 +106,12 @@
   var undoArmTimer = null;
   // 当前玩家偏好：/api/me 的 prefs.scenes（默认开），用量面板据此初始化开关。
   var myPrefs = { scenes: true };
+  // 朗读偏好（缺省值，/api/me 返回后由 renderPlayerInfo 覆盖）。
+  myPrefs.tts = {
+    narrator: 'zh-CN-YunxiNeural',
+    npcDefault: { m: 'zh-CN-YunjianNeural', f: 'zh-CN-XiaoxiaoNeural', old: 'zh-CN-YunyeNeural', young: 'zh-CN-YunxiNeural' },
+    npcVoices: {}, speed: 1, auto: false,
+  };
   // 图片：/images 状态、当前世界、轮询
   var imageState = { items: {}, npcs: {}, scenes: {}, hero: {} };
   var imageWorldId = null;

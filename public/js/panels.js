@@ -108,6 +108,9 @@
     sceneSec.appendChild(sceneRow);
     box.appendChild(sceneSec);
 
+    // ---- 朗读设置（主人和来客都显示）：音色列表取自 /api/tts/voices ----
+    if (typeof Tts !== 'undefined') Tts.renderSettings(box, d);
+
     // ---- 今日对话 token ----
     var t = d.tokens || {};
     var sec1 = el('div', 'usage-sec');
@@ -212,6 +215,7 @@
   function renderPlayerInfo(me) {
     if (!me) return;
     if (me.prefs && typeof me.prefs.scenes === 'boolean') myPrefs.scenes = me.prefs.scenes;
+    if (me.prefs && me.prefs.tts && typeof me.prefs.tts === 'object') myPrefs.tts = me.prefs.tts;
     var label = me.host ? '主人' : ('玩家：' + me.name);
     $('home-player-name').textContent = label;
     $('g-player-name').textContent = label;

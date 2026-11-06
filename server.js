@@ -328,10 +328,13 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return;
   }
   if (pathname === '/api/tts/voices' && method === 'GET') {
+    const month = runtime.tts.monthUsage();
     return sendJson(res, 200, {
-      configured: runtime.tts.isConfigured(),
+      configured: runtime.tts.isConfigured() && !month.exhausted,
+      exhausted: month.exhausted,
       voices: ttsMod.VOICES,
       moods: Object.keys(ttsMod.MOODS),
+      month: { used: month.used, limit: month.limit, stopAt: month.stopAt },
     });
   }
 
@@ -350,6 +353,12 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     const st = images.providerStatus();
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
+    const mth = runtime.tts.monthUsage();
+    u.tts = {
+      monthUsed: mth.used,
+      monthLimit: mth.limit,
+      todayChars: runtime.tts.todayChars(player.id),
+    };
     const cfLimit = Number(cfg.CLOUDFLARE_DAILY_NEURONS) || 10000;
     const cfReserve = Number(cfg.CLOUDFLARE_RESERVE_FROM) || 7000;
     const cfUsed = llmMod.cloudflareNeuronsToday(store.readJsonl(store.usagePath(dataDir)), now);

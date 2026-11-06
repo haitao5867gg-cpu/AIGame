@@ -115,17 +115,27 @@ function utc8DayKey(ts) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
+// UTC 月键：月度额度按自然月（UTC）统计，跨月自动清零、无需存状态。
+function utcMonthKey(ts) {
+  const d = new Date(Number(ts));
+  if (Number.isNaN(d.getTime())) return 'invalid';
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
 function createTts(cfg, dataDir, opts) {
   const c = cfg || {};
   const o = opts || {};
   const key = String(c.AZURE_SPEECH_KEY || '');
   const region = String(c.AZURE_SPEECH_REGION || '');
   const dailyLimit = Number(c.TTS_PLAYER_DAILY_CHARS);
+  const monthlyLimit = Number.isFinite(Number(c.TTS_MONTHLY_CHARS)) ? Number(c.TTS_MONTHLY_CHARS) : 500000;
+  const monthlyStopAt = Number.isFinite(Number(c.TTS_MONTHLY_STOP_AT)) ? Number(c.TTS_MONTHLY_STOP_AT) : 450000;
   const rawMax = Number(c.TTS_CACHE_MAX_MB);
   const maxBytes = Number.isFinite(rawMax) && rawMax > 0 ? rawMax * MB : 0;
   const ttsDir = path.join(dataDir, CACHE_DIR_NAME);
   const doFetch = o.fetchImpl || ((...args) => globalThis.fetch(...args));
   const now = o.now || (() => Date.now());
+  let cooldownUntil = 0; // Azure 429 后冷却到的时间戳
 
   function isConfigured() {
     return Boolean(key && region);
@@ -157,6 +167,30 @@ function createTts(cfg, dataDir, opts) {
       if (Number.isFinite(n)) total += n;
     }
     return total;
+  }
+
+  // 本月（UTC 月）所有玩家、所有非缓存 tts 字数之和；cached:true 不计。
+  function usedCharsThisMonth(at) {
+    let rows = [];
+    try { rows = store.readJsonl(store.usagePath(dataDir)); } catch (_) { return 0; }
+    const mk = utcMonthKey(at);
+    let total = 0;
+    for (const r of rows) {
+      if (!r || r.kind !== 'tts' || r.cached === true) continue;
+      if (utcMonthKey(r.ts) !== mk) continue;
+      const n = Number(r.chars);
+      if (Number.isFinite(n)) total += n;
+    }
+    return total;
+  }
+
+  function monthUsage() {
+    const used = usedCharsThisMonth(now());
+    return { used, limit: monthlyLimit, stopAt: monthlyStopAt, exhausted: used >= monthlyStopAt };
+  }
+
+  function todayChars(playerId) {
+    return usedCharsToday(playerId == null ? '' : String(playerId), now());
   }
 
   // 缓存总大小超过上限时，按修改时间删最旧的 mp3，直到降到 80%；
@@ -198,9 +232,17 @@ function createTts(cfg, dataDir, opts) {
       return audio;
     }
 
+    // Azure 429 冷却：期间直接抛 fallback，让前端改用浏览器朗读，不再打 Azure。
+    if (now() < cooldownUntil) {
+      throw { status: 503, expose: true, fallback: true, message: '朗读服务繁忙，已改用浏览器朗读' };
+    }
     if (!isConfigured()) throw { status: 503, expose: true, message: '朗读服务未配置' };
 
     const chars = text.length;
+    // 月度额度（F0 免费 50 万/月）：按 UTC 月统计，达到 stopAt 即停用 Azure，下月自动恢复。
+    if (usedCharsThisMonth(now()) >= monthlyStopAt) {
+      throw { status: 503, expose: true, fallback: true, message: '本月朗读额度已用完，已改用浏览器朗读' };
+    }
     if (playerId !== 'host' && Number.isFinite(dailyLimit) && dailyLimit > 0 &&
         usedCharsToday(playerId, now()) + chars > dailyLimit) {
       throw { status: 429, expose: true, message: '今日朗读字数已达上限' };
@@ -209,17 +251,26 @@ function createTts(cfg, dataDir, opts) {
     const ssml = ssmlFromNormalized(np, text);
     const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
     const t0 = now();
-    const resp = await doFetch(url, {
-      method: 'POST',
-      headers: {
-        'Ocp-Apim-Subscription-Key': key,
-        'Content-Type': 'application/ssml+xml',
-        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-        'User-Agent': 'aigame',
-      },
-      body: ssml,
-    });
-    if (!resp || !resp.ok) throw { status: 502, expose: true, message: '朗读合成失败' };
+    let resp;
+    try {
+      resp = await doFetch(url, {
+        method: 'POST',
+        headers: {
+          'Ocp-Apim-Subscription-Key': key,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+          'User-Agent': 'aigame',
+        },
+        body: ssml,
+      });
+    } catch (_) {
+      throw { status: 502, expose: true, fallback: true, message: '朗读合成失败' };
+    }
+    if (resp && resp.status === 429) {
+      cooldownUntil = now() + 20000;
+      throw { status: 503, expose: true, fallback: true, message: '朗读服务繁忙，已改用浏览器朗读' };
+    }
+    if (!resp || !resp.ok) throw { status: 502, expose: true, fallback: true, message: '朗读合成失败' };
     const ab = await resp.arrayBuffer();
     const audio = Buffer.from(ab);
     try {
@@ -231,7 +282,7 @@ function createTts(cfg, dataDir, opts) {
     return audio;
   }
 
-  return { synth, buildSsml, isConfigured, pruneCache, VOICES, MOODS, DEFAULT_VOICE };
+  return { synth, buildSsml, isConfigured, pruneCache, monthUsage, todayChars, VOICES, MOODS, DEFAULT_VOICE };
 }
 
 module.exports = {

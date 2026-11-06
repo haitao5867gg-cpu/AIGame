@@ -314,3 +314,14 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   .item-card-title{font-size:20px}
   .item-card-desc{font-size:15px}
 }
+
+/* 朗读：每段叙事右侧小喇叭（放在 p 的右侧留白槽里，文字列宽稳定、不被挤压） */
+p.has-tts-btn{position:relative;padding-right:42px}
+.tts-read-btn{position:absolute;right:0;top:2px;width:30px;height:30px;line-height:1;
+  border:1px solid var(--line,#bbb);border-radius:50%;background:transparent;color:inherit;
+  font-size:13px;cursor:pointer;padding:0}
+.tts-read-btn.tts-playing{background:var(--ink,#333);color:#fff}
+.tts-select{max-width:62%;font-size:14px}
+.tts-slider{flex:1;min-width:90px}
+.tts-speed-val{min-width:2.4em;text-align:right;font-variant-numeric:tabular-nums}
+@media(max-width:600px){.tts-read-btn{width:34px;height:34px;font-size:15px}}

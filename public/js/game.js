@@ -1,4 +1,6 @@
 'use strict';
+  // 当前正在渲染回合的朗读提示（voice_hints），供 appendNarration 给每段叙事挂喇叭。
+  var currentVoiceHints = [];
   // 导出世界：GET 附件接口，用临时 <a download> 触发下载，不跳转页面。
   function exportWorld(id) {
     var a = document.createElement('a');
@@ -210,7 +212,9 @@
       frame.setAttribute('data-scene', sceneId);
       wrap.appendChild(frame);
     }
+    var paras = [];
     splitNarration(text).forEach(function (para) {
+      paras.push(para);
       wrap.appendChild(el('p', 'narration', para));
     });
     if (badges && badges.length) {
@@ -219,7 +223,23 @@
       wrap.appendChild(bd);
     }
     $('stream').appendChild(wrap);
+    var buttons = attachReadButtons(wrap, paras, currentVoiceHints);
     scrollBottom();
+    return { paras: paras, buttons: buttons, hints: currentVoiceHints, wrap: wrap };
+  }
+
+  // 给叙事块里每个 <p class="narration"> 挂朗读按钮（放进 p 右侧留白槽，由 app.css 定位）。
+  function attachReadButtons(wrap, paras, hints) {
+    var buttons = [];
+    if (typeof Tts === 'undefined') return buttons;
+    var ps = wrap.querySelectorAll('p.narration');
+    for (var i = 0; i < ps.length && i < paras.length; i++) {
+      ps[i].className += ' has-tts-btn';
+      var b = Tts.makeReadButton(paras[i], i, hints);
+      ps[i].appendChild(b);
+      buttons.push(b);
+    }
+    return buttons;
   }
 
   function appendEventCard(ev) {
@@ -251,6 +271,7 @@
     if (rec.event) appendEventCard(rec.event);
     if (rec.narration) {
       var logSceneId = (rec.scene && rec.scene.draw) ? (rec.life + '-' + rec.turn) : null;
+      currentVoiceHints = rec.voice_hints || [];
       appendNarration(rec.narration, rec.badges || [], logSceneId);
     }
     if (rec.settlement) appendSettlementCard(rec.settlement);
@@ -635,7 +656,8 @@
     if (res.event) appendEventCard(res.event);
     var sceneId = (res.scene && res.scene.draw && res.sceneKey)
       ? (res.state.life + '-' + res.state.turn) : null;
-    appendNarration(res.narration, badgesFromApplied(res.applied), sceneId);
+    currentVoiceHints = res.voice_hints || [];
+    var narr = appendNarration(res.narration, badgesFromApplied(res.applied), sceneId);
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
     renderEventBanner(res.state.activeEvent);
@@ -643,10 +665,12 @@
     setUndoVisible(!!res.state.undoAvailable);
     if (res.death) showDeath(res.state, res.death);
     requestImages();
+    if (typeof Tts !== 'undefined' && myPrefs.tts && myPrefs.tts.auto) Tts.autoRead(narr);
   }
 
   async function sendAction() {
     if (busy || !currentWorldId) return;
+    if (typeof Tts !== 'undefined') Tts.stop();
     var input = $('action-input');
     var action = input.value.trim();
     if (!action) { toast('写点什么再发送吧'); return; }

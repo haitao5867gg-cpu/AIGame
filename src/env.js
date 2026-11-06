@@ -62,15 +62,17 @@ const DEFAULTS = Object.freeze({
   // ---- 朗读（Azure 语音服务）----
   AZURE_SPEECH_KEY: '',      // 语音服务订阅密钥；留空则朗读接口返回 503
   AZURE_SPEECH_REGION: '',   // 语音服务区域，如 eastasia
-  TTS_PLAYER_DAILY_CHARS: '50000',  // 每位来客每日朗读字符上限；0 表示不限，主人 'host' 不受限
+  TTS_PLAYER_DAILY_CHARS: '10000',  // 每位来客每日朗读字符上限；0 表示不限，主人 'host' 不受限
   TTS_CACHE_MAX_MB: '300',          // 朗读音频缓存（DATA_DIR/tts/）总大小上限（MB），超出按修改时间删最旧
+  TTS_MONTHLY_CHARS: '500000',      // Azure F0 免费档每月字符额度（按 UTC 月统计）
+  TTS_MONTHLY_STOP_AT: '450000',    // 本月用量达此值即停用 Azure，留缓冲避免超 50 万；下月自动恢复
 });
 
 const NUMERIC_KEYS = Object.freeze([
   'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'LLM_PLAYER_DAILY_TOKEN_LIMIT', 'PORT',
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
   'CLOUDFLARE_DAILY_NEURONS', 'CLOUDFLARE_RESERVE_FROM',
-  'TTS_PLAYER_DAILY_CHARS', 'TTS_CACHE_MAX_MB',
+  'TTS_PLAYER_DAILY_CHARS', 'TTS_CACHE_MAX_MB', 'TTS_MONTHLY_CHARS', 'TTS_MONTHLY_STOP_AT',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
