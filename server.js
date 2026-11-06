@@ -229,14 +229,14 @@ function triggerImages(images, dataDir, state) {
   }
 }
 
-function handle(req, res, cfg, g, images, dataDir, access) {
+function handle(req, res, cfg, g, images, dataDir, access, runtime) {
   const player = access.playerOf(req);
   // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家。
   return context.run({ playerId: player ? player.id : null },
-    () => route(req, res, cfg, g, images, dataDir, access, player));
+    () => route(req, res, cfg, g, images, dataDir, access, player, runtime));
 }
 
-async function route(req, res, cfg, g, images, dataDir, access, player) {
+async function route(req, res, cfg, g, images, dataDir, access, player, runtime) {
   const method = (req.method || 'GET').toUpperCase();
   let pathname;
   let searchParams = null;
@@ -304,13 +304,13 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
     if (isHost) {
-      // host 专属字段：全局今日 token（用全局上限）、今日各玩家、访问密码、隧道地址（占位）。
+      // host 专属字段：全局今日 token（用全局上限）、今日各玩家、访问密码、临时隧道地址。
       u.global = g.usageToday().tokens;
       const names = access.playerNames();
       u.players = llmMod.summarizePlayers(store.readJsonl(store.usagePath(dataDir)), now)
         .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total }));
       u.access = { password: access.password() };
-      u.tunnel = { url: null };
+      u.tunnel = { url: runtime && runtime.tunnel ? runtime.tunnel.url() : null };
     }
     return sendJson(res, 200, u);
   }
@@ -455,14 +455,17 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
   return sendError(res, 405, '不支持该 HTTP 方法');
 }
 
-function createHttpServer(cfg) {
+function createHttpServer(cfg, opts) {
+  const o = opts || {};
   const dataDir = env.resolveDataDir(cfg);
   const g = game.createGame(cfg, dataDir);
   const images = imagesMod.createImages(cfg);
   const access = accessMod.createAccess(cfg, dataDir);
+  // 隧道在 server.listen 之后才启动，用可写 holder 让路由拿到最新 tunnel（测试可经 opts.tunnel 注入）。
+  const runtime = { tunnel: o.tunnel || null };
   const server = http.createServer((req, res) => {
     Promise.resolve()
-      .then(() => handle(req, res, cfg, g, images, dataDir, access))
+      .then(() => handle(req, res, cfg, g, images, dataDir, access, runtime))
       .catch((err) => {
         const status = (err && err.expose && err.status) || 500;
         const message = err && err.expose && err.message ? err.message : '服务器内部错误';
@@ -470,6 +473,8 @@ function createHttpServer(cfg) {
         else res.end();
       });
   });
+  server.access = access;
+  server.setTunnel = (t) => { runtime.tunnel = t; };
   return server;
 }
 
@@ -485,6 +490,12 @@ if (require.main === module) {
       `无限世界服务已启动： http://${cfg.HOST}:${port}（mock=${cfg.LLM_MOCK}）\n`,
     );
     require('./src/imgsupervisor.js').startImageSupervisor(cfg);
+    // 自动启动 Cloudflare 临时隧道；未启动时返回 null，setTunnel 接受 null。
+    const tunnel = require('./src/tunnel.js').startTunnel(cfg, {
+      port,
+      hasPassword: () => server.access.hasPassword(),
+    });
+    server.setTunnel(tunnel);
   });
 }
 

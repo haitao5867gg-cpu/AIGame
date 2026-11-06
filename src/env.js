@@ -26,6 +26,10 @@ const DEFAULTS = Object.freeze({
   DATA_DIR: './data',
   // 公网来客访问密码；留空则首次启动自动生成 6 位数字，与 HMAC 密钥一起存入 data/access.json。
   ACCESS_PASSWORD: '',
+  // ---- 朋友访问：自动启动 Cloudflare 临时隧道（见 src/tunnel.js）----
+  // TUNNEL=off 表示不启动；CLOUDFLARED_PATH 留空则自动查找 cloudflared。
+  TUNNEL: 'on',
+  CLOUDFLARED_PATH: '',
   // ---- 图片生成（第 7 节）----
   // 出图提供方，可写成逗号分隔的回退链，如 siliconflow,zhipu,local（前一家失败就换下一家）。
   // 可选：siliconflow（硅基流动 Kolors，免费）| zhipu（智谱 cogview-3-flash，免费）| gateway（付费）| local | off
