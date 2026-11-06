@@ -14,6 +14,7 @@ const accessMod = require('./src/access.js');
 const context = require('./src/context.js');
 const store = require('./src/store.js');
 const llmMod = require('./src/llm.js');
+const prefs = require('./src/prefs.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -179,6 +180,7 @@ async function handleStreamTurn(req, res, g, id, images, dataDir) {
     const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }));
     // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
     triggerImages(images, dataDir, result && result.state);
+    if (result) result.sceneKey = triggerScene(images, dataDir, result);
     sseEvent(res, 'result', result);
     res.end();
   } catch (err) {
@@ -226,6 +228,19 @@ function triggerImages(images, dataDir, state) {
     images.ensureImages(dataDir, state, images.listForState(state));
   } catch (err) {
     console.warn('[images] 触发异常（已忽略）：' + (err && err.message ? err.message : err));
+  }
+}
+
+// 只在 draw=true 的回合触发场景登记，同步拿到 12 位 key（或 null）；异常只写日志，绝不影响响应。
+function triggerScene(images, dataDir, result) {
+  if (!images || !result || !result.scene || !result.scene.draw) return null;
+  try {
+    return images.ensureScene(dataDir, result.state, {
+      turn: result.state.turn, desc: result.scene.desc,
+    });
+  } catch (err) {
+    console.warn('[images] 场景触发异常（已忽略）：' + (err && err.message ? err.message : err));
+    return null;
   }
 }
 
@@ -285,7 +300,14 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { ok: true }, { 'Set-Cookie': access.logoutCookie(req) });
   }
   if (pathname === '/api/me' && method === 'GET') {
-    return sendJson(res, 200, { id: player.id, name: player.name, host: !!(player && player.host) });
+    return sendJson(res, 200, {
+      id: player.id, name: player.name, host: !!(player && player.host),
+      prefs: prefs.getPrefs(dataDir, player.id),
+    });
+  }
+  if (pathname === '/api/prefs' && method === 'POST') {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, { prefs: prefs.setPrefs(dataDir, player.id, body) });
   }
 
   // ---- 无世界 ID 的接口 ----
@@ -373,7 +395,25 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
     if (!requireOwner(res, dataDir, id, player)) return;
     const state = await g.getWorld(id);
-    return sendJson(res, 200, images.imageList(dataDir, state));
+    const list = images.imageList(dataDir, state);
+    const idx = images.readIndex(dataDir);
+    const scenes = {};
+    for (const rec of g.listScenes(id)) {
+      const key = imagesMod.sceneKey(id, rec.life, rec.turn, rec.desc);
+      const e = idx['scene-' + key];
+      let status = 'none';
+      let url = null;
+      if (e) {
+        if (e.status === 'ready' && e.file) {
+          status = 'ready';
+          url = '/api/images/' + e.file;
+        } else if (e.status === 'pending') status = 'pending';
+        else if (e.status === 'failed') status = 'failed';
+      }
+      scenes[`${rec.life}-${rec.turn}`] = { turn: rec.turn, life: rec.life, status, url };
+    }
+    list.scenes = scenes;
+    return sendJson(res, 200, list);
   }
 
   // 图片文件：GET /api/images/<file>（严格校验文件名，长缓存）。
@@ -431,6 +471,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
       const result = await g.takeTurn(id, body);
       // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
       triggerImages(images, dataDir, result && result.state);
+      if (result) result.sceneKey = triggerScene(images, dataDir, result);
       return sendJson(res, 200, result);
     }
     if (sub === 'rebirth' && method === 'POST') {

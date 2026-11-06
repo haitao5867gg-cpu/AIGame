@@ -460,6 +460,7 @@ function createGame(cfg, dataDir) {
         move_to: out.move_to,
         time_passes: out.time_passes,
         overstep: out.overstep, // 本回合玩家行为是否越界（引擎据此累计 state.oversteps）
+        scene: out.scene, // 场景插图提议（draw/desc），交给引擎 normalizeScene 校验后写进回合结果
       };
       const data = {
         action,
@@ -647,9 +648,17 @@ function createGame(cfg, dataDir) {
     });
   }
 
+  // 当前存档「可见历史」里应当出图的场景；撤回的回合已由 visibleEventRecords 排除。
+  // sceneKey 规则放在 server.js 里算，保持 game.js 不依赖 images.js。
+  function listScenes(worldId) {
+    return visibleEventRecords(store.readEvents(dataDir, worldId))
+      .filter((e) => e && e.scene && e.scene.draw === true)
+      .map((e) => ({ turn: e.turn, life: e.life, desc: e.scene.desc }));
+  }
+
   return {
     buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
-    exportWorld, undoTurn,
+    exportWorld, undoTurn, listScenes,
   };
 }
 
