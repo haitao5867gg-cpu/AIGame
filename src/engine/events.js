@@ -1,7 +1,10 @@
 'use strict';
 
 const { ATTRS, ATTR_MIN, ATTR_MAX, GENERIC_EVENT_THEMES, TWISTS, TWIST_STREAK_THRESHOLD, TWIST_GAP_MIN, TWIST_GAP_SPAN } = require('./constants.js');
-const { clamp, toInt, unit, computeOmen } = require('./util.js');
+const { clamp, toInt, unit, computeOmen, QUIET_FOCUS } = require('./util.js');
+
+// 同一进行中事件的结算在安静模式下最多顺延的回合数，超过后照常结算。
+const MAX_QUIET_POSTPONE = 3;
 
 // ---- 事件排程 ----
 
@@ -17,9 +20,18 @@ function planTurn(state, opts) {
   // 主题为空（旧世界或异常设定）时用通用主题兜底，保证事件仍能开启。
   if (themes.length === 0) themes = GENERIC_EVENT_THEMES.slice();
   const hasActive = !!state.activeEvent;
-  const settling = hasActive && state.activeEvent.startedTurn < nextTurn;
-  const opening = !hasActive && nextTurn >= state.nextEventTurn && themes.length > 0;
-  // 风声预兆窗口：无进行中事件、距下次事件 1~2 回合。
+  // 安静模式：上一回合玩家在社交 / 私下独处 / 休息 / 亲密，或在继续同一件事。
+  // 此时不让定时事件、导演转折打断玩家正在做的事；nextEventTurn 保持不变，
+  // 等安静结束后的第一回合再按原排程开启。
+  const quiet = QUIET_FOCUS.includes(state.focus) || state.continuing === true;
+  const shouldSettle = hasActive && state.activeEvent.startedTurn < nextTurn;
+  const postpones = hasActive && Number.isInteger(state.activeEvent.postpones)
+    ? state.activeEvent.postpones : 0;
+  // 进行中事件的结算也顺延，但同一事件最多顺延 3 回合，超过后照常结算（叙事写成背景里发生）。
+  const settlePostponed = shouldSettle && quiet && postpones < MAX_QUIET_POSTPONE;
+  const settling = shouldSettle && !settlePostponed;
+  const opening = !quiet && !hasActive && nextTurn >= state.nextEventTurn && themes.length > 0;
+  // 风声预兆窗口：无进行中事件、距下次事件 1~2 回合。安静模式下照常（只是背景钩子）。
   const omen = computeOmen(state);
 
   // 提前锁定即将到来的事件主题，保证预兆回合的征兆最终对应真正开启的大事：
@@ -49,7 +61,8 @@ function planTurn(state, opts) {
   const timeHit = nextTurn >= dueTurn;
   let twist = null;
   let nextTwistTurn = null;
-  if (!eventTurn && (streakHit || timeHit)) {
+  // 安静模式不注入导演转折，sceneStreak 也不累加（由 resolveTurn 处理）。
+  if (!quiet && !eventTurn && (streakHit || timeHit)) {
     twist = TWISTS[Math.floor(unit(rng) * TWISTS.length)];
     // 本次转折后重新排下一次时间型转折（随机 9~14 回合），避免连续触发。
     nextTwistTurn = nextTurn + TWIST_GAP_MIN + Math.floor(unit(rng) * TWIST_GAP_SPAN);
@@ -57,6 +70,8 @@ function planTurn(state, opts) {
 
   return {
     nextTurn,
+    quiet,                                  // 本回合是否安静模式（供提示词使用）
+    settlePostponed,                        // 本回合把进行中事件的结算顺延了一回合
     settling,
     opening,
     theme,

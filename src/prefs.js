@@ -30,6 +30,26 @@ function readAll(dataDir) {
   return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 }
 
+// 主人总开关放在 prefs.json 的 "_global" 下（与各玩家 id 平级但独立）。
+const GLOBAL_KEY = '_global';
+function getGlobal(dataDir) {
+  const g = readAll(dataDir)[GLOBAL_KEY];
+  return g && typeof g === 'object' && !Array.isArray(g) ? g : {};
+}
+function getAdultAllowed(dataDir) {
+  return getGlobal(dataDir).adultAllowed === true;
+}
+function setGlobalAdultAllowed(dataDir, on) {
+  const all = readAll(dataDir);
+  const g = getGlobal(dataDir);
+  all[GLOBAL_KEY] = Object.assign({}, g, { adultAllowed: on === true });
+  store.atomicWriteJson(prefsPath(dataDir), all);
+}
+// 生效条件：主人总开关开 且 该玩家自己开启 adult，才对该玩家回合用「成人模式开」档。
+function adultModeOn(dataDir, playerId) {
+  return getAdultAllowed(dataDir) && getPrefs(dataDir, playerId).adult === true;
+}
+
 function clampSpeed(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return DEFAULT_TTS.speed;
@@ -76,7 +96,12 @@ function mergeTts(cur, patch) {
 function getPrefs(dataDir, playerId) {
   const id = typeof playerId === 'string' && playerId ? playerId : 'host';
   const p = readAll(dataDir)[id];
-  return { scenes: !(p && p.scenes === false), tts: normalizeTts(p && p.tts) };
+  return {
+    scenes: !(p && p.scenes === false),
+    tts: normalizeTts(p && p.tts),
+    adult: !!(p && p.adult === true),            // 该玩家是否自己开启了成人内容
+    adultAllowed: getAdultAllowed(dataDir),      // 主人总开关是否开放
+  };
 }
 
 // 只改当前玩家自己的偏好。非法 scenes 值忽略；tts 校验后再保存。
@@ -87,14 +112,22 @@ function setPrefs(dataDir, playerId, patch) {
   const cur = all[id] && typeof all[id] === 'object' ? all[id] : {};
   const next = Object.assign({}, cur);
   const hasTts = !!(patch && patch.tts && typeof patch.tts === 'object');
+  // 开启个人开关必须带 confirm18:true（HTTP 层据此返回 400，这里兜底忽略非法开启）。
+  const hasAdult = !!(patch && typeof patch.adult === 'boolean'
+    && (patch.adult === false || patch.confirm18 === true));
   if (patch && typeof patch.scenes === 'boolean') next.scenes = patch.scenes;
   if (hasTts) next.tts = mergeTts(cur.tts, patch.tts);
   else if (next.tts === undefined) next.tts = normalizeTts(null);
+  if (hasAdult) next.adult = patch.adult;
   all[id] = next;
   store.atomicWriteJson(prefsPath(dataDir), all);
   const out = { scenes: !(next.scenes === false) };
   if (hasTts) out.tts = normalizeTts(next.tts);
+  if (hasAdult) out.adult = next.adult === true;
   return out;
 }
 
-module.exports = { getPrefs, setPrefs, prefsPath, normalizeTts, DEFAULT_TTS };
+module.exports = {
+  getPrefs, setPrefs, prefsPath, normalizeTts, DEFAULT_TTS,
+  getAdultAllowed, setGlobalAdultAllowed, adultModeOn,
+};

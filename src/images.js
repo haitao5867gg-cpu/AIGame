@@ -68,6 +68,14 @@ const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh', 'bgZh', 'bgEn'];
 // 画风设定版本：新生成的条目带 v=2。为了不让老世界整体重画，旧条目（无 v）照用、缓存 key 保持旧格式。
 const ART_VERSION = 2;
 const NO_TEXT_ZH = '无文字，无印章，无书法字，无水印';
+// 出图安全：所有中文「不要出现」清单固定带上的两项；英文只用正面词描述人物着装。
+const NO_ADULT_ZH = '裸露，色情';
+const FULLY_CLOTHED_EN = 'fully clothed characters';
+function avoidClause(avoidZh) {
+  const items = [NO_ADULT_ZH];
+  if (avoidZh && typeof avoidZh === 'string' && avoidZh.trim()) items.push(avoidZh.trim());
+  return `，不要出现${items.join('，')}`;
+}
 // flux 会把提示词里提到的东西画出来：写「no calligraphy / no seal stamps」反而招来题字和印章，
 // 「rice paper」也会带出国画题款。所以英文只用正面描述：干净空白背景、无落款。
 const NO_TEXT_EN = 'clean empty background, unsigned';
@@ -243,7 +251,7 @@ function gatewayPrompt(job) {
   const title = job.bibleTitle || '';
   const art = st.artZh || st.zh;
   const world = `世界背景：${title}${st.eraZh ? '，' + st.eraZh : ''}`;
-  const avoid = st.avoidZh ? `，不要出现${st.avoidZh}` : '';
+  const avoid = avoidClause(st.avoidZh);
   const bg = st.bgZh || DEFAULT_STYLE.bgZh;
   if (job.kind === 'npc' || job.kind === 'hero') {
     // 主角形象图走 NPC 一样的半身像链路，只是把名字换成「主角」+ 外貌。
@@ -286,7 +294,7 @@ function scenePromptZh(job) {
   }
   const tone = String(st.bgZh || DEFAULT_STYLE.bgZh).replace(/背景/g, '');
   s += `电影感构图，横幅画面，${tone}色调，无文字，无印章，无水印`;
-  if (st.avoidZh) s += `，不要出现${st.avoidZh}`;
+  s += avoidClause(st.avoidZh);
   return s;
 }
 
@@ -295,7 +303,7 @@ function scenePromptEn(enDesc, style) {
   const st = style || {};
   const desc = String(enDesc == null ? '' : enDesc).replace(/[.。\s]+$/, '');
   const era = st.eraEn ? `, ${st.eraEn} style` : '';
-  return `${st.en || ''}. ${desc}${era}, period-accurate clothing and objects, `
+  return `${st.en || ''}. ${desc}${era}, period-accurate clothing and objects, ${FULLY_CLOTHED_EN}, `
     + 'cinematic wide composition, atmospheric lighting, clean image, unsigned';
 }
 
@@ -927,7 +935,7 @@ function createImages(cfg, opts) {
       + (hasItem ? ' and the item exactly as in its reference image' : '');
     const prompt = `${st.en || ''}. Wide cinematic 16:9 scene, ${eraEn} style. ${enDesc}. `
       + `In the scene: ${parts.join('; ')}. ${keep}. `
-      + 'Period-accurate setting, atmospheric lighting, clean image, unsigned.';
+      + `Period-accurate setting, ${FULLY_CLOTHED_EN}, atmospheric lighting, clean image, unsigned.`;
     const { bytes, neurons } = await callCloudflareRefs(prompt, job.refs);
     return {
       bytes, prompt, enPrompt: enDesc, provider: 'cloudflare', model: sceneRefModel,

@@ -28,6 +28,11 @@ var Tts = (function () {
     return (typeof myPrefs !== 'undefined' && myPrefs && myPrefs.tts) ? myPrefs.tts : FRONT_TTS_DEFAULT;
   }
 
+  // 当前回合是否成人内容：公开状态带 adult 标记，由 renderResult 写入全局 currentState。
+  function adultTurnActive() {
+    return typeof currentState !== 'undefined' && currentState !== null && currentState.adult === true;
+  }
+
   function resetBtn() {
     if (currentBtn) {
       currentBtn.textContent = '▶';
@@ -131,7 +136,8 @@ var Tts = (function () {
   }
 
   // 播放一段：POST /api/tts 拿 audio/mpeg；503 / 429 / 网络错误时退回浏览器 speechSynthesis。
-  async function speak(text, params, btn) {
+  // adult 由按钮/自动朗读在创建时捕获；试听等直接调用（不传 adult）按当前回合状态判定。
+  async function speak(text, params, btn, adult) {
     stopPlayback();
     var myGen = gen;
     if (btn) {
@@ -139,6 +145,11 @@ var Tts = (function () {
       btn.textContent = '■';
       btn.setAttribute('aria-label', '停止朗读');
       btn.className += ' tts-playing';
+    }
+    // 成人（18+）回合：只用浏览器 speechSynthesis，绝不把成人内容发到 /api/tts。
+    if (adult === undefined ? adultTurnActive() : adult === true) {
+      if (myGen === gen) await browserSpeak(text, params, myGen);
+      return;
     }
     var res;
     try {
@@ -197,26 +208,27 @@ var Tts = (function () {
     if (!autoQueue || autoQueue !== q) return;
     var i = q.index;
     if (i >= q.paras.length) { autoQueue = null; return; }
-    speak(q.paras[i], paramsForParagraph(q.hints, i), q.buttons[i] || null);
+    speak(q.paras[i], paramsForParagraph(q.hints, i), q.buttons[i] || null, q.adult);
   }
 
   // 自动朗读新回合：从第一段顺序读到最后一段；任意停止 / 新行动都会清空队列。
   function autoRead(narr) {
     if (!narr || !narr.paras || !narr.paras.length) return;
     stop();
-    autoQueue = { paras: narr.paras, hints: narr.hints || [], buttons: narr.buttons || [], index: 0 };
+    autoQueue = { paras: narr.paras, hints: narr.hints || [], buttons: narr.buttons || [], adult: adultTurnActive(), index: 0 };
     playAutoNext(autoQueue);
   }
 
   // 每段叙事右侧的小喇叭；播放时变 ■ 可停止。
   function makeReadButton(text, paraIndex, hints) {
     var b = el('button', 'tts-read-btn', '▶');
+    var adult = adultTurnActive(); // 在按钮创建时记住本回合是否成人内容
     b.type = 'button';
     b.setAttribute('aria-label', '朗读这一段');
     b.addEventListener('click', function () {
       if (currentBtn === b) { stop(); return; }
       autoQueue = null; // 手动点某段即退出自动朗读
-      speak(text, paramsForParagraph(hints, paraIndex), b);
+      speak(text, paramsForParagraph(hints, paraIndex), b, adult);
     });
     return b;
   }

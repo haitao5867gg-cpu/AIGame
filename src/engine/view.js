@@ -32,6 +32,7 @@ function toPublicTurnResult(result, state) {
     death: result.death,
     scene: result.scene || { draw: false },
     voice_hints: Array.isArray(result.voice_hints) ? result.voice_hints : [],
+    adult: result.adult === true, // 成人回合标记：前端据此只用浏览器朗读
     state: toPublicState(state),
   };
 }

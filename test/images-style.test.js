@@ -30,7 +30,7 @@ test('画风设定：LLM 生成一次写入 styles.json，提示词带画风 / �
   assert.equal(styles.wart.v, 2);
   const body = calls[0].body;
   assert.match(body.prompt, /^中国古风水墨仙侠插画。世界背景：杂役百年，中国古代修仙宗门。游戏道具图标：旧铜灯，该时代的器物/);
-  assert.match(body.prompt, /米白宣纸色背景，无文字，无印章，无书法字，无水印，不要出现现代物品，霓虹，赛博朋克$/);
+  assert.match(body.prompt, /米白宣纸色背景，无文字，无印章，无书法字，无水印，不要出现裸露，色情，现代物品，霓虹，赛博朋克$/);
   assert.match(body.negative_prompt, /^文字，印章，书法，落款，/);
   assert.match(body.negative_prompt, /现代物品，霓虹，赛博朋克$/);
   const e = Object.values(images.readIndex(dataDir))[0];

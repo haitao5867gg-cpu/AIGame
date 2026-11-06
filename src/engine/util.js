@@ -212,6 +212,10 @@ function normalizeState(state) {
     s.nextTwistTurn = baseTurn + TWIST_GAP_MIN + 3; // 老存档给一个合理间隔，不立刻触发
   }
   if (!Number.isInteger(s.oversteps) || s.oversteps < 0) s.oversteps = 0;
+  // 玩家意图 / 成人标记：老存档缺字段补默认，避免 undefined 参与 quiet 判定。
+  if (!FOCUS_VALUES.includes(s.focus)) s.focus = 'action';
+  if (typeof s.continuing !== 'boolean') s.continuing = false;
+  if (typeof s.adult !== 'boolean') s.adult = false;
   if (s.character && typeof s.character === 'object' && !Array.isArray(s.character.marks)) {
     s.character.marks = [];
   }
@@ -345,6 +349,24 @@ function cleanDialogueTics(text) {
   });
 }
 
+// 玩家意图字段校验：focus 只能取白名单之一，非法 / 缺省当 action；
+// continuing 仅 true 为真，其余（含字符串 / 数字 / 缺省）当 false。
+// 入参为整份提议（含 focus / continuing），返回可直接入库的 {focus, continuing}。
+const FOCUS_VALUES = Object.freeze(['action', 'explore', 'travel', 'social', 'private', 'rest', 'intimate']);
+const QUIET_FOCUS = Object.freeze(['social', 'private', 'rest', 'intimate']);
+function normalizeFocus(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    focus: FOCUS_VALUES.includes(src.focus) ? src.focus : 'action',
+    continuing: src.continuing === true,
+  };
+}
+
+// 成人内容标记：仅布尔 true 为真，其余当 false。
+function normalizeAdult(value) {
+  return value === true;
+}
+
 module.exports = {
   clamp,
   cleanDialogueTics,
@@ -355,6 +377,10 @@ module.exports = {
   isInternalReject,
   computeOmen,
   computeDanger,
+  FOCUS_VALUES,
+  QUIET_FOCUS,
+  normalizeFocus,
+  normalizeAdult,
   normalizeRumor,
   normalizeScene,
   normalizeFact,

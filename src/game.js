@@ -9,6 +9,8 @@ const store = require('./store.js');
 const engine = require('./engine.js');
 const llm = require('./llm.js');
 const prompts = require('./prompts.js');
+const prefs = require('./prefs.js');
+const context = require('./context.js');
 
 // 带状态码的可暴露错误；server.js 统一转成 {error:"中文说明"}。
 class HttpError extends Error {
@@ -503,6 +505,8 @@ function createGame(cfg, dataDir) {
       );
 
       const usages = [];
+      // 成人模式按当前请求的玩家判定：主人总开关开 且 该玩家 adult 为 true 才用「开」档。
+      const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
 
       // 1) 主回合调用：叙事 + 提议 + （开启事件时）event / （结算事件时）event_check。
       const turnCtx = {
@@ -514,7 +518,7 @@ function createGame(cfg, dataDir) {
       };
       const tp = await callTurnParsed(
         'turn', turnModel,
-        prompts.buildTurnMessages(state, plan, action),
+        prompts.buildTurnMessages(state, plan, action, { adult: adultPrompt }),
         turnCtx, usages, onDelta,
       );
       const out = tp.parsed;
@@ -538,6 +542,9 @@ function createGame(cfg, dataDir) {
         overstep: out.overstep, // 本回合玩家行为是否越界（引擎据此累计 state.oversteps）
         scene: out.scene, // 场景插图提议（draw/desc），交给引擎 normalizeScene 校验后写进回合结果
         voice_hints: out.voice_hints, // 朗读提示，交给引擎 normalizeVoiceHints 校验
+        focus: out.focus, // 玩家本回合在做的事（安静模式判定用）
+        continuing: out.continuing, // 是否继续上一回合同一件事（安静模式判定用）
+        adult: out.adult, // 本回合是否含成人露骨内容
       };
       const data = {
         action,
@@ -627,6 +634,7 @@ function createGame(cfg, dataDir) {
         twist: resolved.result.twist || null, // 导演转折只进 events.jsonl，不进公开状态 / 公开 log
         scene: resolved.result.scene || null,
         voice_hints: resolved.result.voice_hints || [],
+        adult: resolved.result.adult === true,
         usage: usageAgg,
         ts: resolved.result.ts,
       });

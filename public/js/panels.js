@@ -108,6 +108,69 @@
     sceneSec.appendChild(sceneRow);
     box.appendChild(sceneSec);
 
+    // ---- 成人内容（18+）：主人看两项，来客只看「我自己开启」----
+    var adultSec = el('div', 'usage-sec');
+    adultSec.appendChild(el('h4', null, '成人内容（18+）'));
+    if (isHost) {
+      var globalRow = el('label', 'usage-friend-row');
+      var globalCb = el('input');
+      globalCb.type = 'checkbox';
+      globalCb.checked = !!myPrefs.adultAllowed;
+      globalRow.appendChild(globalCb);
+      globalRow.appendChild(el('span', '', '允许成人内容（总开关）'));
+      globalCb.addEventListener('change', function () {
+        var wanted = globalCb.checked;
+        api('/api/prefs', {
+          method: 'POST',
+          body: JSON.stringify({ adultAllowed: wanted }),
+        }).then(function (r) {
+          var on = (r && r.prefs && typeof r.prefs.adultAllowed === 'boolean') ? r.prefs.adultAllowed : wanted;
+          myPrefs.adultAllowed = on;
+          globalCb.checked = on;
+          toast(on ? '已开放成人内容（总开关）' : '已关闭成人内容（总开关）');
+        }).catch(function (err) {
+          globalCb.checked = !wanted;
+          toast(err.message || '设置失败');
+        });
+      });
+      adultSec.appendChild(globalRow);
+    }
+    var selfRow = el('label', 'usage-friend-row');
+    var selfCb = el('input');
+    selfCb.type = 'checkbox';
+    selfRow.appendChild(selfCb);
+    selfRow.appendChild(el('span', '', '我自己开启'));
+    // 来客在主人总开关关闭时不可用，并注明原因。
+    var adultBlocked = !isHost && !myPrefs.adultAllowed;
+    if (adultBlocked) {
+      selfCb.checked = false;
+      selfCb.disabled = true;
+      selfRow.appendChild(el('span', 'usage-sub', '主人未开放'));
+    } else {
+      selfCb.checked = !!myPrefs.adult;
+    }
+    selfCb.addEventListener('change', function () {
+      var wanted = selfCb.checked;
+      if (wanted && !window.confirm('我已年满 18 岁，同意查看成人内容')) {
+        selfCb.checked = false;
+        return;
+      }
+      api('/api/prefs', {
+        method: 'POST',
+        body: JSON.stringify({ adult: wanted, confirm18: true }),
+      }).then(function (r) {
+        var on = (r && r.prefs && typeof r.prefs.adult === 'boolean') ? r.prefs.adult : wanted;
+        myPrefs.adult = on;
+        selfCb.checked = on;
+        toast(on ? '已开启成人内容' : '已关闭成人内容');
+      }).catch(function (err) {
+        selfCb.checked = !wanted;
+        toast(err.message || '设置失败');
+      });
+    });
+    adultSec.appendChild(selfRow);
+    box.appendChild(adultSec);
+
     // ---- 朗读设置（主人和来客都显示）：音色列表取自 /api/tts/voices ----
     if (typeof Tts !== 'undefined') Tts.renderSettings(box, d);
 
@@ -216,6 +279,8 @@
     if (!me) return;
     if (me.prefs && typeof me.prefs.scenes === 'boolean') myPrefs.scenes = me.prefs.scenes;
     if (me.prefs && me.prefs.tts && typeof me.prefs.tts === 'object') myPrefs.tts = me.prefs.tts;
+    if (me.prefs && typeof me.prefs.adult === 'boolean') myPrefs.adult = me.prefs.adult;
+    if (me.prefs && typeof me.prefs.adultAllowed === 'boolean') myPrefs.adultAllowed = me.prefs.adultAllowed;
     var label = me.host ? '主人' : ('玩家：' + me.name);
     $('home-player-name').textContent = label;
     $('g-player-name').textContent = label;

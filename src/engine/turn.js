@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
-const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
+const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, normalizeFocus, normalizeAdult, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
 const { apexConditionMet, applyDeath } = require('./life.js');
@@ -49,6 +49,13 @@ function resolveTurn(state, input, opts) {
   const nextTurn = plan.nextTurn;
   s.turn = nextTurn;
 
+  // 玩家意图 / 成人标记：消毒后写入公开状态，供下一回合 planTurn 判定安静模式、前端朗读判定。
+  const nf = normalizeFocus(prop);
+  s.focus = nf.focus;
+  s.continuing = nf.continuing;
+  const adult = normalizeAdult(prop.adult);
+  s.adult = adult;
+
   // 越界累计：仅当回合 JSON 明确判定 overstep:true 才 +1（升级阶梯由 prompt 按累计次数给出）。
   if (prop.overstep === true) {
     s.oversteps = (Number.isInteger(s.oversteps) ? s.oversteps : 0) + 1;
@@ -67,6 +74,12 @@ function resolveTurn(state, input, opts) {
   } else if (plan.omen && plan.pendingEventTheme) {
     // 预兆回合：提前锁定主题，供后续预兆回合与真正开事件时使用。
     s.pendingEventTheme = plan.pendingEventTheme;
+  }
+  // 安静模式顺延结算：给进行中事件累计一次 postpones，超过 3 次后 planTurn 会照常结算。
+  if (plan.settlePostponed && s.activeEvent) {
+    s.activeEvent = Object.assign({}, s.activeEvent, {
+      postpones: (Number.isInteger(s.activeEvent.postpones) ? s.activeEvent.postpones : 0) + 1,
+    });
   }
 
   // 应用已消毒的提议
@@ -231,22 +244,27 @@ function resolveTurn(state, input, opts) {
   // 触发转折的回合是明显的大事，sceneStreak 清零、记录 lastTwistTurn、重排 nextTwistTurn；
   // 转折词只随 result 写入 events.jsonl，绝不进入公开状态 / 公开回合结果。
   const twist = (plan && typeof plan.twist === 'string' && plan.twist) ? plan.twist : null;
+  const prevStreak = Number.isInteger(state.sceneStreak) ? state.sceneStreak : 0;
   if (twist) {
     s.sceneStreak = 0;
     s.lastTwistTurn = nextTurn;
     s.nextTwistTurn = (plan && Number.isInteger(plan.nextTwistTurn))
       ? plan.nextTwistTurn
       : (nextTurn + TWIST_GAP_MIN + 3);
+  } else if (plan && plan.quiet) {
+    // 安静模式：原地打转计数保持不变，既不累加也不清零，供安静结束后继续按原节奏判定。
+    s.sceneStreak = prevStreak;
   } else {
     // 原地打转 = 地点没变 且 本回合没有 new_facts / threads 变化；否则清零重新计数。
     const boring = !moveTo && factsAdded === 0 && !threadsChanged;
-    const prevStreak = Number.isInteger(state.sceneStreak) ? state.sceneStreak : 0;
     s.sceneStreak = boring ? prevStreak + 1 : 0;
   }
 
   // 关键回合（开启新事件 / 事件结算 / 死亡）强制出图，其余回合按 proposal.scene 决定。
   const forced = !!(openedEvent || settlement || death);
   const scene = normalizeScene(prop.scene, forced);
+  // 亲密 / 成人回合不出图：焦点是玩家与 NPC 的相处，不生成场景插图。
+  if (nf.focus === 'intimate' || adult) scene.draw = false;
 
   const result = {
     turn: nextTurn,
@@ -263,6 +281,7 @@ function resolveTurn(state, input, opts) {
     death,
     scene,
     voice_hints: normalizeVoiceHints(prop.voice_hints), // 朗读提示：坏数据不影响回合
+    adult,          // 本回合是否含成人露骨内容：进公开结果 / events 记录，供前端朗读判定
     apex: apexInfo, // 仅用于 events.jsonl 内部记录，接口返回前必须过滤
     twist,          // 本回合强制转折，仅写入 events.jsonl，绝不进公开状态 / 公开回合结果
     needChapter: !!(plan.needChapter && !chapter),

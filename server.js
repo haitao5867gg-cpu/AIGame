@@ -312,12 +312,29 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
   }
   if (pathname === '/api/prefs' && method === 'POST') {
     const body = await readJsonBody(req);
-    return sendJson(res, 200, { prefs: prefs.setPrefs(dataDir, player.id, body) });
+    // 成人内容总开关只有主人能改，来客一律 403。
+    if (body && typeof body.adultAllowed === 'boolean') {
+      if (!(player && player.host)) {
+        return sendJson(res, 403, { error: '只有主人能修改成人内容总开关' });
+      }
+      prefs.setGlobalAdultAllowed(dataDir, body.adultAllowed);
+    }
+    // 开启个人成人开关必须同时带 confirm18:true，否则 400。
+    if (body && body.adult === true && body.confirm18 !== true) {
+      return sendJson(res, 400, { error: '开启成人内容需要确认已年满 18 岁' });
+    }
+    const out = prefs.setPrefs(dataDir, player.id, body);
+    if (body && typeof body.adultAllowed === 'boolean') out.adultAllowed = prefs.getAdultAllowed(dataDir);
+    return sendJson(res, 200, { prefs: out });
   }
 
   // ---- 朗读（Azure 语音服务）：需登录，错误按 status 返回 JSON ----
   if (pathname === '/api/tts' && method === 'POST') {
     const body = await readJsonBody(req);
+    // 成人回合的段落只走浏览器 speechSynthesis，服务端不合成成人内容。
+    if (body && body.adult === true) {
+      return sendJson(res, 400, { error: '成人内容不提供服务端朗读' });
+    }
     const audio = await runtime.tts.synth(Object.assign({}, body, { playerId: player.id }));
     res.writeHead(200, {
       'Content-Type': 'audio/mpeg',
