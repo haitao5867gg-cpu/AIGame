@@ -30,12 +30,14 @@ function showPrologue(title, prologue, onStart) {
     if (closed) return;
     closed = true;
     if (mask.parentNode) mask.parentNode.removeChild(mask);
+    syncBodyScrollLock(); // 关闭后恢复背景滚动
     if (typeof onStart === 'function') onStart();
   }
 
   var btn = el('button', 'btn primary prologue-start', onStart ? '开始' : '继续');
   btn.addEventListener('click', close);
   card.appendChild(btn);
+  card.appendChild(sheetCloseButton(close)); // 手机 bottom sheet 右上角关闭 ×
 
   // 点遮罩空白处（非卡片内）关闭，等同点按钮。
   mask.addEventListener('click', function (e) {
@@ -44,5 +46,6 @@ function showPrologue(title, prologue, onStart) {
 
   mask.appendChild(card);
   document.body.appendChild(mask);
+  syncBodyScrollLock(); // 手机：打开弹层锁定背景滚动
   return mask;
 }

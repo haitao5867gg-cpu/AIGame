@@ -68,8 +68,13 @@
   }
 
   function scrollBottom() {
-    var s = $('stream');
-    s.scrollTop = s.scrollHeight;
+    if (window.innerWidth <= 600) {
+      // 手机：叙事区不再内嵌滚动、整页自然滚动 → 滚到文档底部（输入区固定在底部仍可见）
+      window.scrollTo(0, document.documentElement.scrollHeight);
+    } else {
+      var s = $('stream');
+      s.scrollTop = s.scrollHeight;
+    }
   }
 
   async function showGame(id) {
@@ -127,6 +132,7 @@
     $('g-title').textContent = (s.bible && s.bible.title) || '无限世界';
     $('g-life').textContent = '第 ' + s.life + ' 世';
     $('g-turn').textContent = '第 ' + s.turn + ' 回合';
+    $('g-subtitle').textContent = '第 ' + s.life + ' 世 · 第 ' + s.turn + ' 回合';
     var loc = s.location || (s.bible && s.bible.start && s.bible.start.place) || '—';
     var c = s.clock || {};
     $('g-place').textContent = loc + ' · 第' + (c.day || 1) + '日 ' + (c.period || '清晨');
@@ -282,6 +288,14 @@
     var b = $('event-banner');
     b.textContent = '';
     if (!ev) { b.hidden = true; return; }
+    // 手机：叙事流里已有对应事件卡片时不再用横幅重复占屏（内容重复）。
+    if (window.innerWidth <= 600) {
+      var title = ev.title || ev.theme || '';
+      var cards = $('stream').querySelectorAll('.event-card');
+      for (var k = 0; k < cards.length; k++) {
+        if (title && cards[k].textContent.indexOf(title) >= 0) { b.hidden = true; return; }
+      }
+    }
     b.hidden = false;
     b.appendChild(el('span', 'event-banner-icon', '⚠'));
     var body = el('div', 'event-banner-body');
@@ -329,6 +343,11 @@
     var panel = $('panel');
     panel.textContent = '';
     panel.appendChild(el('h3', 'panel-title', '角色面板'));
+    // 手机抽屉顶部关闭 ×（桌面隐藏，见 .sheet-close 默认 display:none）
+    panel.appendChild(sheetCloseButton(function () {
+      panel.dataset.open = 'false';
+      syncBodyScrollLock();
+    }));
 
     var attrs = (s.character && s.character.attrs) || {};
     var danger = isDanger(s);

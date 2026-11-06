@@ -3,6 +3,7 @@
   function hideAllViews() {
     ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
     $('panel').dataset.open = 'false';
+    syncBodyScrollLock(); // 路由切换收起抽屉时恢复背景滚动
     hideAttrTip(); // 切换视图时收起可能还开着的属性说明卡
     setUndoVisible(false); // 复位撤回按钮二次确认态，重新进入世界时按后端状态再显隐
     clearInterval(pendingTimer);

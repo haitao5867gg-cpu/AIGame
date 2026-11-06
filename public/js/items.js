@@ -89,10 +89,12 @@ function showItemCard(name) {
 
   function close() {
     if (mask.parentNode) mask.parentNode.removeChild(mask);
+    syncBodyScrollLock(); // 关闭后恢复背景滚动
   }
   var btn = el('button', 'btn item-card-close', '关闭');
   btn.addEventListener('click', close);
   card.appendChild(btn);
+  card.appendChild(sheetCloseButton(close)); // 手机 bottom sheet 右上角关闭 ×
 
   mask.addEventListener('click', function (e) {
     if (e.target === mask) close();
@@ -100,5 +102,6 @@ function showItemCard(name) {
 
   mask.appendChild(card);
   document.body.appendChild(mask);
+  syncBodyScrollLock(); // 手机：打开弹层锁定背景滚动
   return mask;
 }

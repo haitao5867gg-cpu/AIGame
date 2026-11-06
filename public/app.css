@@ -14,6 +14,9 @@ button{cursor:pointer}
 #app{max-width:1060px;margin:0 auto;padding:14px 14px 40px}
 .view[hidden]{display:none!important}
 [hidden]{display:none!important}
+/* 手机端专属元素：桌面默认隐藏；≤600px 媒体查询里再启用（桌面布局不变） */
+.more-btn,.more-menu,.g-subtitle,.sheet-close{display:none}
+.g-strip{display:contents}
 
 /* ---- 通用控件 ---- */
 .btn{font-family:var(--sans);border:1px solid var(--line);background:var(--bg-2);color:var(--ink);
@@ -329,4 +332,93 @@ p.has-tts-btn{position:relative;padding-right:42px}
 .tts-select{max-width:62%;font-size:14px}
 .tts-slider{flex:1;min-width:90px}
 .tts-speed-val{min-width:2.4em;text-align:right;font-variant-numeric:tabular-nums}
-@media(max-width:600px){.tts-read-btn{width:34px;height:34px;font-size:15px}}
+/* ===== 手机端（宽度 ≤ 600px）：紧凑顶栏 + 整页自然滚动 + 底部输入 + 底部弹层 ===== */
+@media (max-width:600px){
+  /* 顶栏：固定在顶部、单行、紧凑；标题单行省略号；⋯ 收起次要操作 */
+  .game-head{position:sticky;top:0;z-index:50;display:flex;flex-wrap:nowrap;align-items:center;
+    gap:8px;height:48px;padding:0;margin:0 0 6px;background:var(--bg);border-bottom:1px solid var(--line)}
+  .game-head .link{display:inline-flex;align-items:center;justify-content:center;flex:none;
+    min-width:40px;min-height:40px;font-size:22px;line-height:1;padding:0}
+  .back-label{display:none}
+  .game-head-title{flex:1;min-width:0;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .game-head-meta,#g-player-name,#btn-usage,#btn-panel,#btn-export,#g-logout{display:none}
+  .more-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;
+    min-width:44px;min-height:44px;font-size:22px;line-height:1;border:1px solid var(--line);
+    border-radius:8px;background:var(--bg-2);color:var(--ink);padding:0}
+  .more-menu{display:block;position:absolute;right:0;top:100%;margin-top:4px;z-index:2;
+    min-width:160px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:6px;box-shadow:0 10px 30px rgba(0,0,0,.55)}
+  .more-menu-item{display:block;width:100%;text-align:left;min-height:44px;
+    font-family:var(--sans);font-size:14px;color:var(--ink);background:transparent;
+    border:0;border-radius:6px;padding:0 12px}
+  .more-menu-item:hover,.more-menu-item:active{background:var(--bg-2)}
+  .g-subtitle{display:block;font-family:var(--sans);font-size:12px;color:var(--muted);margin:0 0 6px}
+
+  /* 地点时间 + 属性小标签：合并成一行可横向滑动的细条 */
+  .g-strip{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;overflow-x:auto;
+    white-space:nowrap;margin:0 0 8px;padding-bottom:2px;scrollbar-width:none;-ms-overflow-style:none}
+  .g-strip::-webkit-scrollbar{display:none}
+  .g-subhead{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;flex:none;margin:0;min-height:0}
+  .g-place,.omen-tag,.danger-tag{white-space:nowrap;flex:none}
+  .top-attrs{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;flex:none;margin:0}
+  .top-chip{flex:none;white-space:nowrap;min-height:40px;display:inline-flex;align-items:center}
+
+  /* 事件横幅：压缩成一行小提示（叙事流里已有事件卡片时由 JS 直接隐藏，避免重复） */
+  #event-banner{padding:6px 10px;margin-bottom:8px;align-items:center;gap:6px}
+  .event-banner-icon{font-size:13px;line-height:1}
+  .event-banner-body{min-width:0}
+  .event-banner-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .event-banner-desc{display:none}
+
+  /* 叙事区不再内嵌滚动：整页自然滚动；输入区固定底部 */
+  .stream{max-height:none;overflow:visible;flex:none}
+  .composer{position:sticky;bottom:0;z-index:30;background:var(--bg);
+    padding:8px 0 calc(10px + env(safe-area-inset-bottom));margin-top:8px;
+    border-top:1px solid var(--line)}
+  .suggestions{flex-wrap:nowrap;overflow-x:auto;gap:6px;margin-bottom:8px;
+    scrollbar-width:none;-ms-overflow-style:none;padding-bottom:2px}
+  .suggestions::-webkit-scrollbar{display:none}
+  .suggestion{flex:none;white-space:nowrap;min-height:40px;border-radius:18px;
+    display:inline-flex;align-items:center}
+  #action-input,input,textarea,select{font-size:16px;max-width:100%}
+  #action-input{resize:none;max-height:7em;overflow-y:auto;min-height:44px}
+
+  /* 朗读按钮：28px 行内放在段末，透明外扩保证 ≥ 36px 点击区域 */
+  p.has-tts-btn{padding-right:0}
+  .tts-read-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    vertical-align:middle;top:auto;right:auto;bottom:auto;left:auto;width:28px;height:28px;
+    margin-left:6px;padding:0;font-size:12px;line-height:1;border:1px solid var(--line,#bbb);
+    border-radius:50%;background:transparent;color:inherit;cursor:pointer}
+  .tts-read-btn::after{content:'';position:absolute;top:-4px;left:-4px;right:-4px;bottom:-4px}
+
+  /* 所有可点元素留够点击区域；按钮之间留间距 */
+  .btn{min-height:40px}
+  .btn.tiny{min-height:40px;min-width:40px;padding:8px 12px}
+  .link{min-height:40px;display:inline-flex;align-items:center}
+  .preset{min-height:40px;display:inline-flex;align-items:center}
+  .alloc-row{min-height:44px}
+  .alloc-row .btn.tiny{min-width:40px;min-height:40px}
+  .world-card{min-height:64px}
+  .undo-btn{min-height:40px}
+  .logout-link,.npc-voice-btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center}
+
+  /* 角色面板：全宽、从右侧滑入、顶部关闭 × */
+  .panel{width:100%;max-width:none;z-index:60;position:fixed}
+  .panel-title{padding-right:44px}
+  .sheet-close{display:flex;position:absolute;top:8px;right:10px;width:40px;height:40px;
+    align-items:center;justify-content:center;border:0;background:transparent;color:var(--muted);
+    font-family:var(--sans);font-size:24px;line-height:1;cursor:pointer}
+
+  /* 用量 / 序章 / 物品：底部弹出卡片（bottom sheet） */
+  #usage-pop{position:fixed;left:0;right:0;bottom:0;top:auto;margin:0;z-index:70;
+    width:100%;max-width:none;max-height:85vh;overflow-y:auto;
+    border-radius:16px 16px 0 0;border-bottom:0;
+    padding:22px 16px calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);box-shadow:0 -10px 40px rgba(0,0,0,.6)}
+  .prologue-mask,.item-card-mask{align-items:flex-end;padding:0}
+  .prologue-card,.item-card-modal-card{position:relative;width:100%;max-width:none;
+    max-height:85vh;overflow-y:auto;border-radius:16px 16px 0 0;border-bottom:0;
+    padding-top:22px;box-shadow:0 -10px 40px rgba(0,0,0,.6)}
+  #usage-pop::before,.prologue-card::before,.item-card-modal-card::before{
+    content:'';display:block;width:38px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+}

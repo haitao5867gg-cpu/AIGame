@@ -50,6 +50,7 @@
   function renderUsage() {
     var box = $('usage-pop');
     box.textContent = '';
+    box.appendChild(sheetCloseButton(function () { setUsageOpen(false); })); // 手机 bottom sheet 关闭 ×
     var d = usageData;
     if (!d) { box.appendChild(el('div', 'usage-sub', '读取中…')); return; }
     var isHost = !!d.access; // access 是 host 专属字段，来客响应里没有
@@ -272,6 +273,7 @@
       refreshUsage();
       usageTimer = setInterval(refreshUsage, USAGE_POLL_MS);
     }
+    syncBodyScrollLock(); // 手机：用量弹层开关时锁定 / 恢复背景滚动
   }
 
   // ---- 当前玩家：启动时取一次 /api/me，显示名字；来客给一个退出入口 ----
@@ -286,6 +288,7 @@
     $('g-player-name').textContent = label;
     $('home-logout').hidden = !!me.host;
     $('g-logout').hidden = !!me.host;
+    if ($('menu-logout')) $('menu-logout').hidden = !!me.host;
   }
 
   function doLogout() {

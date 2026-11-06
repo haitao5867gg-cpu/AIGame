@@ -213,3 +213,26 @@
   }
   /* UNDO_HELPERS_END */
 
+  // 手机端弹层：从实际 DOM 状态推导是否需要锁定背景滚动（各入口无需配对计数）。
+  function anyOverlayOpen() {
+    return ($('panel') && $('panel').dataset.open === 'true')
+      || ($('usage-pop') && !$('usage-pop').hidden)
+      || !!document.getElementById('prologue-mask')
+      || !!document.getElementById('item-card-modal');
+  }
+  function syncBodyScrollLock() {
+    var locked = window.innerWidth <= 600 && anyOverlayOpen();
+    document.body.style.overflow = locked ? 'hidden' : '';
+  }
+  // 底部弹层通用「关闭 ×」按钮：桌面隐藏，≤600px 媒体查询里显示为右上角关闭键。
+  function sheetCloseButton(onClose) {
+    var b = el('button', 'sheet-close', '×');
+    b.type = 'button';
+    b.setAttribute('aria-label', '关闭');
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      onClose();
+    });
+    return b;
+  }
+

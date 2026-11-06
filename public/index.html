@@ -51,7 +51,7 @@
   <!-- 游戏页 -->
   <section id="view-game" class="view" hidden>
     <header class="game-head">
-      <button class="link" data-nav="#/">‹ 世界列表</button>
+      <button class="link" data-nav="#/">‹<span class="back-label"> 世界列表</span></button>
       <div id="g-title" class="game-head-title">无限世界</div>
       <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
       <span id="g-player-name" class="g-player"></span>
@@ -59,17 +59,27 @@
       <button id="btn-panel" class="btn tiny">角色面板</button>
       <button id="btn-export" class="btn tiny">导出</button>
       <a id="g-logout" class="logout-link" hidden>退出</a>
+      <button id="btn-more" class="more-btn" aria-label="更多" aria-expanded="false">⋯</button>
+      <div id="more-menu" class="more-menu" hidden>
+        <button type="button" class="more-menu-item" data-menu="usage">用量</button>
+        <button type="button" class="more-menu-item" data-menu="panel">角色面板</button>
+        <button type="button" class="more-menu-item" data-menu="export">导出</button>
+        <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
+      </div>
       <div id="usage-pop" class="usage-pop" hidden></div>
     </header>
-    <div class="g-subhead">
-      <span id="g-place" class="g-place"></span>
-      <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
-      <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
+    <div id="g-subtitle" class="g-subtitle"></div>
+    <div class="g-strip">
+      <div class="g-subhead">
+        <span id="g-place" class="g-place"></span>
+        <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
+        <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
+      </div>
+      <div id="top-attrs" class="top-attrs"></div>
     </div>
     <div id="event-banner" class="event-banner" hidden></div>
     <div class="game-body">
       <main class="stage">
-        <div id="top-attrs" class="top-attrs"></div>
         <div id="stream" class="stream"></div>
         <button id="btn-undo" class="undo-btn" hidden>↶ 撤回这一步</button>
         <div class="composer">
