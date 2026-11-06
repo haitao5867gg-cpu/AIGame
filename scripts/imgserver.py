@@ -3,7 +3,9 @@
 OpenAI-style endpoint: POST /v1/images/generations
   body: {"prompt": "<english>", "size": "768x768", "response_format": "b64_json"}
   returns: {"data": [{"b64_json": "<jpeg base64>"}]}
-GET /health -> {"ok": true, "model": ...}
+GET /health -> {"ok": true, "loaded": bool, "model": ..., "availMB": ...}
+The model loads on the first request, unloads after 10 idle minutes, and is not loaded at all when
+the PC has less than IMG_MIN_AVAIL_MB of free RAM / commit (returns 503 instead).
 
 Model: SDXL base 1.0 (fp16) + ByteDance SDXL-Lightning 4-step LoRA. Listens on 127.0.0.1:8790.
 Memory: UNet/VAE on the GPU, text encoders on the CPU (see load()); ~3-5 GB RAM, ~6-7 GB VRAM.
@@ -11,6 +13,8 @@ Env: IMG_MODEL, IMG_PORT, IMG_STEPS, HF_HOME (models are cached there; on the ho
 Quick check: python imgserver.py --test "a rusty bronze key, game icon" out.jpg
 """
 import base64
+import ctypes
+import gc
 import io
 import json
 import os
@@ -31,6 +35,59 @@ STEPS = int(os.environ.get("IMG_STEPS", "4"))
 
 GPU_LOCK = threading.Lock()
 ENCODERS = []  # [(tokenizer, text_encoder)] on the CPU, filled by load()
+IDLE_UNLOAD_S = int(os.environ.get("IMG_IDLE_UNLOAD_S", "600"))  # free RAM/VRAM when nobody draws
+MIN_AVAIL_MB = int(os.environ.get("IMG_MIN_AVAIL_MB", "6500"))   # refuse to load below this
+LAST_USE = [time.time()]
+
+
+class LowMemory(Exception):
+    pass
+
+
+def avail_mb():
+    """(available physical MB, available commit MB) on Windows; (inf, inf) elsewhere."""
+    if os.name != "nt":
+        return float("inf"), float("inf")
+
+    class MS(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    m = MS()
+    m.dwLength = ctypes.sizeof(MS)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+    return m.ullAvailPhys / 1048576, m.ullAvailPageFile / 1048576
+
+
+def ensure_loaded():
+    """Called with GPU_LOCK held. Loads the model on demand, refusing when the PC is short of memory."""
+    global PIPE
+    if PIPE is not None:
+        return
+    phys, commit = avail_mb()
+    if phys < MIN_AVAIL_MB or commit < MIN_AVAIL_MB:
+        raise LowMemory("low memory: %d MB free, %d MB commit available" % (phys, commit))
+    PIPE = load()
+
+
+def unload():
+    global PIPE
+    PIPE = None
+    ENCODERS.clear()
+    gc.collect()
+    torch.cuda.empty_cache()
+    log("model unloaded after %ds idle" % IDLE_UNLOAD_S)
+
+
+def idle_watcher():
+    while True:
+        time.sleep(30)
+        if PIPE is not None and time.time() - LAST_USE[0] > IDLE_UNLOAD_S:
+            with GPU_LOCK:
+                if PIPE is not None and time.time() - LAST_USE[0] > IDLE_UNLOAD_S:
+                    unload()
 
 
 def log(*a):
@@ -40,8 +97,8 @@ def log(*a):
 def load():
     """Low-RAM layout for a 16 GB / 8 GB-VRAM PC.
 
-    UNet + VAE live on the GPU in fp16 (~5.3 GB VRAM); both text encoders stay on the CPU in fp32
-    (~3 GB RAM). The earlier "CPU offload" layout kept the whole 7 GB pipeline in RAM and starved
+    UNet + VAE live on the GPU in fp16 (~5.3 GB VRAM); both text encoders stay on the CPU in bf16
+    (~1.4 GB RAM). The earlier "CPU offload" layout kept the whole 7 GB pipeline in RAM and starved
     the machine. The UNet is loaded straight to the GPU so peak RAM stays around 5 GB.
     """
     t = time.time()
@@ -62,8 +119,8 @@ def load():
     pipe.vae.enable_slicing()
     # Keep the CLIP encoders outside the pipeline so the pipeline's execution device is the GPU.
     ENCODERS[:] = [
-        (pipe.tokenizer, pipe.text_encoder.to(torch.float32)),
-        (pipe.tokenizer_2, pipe.text_encoder_2.to(torch.float32)),
+        (pipe.tokenizer, pipe.text_encoder.to(torch.bfloat16)),
+        (pipe.tokenizer_2, pipe.text_encoder_2.to(torch.bfloat16)),
     ]
     pipe.register_modules(text_encoder=None, text_encoder_2=None)
     pipe.set_progress_bar_config(disable=True)
@@ -102,7 +159,10 @@ def parse_size(s):
 def generate(prompt, size):
     w, h = parse_size(size)
     with GPU_LOCK:
+        LAST_USE[0] = time.time()
+        ensure_loaded()
         pe, pooled = encode(prompt)
+        LAST_USE[0] = time.time()
         img = PIPE(
             prompt_embeds=pe,
             pooled_prompt_embeds=pooled,
@@ -130,7 +190,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self._send(200, {"ok": PIPE is not None, "model": MODEL})
+            phys, commit = avail_mb()
+            return self._send(200, {"ok": True, "loaded": PIPE is not None, "model": MODEL,
+                                    "availMB": int(min(phys, commit, 1e9))})
         self._send(404, {"error": {"message": "not found"}})
 
     def do_POST(self):
@@ -146,6 +208,9 @@ class Handler(BaseHTTPRequestHandler):
             b64 = generate(prompt, req.get("size", "768x768"))
             log("ok %.2fs %s" % (time.time() - t, prompt[:80]))
             self._send(200, {"created": int(time.time()), "data": [{"b64_json": b64}]})
+        except LowMemory as e:
+            log("skip:", e)
+            self._send(503, {"error": {"message": str(e)}})
         except Exception as e:  # never crash the server on one bad request
             log("error", repr(e))
             if isinstance(e, torch.cuda.OutOfMemoryError):
@@ -154,17 +219,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global PIPE
-    # Bind first: if another copy already runs, exit before loading the model into VRAM.
+    # The model is loaded on the first request and unloaded after IDLE_UNLOAD_S without requests.
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    PIPE = load()
-    log("listening on 127.0.0.1:%d" % PORT)
+    threading.Thread(target=idle_watcher, daemon=True).start()
+    log("listening on 127.0.0.1:%d (model loads on first request)" % PORT)
     srv.serve_forever()
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "--test":
-        PIPE = load()
         for size in (sys.argv[4:] or ["768x768"]):
             t = time.time()
             data = base64.b64decode(generate(sys.argv[2], size))
