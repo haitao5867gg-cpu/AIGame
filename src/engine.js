@@ -56,6 +56,7 @@ module.exports = {
   THREADS_MAX: constants.THREADS_MAX,
   FADED_THREADS_MAX: constants.FADED_THREADS_MAX,
   normalizeThread: util.normalizeThread,
+  normalizePrologue: util.normalizePrologue,
   PERIODS: constants.PERIODS,
   MOVE_TO_MAX: constants.MOVE_TO_MAX,
   TIME_PASSES_DEFAULT: constants.TIME_PASSES_DEFAULT,

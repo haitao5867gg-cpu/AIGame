@@ -382,6 +382,22 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return handleExport(res, g, id);
   }
 
+  // 序章：GET /api/worlds/:id/prologue（给老世界补生成，新世界已随 bible 带出）。
+  const prologueMatch = pathname.match(new RegExp('^/api/worlds/([^/]+)/prologue$'));
+  if (prologueMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(prologueMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
+    const prologue = await g.ensurePrologue(id);
+    return sendJson(res, 200, { prologue });
+  }
+
   // 图片状态：GET /api/worlds/:id/images（只含当前物品 / NPC；顺手给老存档补图）。
   const imagesMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/images$/);
   if (imagesMatch) {

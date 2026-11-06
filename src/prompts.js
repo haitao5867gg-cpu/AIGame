@@ -157,9 +157,15 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
-  ' "start":{"place","situation","items":[str x2~3],"facts":[str x2~3]},"eventThemes":[str x6]},',
+  ' "start":{"place","situation","items":[str x2~3],"facts":[str x2~3]},',
+  ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
+  'bible.prologue 是给玩家看的「序章」，四段都要用通俗的话、不堆专有名词；首次提到的地名、人名顺带一句交代（是谁、什么地方）：',
+  '  world = 这个世界是什么样的（3~4 句：时代、势力格局、力量体系、氛围）；',
+  '  me = 你是谁（姓名或称呼 / 身份、出身、现在的处境、有什么本事或短板，2~3 句，用第二人称「你」）；',
+  '  goal = 你想要什么、长期目标（1~2 句）；',
+  '  now = 眼下的处境和该做什么（1~2 句，自然引出第一幕，与 start.situation 一致）；',
   'npcs[].want 写清「这个人想要什么」（能驱使他的欲望/立场），每个 NPC 各不相同，用于让反应有差异；',
   'npcs[].voice 写「这个人的说话方式」，≤20 字（如「短句铁令，从不解释」「哄劝式隐喻，句句带笑」「记账式冷语，只报数目」），' +
   '  每个 NPC 必须明显不同：句式长短、用词、语气、是否解释、是否带隐喻都要拉开差异，作为台词的语言指纹；',
@@ -231,6 +237,11 @@ function buildTurnMessages(state, plan, action) {
   sys.push(CONSTITUTION);
   sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
   sys.push(section('叙事与状态规则', TURN_RULES));
+  // 第一幕：衔接序章里「此刻」的处境展开，避免开局突兀丢出陌生名词。
+  if (state.turn === 0) {
+    sys.push(section('第一幕（开场衔接）',
+      '这是第一幕：衔接序章里「此刻」的处境展开，首次出现的人和地方要带一句交代（是谁、什么地方），不要突兀地丢出陌生名词。'));
+  }
   sys.push(section('时与地（叙事一致性）',
     '叙事里的所处地点、白昼/黑夜、所在日子必须与【时与地】一致，不要凭空跳到别处或别的时段；' +
     '时间只随回合缓慢推进，不可一夜之间改换季节。'));
@@ -385,6 +396,43 @@ function buildTurnMessages(state, plan, action) {
   ];
 }
 
+// 老世界补序章：据世界设定 + 角色当前状态，另写四段「序章」（world/me/goal/now）。
+// now 写「此刻」真正的处境而不是开局，供已推进过的老世界玩家重新找到方向。
+function buildPrologueMessages(state) {
+  const c = (state && state.character) || {};
+  const attrs = Object.entries(c.attrs || {}).map(([k, v]) => `${k}:${v}`).join(' ');
+  const recent = ((state && state.recent) || []).slice(-2)
+    .map((r) => `#${r.turn} 行动：${r.action} / 叙事：${r.narration}`).join('\n') || '（尚无近期记录）';
+  const loc = (state && state.location) ||
+    ((state && state.bible && state.bible.start && state.bible.start.place) || '未知之地');
+  const system = [
+    '你是「无限世界」的序章执笔人，只输出一个 JSON 对象，不要解释文字。',
+    '为一位对世界与自身处境感到茫然的玩家写一段「序章」，补上开局缺失的引导。',
+    '输出 JSON：{"world":...,"me":...,"goal":...,"now":...}',
+    'world = 这个世界是什么样的（3~4 句：时代、势力格局、力量体系、氛围）；',
+    'me = 你是谁（姓名或称呼 / 身份、出身、现在的处境、有什么本事或短板，2~3 句，用第二人称「你」）；',
+    'goal = 你想要什么、长期目标（1~2 句）；',
+    'now = 眼下的处境和该做什么（1~2 句，要写「此刻」真正的处境而不是开局，自然引出下一幕）。',
+    '用通俗的话，不要堆专有名词；首次提到的地名、人名要带一句交代（是谁、什么地方）。',
+  ].join('\n');
+  const user = [
+    section('世界设定', worldBibleText(state && state.bible)),
+    section('角色当前状态', [
+      `姓名：${c.name || '（无名）'}`,
+      `属性：${attrs || '无'}`,
+      `物品：${(c.items || []).join('、') || '无'}`,
+      `所在地：${loc}`,
+      `当前回合数：${(state && state.turn) || 0}`,
+    ].join('\n')),
+    section('最近 2 条叙事', recent),
+    '请据此写出序章四段，只输出 JSON。',
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 建世界：输入玩家一句话，输出 bible + apex。
 function buildWorldMessages(seed, input) {
   const i = input || {};
@@ -524,6 +572,7 @@ function parseJson(text) {
 
 module.exports = {
   buildTurnMessages,
+  buildPrologueMessages,
   buildWorldMessages,
   buildChapterMessages,
   buildApexMessages,

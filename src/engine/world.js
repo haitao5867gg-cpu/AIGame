@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS } = require('./constants.js');
-const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude } = require('./util.js');
+const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue } = require('./util.js');
 
 // ---- 建世界 / 分配属性点 ----
 
@@ -40,6 +40,10 @@ function createWorld(spec, opts) {
   const bible = cloneState(s.bible || {});
   // 建世界校验：eventThemes 少于 4 个就用通用主题补齐，保证事件能正常开启。
   bible.eventThemes = normalizeEventThemes(bible.eventThemes);
+  // 序章规范化：非法 / 缺字段就整段删掉，留待老世界补生成。
+  const prologue = normalizePrologue(bible.prologue);
+  if (prologue) bible.prologue = prologue;
+  else delete bible.prologue;
   return {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,

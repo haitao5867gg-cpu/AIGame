@@ -367,6 +367,32 @@ function createGame(cfg, dataDir) {
     return withUndoFlag(publicWorld(state), state, worldId);
   }
 
+  // 老世界补序章：世界锁内读状态，已有合法 bible.prologue 直接返回；
+  // 否则用回合模型（cfg.LLM_MODEL）一次调用补写四段，失败返回 null，绝不抛错影响游戏。
+  async function ensurePrologue(worldId) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) return null;
+      const existing = engine.normalizePrologue(state.bible && state.bible.prologue);
+      if (existing) return existing;
+      let prologue = null;
+      try {
+        const rp = await callParsed(
+          'prologue', turnModel,
+          prompts.buildPrologueMessages(state),
+          { name: state.character && state.character.name }, [],
+        );
+        prologue = engine.normalizePrologue(rp.parsed);
+      } catch (_) { /* LLM 报错 / 解析失败 → prologue 保持 null，绝不抛错 */ }
+      if (!prologue) return null;
+      state.bible = state.bible || {};
+      state.bible.prologue = prologue;
+      store.saveWorld(dataDir, state);
+      return prologue;
+    });
+  }
+
   function listWorlds() {
     return store.listWorlds(dataDir);
   }
@@ -657,7 +683,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, ensurePrologue, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn, listScenes,
   };
 }

@@ -19,6 +19,7 @@ const PURPOSES = Object.freeze({
   APEX: 'apex',       // 新顶点
   EPITAPH: 'epitaph', // 前世墓志铭（死亡时额外调用）
   REBIRTH: 'rebirth', // 新一世开场（重生时额外调用）
+  PROLOGUE: 'prologue', // 老世界补序章（GET /prologue 时额外调用）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -247,6 +248,12 @@ function mockWorld(m) {
         // 开局关键时间/规则事实，锁定满月日期等时间线，写入 state.facts（叙事不得改写）。
         facts: ['满月在三日后', '城门每日戌时落锁', '报出真名会被登记'],
       },
+      prologue: {
+        world: '灰烬港是个终年落灰的旧港，船骸堆成山丘，守夜会掌着钟声与更漏，拾骨者在废墟里淘换旧物。这里的人以记忆而非钱币交易，名字一旦报出便会被登记，力量都暗中标好了代价。雾里总有人提灯走动，却没人说得清灯为谁而亮。',
+        me: '你是在搁浅船骸间醒来的人，手里攥着一封无字信，没人认得你，你也记不清自己从哪来。你识字、警觉，擅长在别人开口前先看清局势；但你没有根基，也没有一个能替你作保的名字。',
+        goal: '你想查清那封无字信究竟要交给谁，在这座把名字当契约的港里，挣一个不必躲藏的位置。',
+        now: '此刻你在一条搁浅的船上醒来，雾里传来断续的钟声，手里那封无字信还不知要交给谁。你该先看清四周，再决定要不要向提灯走来的守夜人报出名字。',
+      },
       eventThemes: ['魔族入侵', '宫廷政变', '天灾', '秘境开启', '商路断绝', '古神低语'],
     },
     apex: {
@@ -373,6 +380,16 @@ function mockRebirthOpening(m) {
   };
 }
 
+// 老世界补序章：mock 下返回一份合理的四段（now 写「此刻」的处境）。
+function mockPrologue() {
+  return {
+    world: '灰烬港是个终年落灰的旧港，船骸堆成山丘，守夜会掌着钟声与更漏，拾骨者在废墟里淘换旧物。这里的人以记忆而非钱币交易，名字一旦报出便会被登记，力量都暗中标好了代价。雾里总有人提灯走动，却没人说得清灯为谁而亮。',
+    me: '你是在搁浅船骸间醒来的人，手里攥着一封无字信，没人认得你，你也记不清自己从哪来。你识字、警觉，擅长在别人开口前先看清局势；但你没有根基，也没有一个能替你作保的名字。',
+    goal: '你想查清那封无字信究竟要交给谁，在这座把名字当契约的港里，挣一个不必躲藏的位置。',
+    now: '此刻守夜人正提灯朝你走来，钟声比往日乱了一拍。你该先决定要不要报出名字，再顺着更漏册上的异样问下去。',
+  };
+}
+
 function mockFor(purpose, m) {
   switch (purpose) {
     case PURPOSES.WORLD: return mockWorld(m);
@@ -381,6 +398,7 @@ function mockFor(purpose, m) {
     case PURPOSES.APEX: return mockApex(m);
     case PURPOSES.EPITAPH: return mockEpitaph(m);
     case PURPOSES.REBIRTH: return mockRebirthOpening(m);
+    case PURPOSES.PROLOGUE: return mockPrologue();
     default: return mockTurn(m);
   }
 }

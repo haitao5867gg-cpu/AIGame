@@ -235,6 +235,21 @@ function initialNpcAttitude(bible, provided) {
   return Object.assign(out, provided && typeof provided === 'object' ? provided : {});
 }
 
+// 序章规范化：四字段都必须是非空字符串，各自去空白并截断；
+// 任一字段缺失 / 非字符串 / 去空白后为空 → 返回 null（整段作废）。
+function normalizePrologue(raw) {
+  const limits = { world: 240, me: 200, goal: 120, now: 160 };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const key of ['world', 'me', 'goal', 'now']) {
+    if (typeof raw[key] !== 'string') return null;
+    const t = raw[key].trim().slice(0, limits[key]);
+    if (!t) return null;
+    out[key] = t;
+  }
+  return out;
+}
+
 module.exports = {
   clamp,
   toInt,
@@ -259,4 +274,5 @@ module.exports = {
   startingFacts,
   baseItem,
   initialNpcAttitude,
+  normalizePrologue,
 };
