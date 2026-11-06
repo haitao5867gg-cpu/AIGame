@@ -423,9 +423,12 @@ function summarizeToday(rows, now, limit, playerId) {
   const lim = Number(limit) || 0;
   const byProvider = {};
   const total = { ok: 0, fail: 0 };
+  let scenes = 0;
   for (const r of rows) {
-    if (!r || typeof r !== 'object' || r.kind !== 'image' || dayKey(r.ts) !== day) continue;
+    if (!r || typeof r !== 'object' || dayKey(r.ts) !== day) continue;
     if (playerId && rowPlayerId(r) !== playerId) continue;
+    if (r.kind === 'scene' && r.ok) scenes += 1;
+    if (r.kind !== 'image' && r.kind !== 'scene') continue;
     const p = String(r.provider || 'unknown');
     if (!byProvider[p]) byProvider[p] = { ok: 0, fail: 0 };
     const k = r.ok ? 'ok' : 'fail';
@@ -438,7 +441,7 @@ function summarizeToday(rows, now, limit, playerId) {
       prompt: t.prompt_tokens, completion: t.completion_tokens, total: t.total,
       limit: lim, remaining: lim > 0 ? Math.max(0, lim - t.total) : null,
     },
-    images: { byProvider, total },
+    images: { byProvider, total, scenes },
   };
 }
 

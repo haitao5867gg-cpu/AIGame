@@ -39,6 +39,7 @@ const DEFAULTS = Object.freeze({
   IMAGE_SIZE: '768x768',          // 本地服务上限 768（8G 显存）；gateway 时请设 1024x1024
   IMAGE_MAX_PER_WORLD: '40',      // 仅 gateway 生效，防止花钱失控
   IMAGE_CONCURRENCY: '1',
+  IMAGE_SCENE_DAILY_PER_PLAYER: '60', // 每位来客每天场景插图（kind=scene）上限；0 表示不限，主人不受限
   SILICONFLOW_API_KEY: '',
   IMAGE_SILICONFLOW_MODEL: 'Kwai-Kolors/Kolors',
   ZHIPU_API_KEY: '',
@@ -57,7 +58,7 @@ const DEFAULTS = Object.freeze({
 
 const NUMERIC_KEYS = Object.freeze([
   'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'LLM_PLAYER_DAILY_TOKEN_LIMIT', 'PORT',
-  'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_LOCAL_MIN_FREE_MB',
+  'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

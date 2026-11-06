@@ -16,10 +16,12 @@ const crypto = require('node:crypto');
 const store = require('./store.js');
 const llm = require('./llm.js');
 const env = require('./env.js');
+const context = require('./context.js');
+const prefs = require('./prefs.js');
 
 // GET /api/images/<file> 严格校验：只允许 <kind>-<12位16进制>.<jpg|svg>。
 // 正则保证文件名里没有斜杠 / 多余的点，天然挡住路径穿越。
-const FILE_NAME_RE = /^(item|npc)-[0-9a-f]{12}\.(jpg|png|svg)$/;
+const FILE_NAME_RE = /^(item|npc|scene)-[0-9a-f]{12}\.(jpg|png|svg)$/;
 const FAILED_COOLDOWN_MS = 10 * 60 * 1000; // failed 10 分钟后才允许重试
 const IMAGE_TIMEOUT_MS = 60000;            // 单次出图 HTTP 超时
 const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 回退链里某家失败后 5 分钟内排到最后
@@ -171,6 +173,21 @@ function imageKey(kind, name, style, worldId) {
   return crypto.createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 12);
 }
 
+// 场景插图 key：同一世界 / 同一世 / 同一回合 / 同一画面描述共用一张图。
+function sceneKey(worldId, life, turn, desc) {
+  const s = `scene|${worldId == null ? '' : worldId}|${life == null ? '' : life}|${turn == null ? '' : turn}|${desc == null ? '' : desc}`;
+  return crypto.createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 12);
+}
+
+// 本地日期口径（与 llm.js dayKey 一致）：YYYY-MM-DD。
+function sceneDayKey(ts) {
+  const d = new Date(ts);
+  return (
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-` +
+    `${String(d.getDate()).padStart(2, '0')}`
+  );
+}
+
 function indexKeyOf(kind, key) { return `${kind}-${key}`; }
 function jpgName(kind, key) { return `${kind}-${key}.jpg`; }
 function pngName(kind, key) { return `${kind}-${key}.png`; }
@@ -229,12 +246,41 @@ function localPrompt(enDesc, kind, styleEn, eraEn, bgEn) {
   return `${styleEn}. ${enDesc}${era}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
 }
 
-// 翻译结果清洗：取首行、去引号、截断到 ≤25 个英文单词。
-function cleanEnglish(text) {
+// 场景插图（中文提供方）：画风 + 世界背景 + 画面描述 + 在场人物 + 电影感构图。
+function scenePromptZh(job) {
+  const st = (job && job.style) || {};
+  const art = st.artZh || st.zh || '';
+  const title = (job && job.bibleTitle) || '';
+  const era = st.eraZh || '';
+  const world = `世界背景：${title}${era ? '，' + era : ''}`;
+  let s = `${art}。${world}。游戏场景插画：${clip(job && job.desc, 60)}。`;
+  const cast = Array.isArray(job && job.cast) ? job.cast.slice(0, 3) : [];
+  if (cast.length) {
+    const people = cast.map((c) => `${clip(c && c.name, 20)}：${clip(c && c.look, 40)}`).join('；');
+    s += `在场人物：${people}。`;
+  }
+  const tone = String(st.bgZh || DEFAULT_STYLE.bgZh).replace(/背景/g, '');
+  s += `电影感构图，横幅画面，${tone}色调，无文字，无印章，无水印`;
+  if (st.avoidZh) s += `，不要出现${st.avoidZh}`;
+  return s;
+}
+
+// 场景插图（英文提供方）：只写正面描述，绝不出现题字 / 印章 / 文字 / 水印类词。
+function scenePromptEn(enDesc, style) {
+  const st = style || {};
+  const desc = String(enDesc == null ? '' : enDesc).replace(/[.。\s]+$/, '');
+  const era = st.eraEn ? `, ${st.eraEn} style` : '';
+  return `${st.en || ''}. ${desc}${era}, period-accurate clothing and objects, `
+    + 'cinematic wide composition, atmospheric lighting, clean image, unsigned';
+}
+
+// 翻译结果清洗：取首行、去引号、截断到 ≤25 个英文单词（scene 为 ≤40 词）。
+function cleanEnglish(text, maxWords) {
   let t = String(text == null ? '' : text).trim();
   t = t.split(/\r?\n/)[0].trim();
   t = t.replace(/["'`«»「」]/g, '').trim();
-  t = t.split(/\s+/).filter(Boolean).slice(0, 25).join(' ');
+  const n = Number(maxWords) > 0 ? Number(maxWords) : 25;
+  t = t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
   return t;
 }
 
@@ -481,29 +527,42 @@ function createImages(cfg, opts) {
   // 失败一律返回空串（由上层用兜底短语），绝不抛错。
   async function translate(job) {
     try {
-      const era = job.style && job.style.eraZh ? `；时代背景：${job.style.eraZh}` : '';
-      const subject = job.kind === 'npc'
-        ? `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`
-        : `物品：${job.name}；世界：${job.bibleTitle}${era}`;
+      const isScene = job.kind === 'scene';
+      const eraZh = job.style && job.style.eraZh ? job.style.eraZh : '';
+      const era = eraZh ? `；时代背景：${eraZh}` : '';
+      let subject;
+      let system;
+      if (isScene) {
+        const cast = (Array.isArray(job.cast) ? job.cast : []).slice(0, 3)
+          .map((c) => `${clip(c && c.name, 20)}：${clip(c && c.look, 40)}`).join('；');
+        subject = `场景：${clip(job.desc, 60)}；在场人物：${cast}；世界：${job.bibleTitle}；时代背景：${eraZh}`;
+        system = 'Output ONLY one English visual description (at most 40 words) of the game scene '
+          + 'for an image generator. Describe the setting, atmosphere and wide composition; keep clothing '
+          + 'and objects period-accurate to the world\'s era, never modern or futuristic unless the world '
+          + 'itself is. Do NOT include any person name or quotation marks. No explanation.';
+      } else {
+        subject = job.kind === 'npc'
+          ? `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`
+          : `物品：${job.name}；世界：${job.bibleTitle}${era}`;
+        system = 'Output ONLY one English visual description (at most 25 words) of the subject '
+          + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
+          + 'of that era\'s materials and craft, people wear that era\'s clothing; never modern or futuristic '
+          + 'unless the world itself is. Do NOT include any person name or quotation marks. No explanation.';
+      }
       const messages = [
-        {
-          role: 'system',
-          content: 'Output ONLY one English visual description (at most 25 words) of the subject '
-            + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
-            + 'of that era\'s materials and craft, people wear that era\'s clothing; never modern or futuristic '
-            + 'unless the world itself is. Do NOT include any person name or quotation marks. No explanation.',
-        },
+        { role: 'system', content: system },
         { role: 'user', content: subject },
       ];
+      const maxWords = isScene ? 40 : 25;
       if (typeof o.translate === 'function') {
         const r = await o.translate(job, messages);
-        return cleanEnglish(typeof r === 'string' ? r : (r && r.content));
+        return cleanEnglish(typeof r === 'string' ? r : (r && r.content), maxWords);
       }
       const client = llm.createClient(c, job.dataDir);
       const out = await client.complete({
         purpose: 'turn', model: llmModel, messages, responseFormat: false,
       });
-      return cleanEnglish(out && out.content);
+      return cleanEnglish(out && out.content, maxWords);
     } catch (err) {
       console.warn('[images] 翻译失败，使用英文兜底：' + (err && err.message ? err.message : err));
       return '';
@@ -575,12 +634,12 @@ function createImages(cfg, opts) {
   }
 
   // 硅基流动（Kolors，免费）：返回 images[0].url，需再下载。
-  async function callSiliconflow(prompt, style) {
+  async function callSiliconflow(prompt, style, size) {
     if (!sfKey) throw new Error('未配置 SILICONFLOW_API_KEY');
     const data = await postJson(SILICONFLOW_URL, { Authorization: `Bearer ${sfKey}` }, {
       model: sfModel, prompt,
       negative_prompt: '文字，印章，书法，落款，水印，签名，边框，模糊，畸形' + (style && style.avoidZh ? '，' + style.avoidZh : ''),
-      image_size: FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
+      image_size: size || FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
     });
     const u = data && Array.isArray(data.images) && data.images[0] && data.images[0].url;
     if (typeof u !== 'string' || !u) throw new Error('硅基流动返回缺少 images[0].url');
@@ -588,10 +647,10 @@ function createImages(cfg, opts) {
   }
 
   // 智谱（cogview-3-flash，免费）：返回 data[0].url，需再下载。
-  async function callZhipu(prompt) {
+  async function callZhipu(prompt, size) {
     if (!zpKey) throw new Error('未配置 ZHIPU_API_KEY');
     const data = await postJson(ZHIPU_URL, { Authorization: `Bearer ${zpKey}` }, {
-      model: zpModel, prompt, size: FREE_SIZE, watermark_enabled: false,
+      model: zpModel, prompt, size: size || FREE_SIZE, watermark_enabled: false,
     });
     const u = data && Array.isArray(data.data) && data.data[0] && data.data[0].url;
     if (typeof u !== 'string' || !u) throw new Error('智谱返回缺少 data[0].url');
@@ -647,33 +706,40 @@ function createImages(cfg, opts) {
 
   // 用单个提供方出一张图：返回 {bytes, prompt, enPrompt, model}。
   async function runProvider(p, job) {
+    const isScene = job.kind === 'scene';
+    const zhPrompt = () => (isScene ? scenePromptZh(job) : gatewayPrompt(job));
+    const enFallback = () => (isScene ? 'a dramatic game scene'
+      : (job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item'));
+    const enPromptOf = (e) => (isScene
+      ? scenePromptEn(e, job.style)
+      : localPrompt(e, job.kind, job.style.en, job.style.eraEn, job.style.bgEn));
     if (p === 'siliconflow') {
-      const prompt = gatewayPrompt(job);
-      return { bytes: await callSiliconflow(prompt, job.style), prompt, enPrompt: '', model: sfModel };
+      const prompt = zhPrompt();
+      return { bytes: await callSiliconflow(prompt, job.style, isScene ? '1024x576' : undefined), prompt, enPrompt: '', model: sfModel };
     }
     if (p === 'cloudflare') {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
       let enPrompt = await translate(job);
-      if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-      const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn, job.style.bgEn);
+      if (!enPrompt) enPrompt = enFallback();
+      const prompt = enPromptOf(enPrompt);
       return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
     }
     if (p === 'modelscope') {
-      const prompt = gatewayPrompt(job);
+      const prompt = zhPrompt();
       return { bytes: await callModelscope(prompt), prompt, enPrompt: '', model: msModel };
     }
     if (p === 'zhipu') {
-      const prompt = gatewayPrompt(job);
-      return { bytes: await callZhipu(prompt), prompt, enPrompt: '', model: zpModel };
+      const prompt = zhPrompt();
+      return { bytes: await callZhipu(prompt, isScene ? '1344x768' : undefined), prompt, enPrompt: '', model: zpModel };
     }
     if (p === 'gateway') {
-      const prompt = gatewayPrompt(job);
+      const prompt = zhPrompt();
       return { bytes: await callImageApi(prompt, true), prompt, enPrompt: '', model };
     }
     // local：先翻译，再拼英文提示词。
     let enPrompt = await translate(job);
-    if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-    const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn, job.style.bgEn);
+    if (!enPrompt) enPrompt = enFallback();
+    const prompt = enPromptOf(enPrompt);
     return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
   }
 
@@ -742,7 +808,7 @@ function createImages(cfg, opts) {
     } finally {
       try {
         store.appendUsage(job.dataDir, {
-          ts: nowFn(), kind: 'image', provider: usedProvider,
+          ts: nowFn(), kind: job.kind === 'scene' ? 'scene' : 'image', provider: usedProvider,
           model: usedModel,
           ok, ms: nowFn() - t0, worldId: job.worldId,
         });
@@ -773,6 +839,20 @@ function createImages(cfg, opts) {
         });
     }
     notifyIdle();
+  }
+
+  // 索引项是否允许（重新）排队：ready 且文件在、pending 且本进程在跑、failed 冷却中、或已在 inFlight → 跳过。
+  function shouldQueue(cur, ik, dataDir) {
+    if (cur) {
+      if (cur.status === 'ready') {
+        if (cur.file && fs.existsSync(path.join(imagesDir(dataDir), cur.file))) return false;
+      } else if (cur.status === 'pending') {
+        if (inFlight.has(ik)) return false;
+      } else if (cur.status === 'failed') {
+        if (nowFn() - (Number(cur.ts) || 0) < FAILED_COOLDOWN_MS) return false;
+      }
+    }
+    return !inFlight.has(ik);
   }
 
   // 完全异步、不阻塞：仅同步地把待生成项登记为 pending 并入队，随后 kick off 队列。
@@ -806,19 +886,8 @@ function createImages(cfg, opts) {
         const key = imageKey(kind, name, style.zh, worldId);
         const ik = indexKeyOf(kind, key);
         const cur = idx[ik];
-        if (cur) {
-          if (cur.status === 'ready') {
-            if (cur.file && fs.existsSync(path.join(imagesDir(dataDir), cur.file))) continue;
-            // ready 但文件丢失 → 允许重新排队
-          } else if (cur.status === 'pending') {
-            // 本进程正在生成才跳过；不在 inFlight 里的 pending 是上个进程（重启前）留下的，照常重新排队。
-            if (inFlight.has(ik)) continue;
-          } else if (cur.status === 'failed') {
-            if (nowFn() - (Number(cur.ts) || 0) < FAILED_COOLDOWN_MS) continue; // 冷却
-          }
-        }
+        if (!shouldQueue(cur, ik, dataDir)) continue;
         if (paid && wcount >= maxPerWorld) continue; // 花钱上限（链里有付费 gateway 时生效）
-        if (inFlight.has(ik)) continue;                                  // 同一 key 不重复排队
         idx[ik] = Object.assign({}, cur || {}, {
           kind, name, style: style.zh, worldId,
           file: null, status: 'pending', ts: nowFn(),
@@ -842,6 +911,62 @@ function createImages(cfg, opts) {
     }
   }
 
+  // 场景插图：同步登记 pending 并入队，返回 12 位 key；不该出图时返回 null。
+  function ensureScene(dataDir, state, spec) {
+    try {
+      if (off) return null;
+      const s = state && typeof state === 'object' ? state : {};
+      const q = spec && typeof spec === 'object' ? spec : {};
+      const desc = typeof q.desc === 'string' ? q.desc : '';
+      const turn = q.turn;
+      if (!mock && !desc.trim()) return null;
+      const playerId = context.currentPlayerId() || 'host';
+      if (prefs.getPrefs(dataDir, playerId).scenes === false) return null;
+      const limit = Number(c.IMAGE_SCENE_DAILY_PER_PLAYER);
+      if (playerId !== 'host' && Number.isFinite(limit) && limit > 0) {
+        const day = sceneDayKey(nowFn());
+        const rows = store.readJsonl(store.usagePath(dataDir));
+        const used = rows.filter((r) => r && typeof r === 'object' && r.kind === 'scene'
+          && sceneDayKey(r.ts) === day
+          && (typeof r.playerId === 'string' && r.playerId ? r.playerId : 'host') === playerId).length;
+        if (used >= limit) return null;
+      }
+      const worldId = String(s.id == null ? '' : s.id);
+      const life = s.life == null ? '' : s.life;
+      const key = sceneKey(worldId, life, turn, desc);
+      const ik = indexKeyOf('scene', key);
+      const style = styleForWorld(dataDir, s).style;
+      const bibleTitle = (s.bible && s.bible.title) || '';
+      const npcs = (s.bible && Array.isArray(s.bible.npcs)) ? s.bible.npcs : [];
+      const cast = [];
+      for (const n of npcs) {
+        if (cast.length >= 3) break;
+        const name = n && typeof n.name === 'string' ? n.name.trim() : '';
+        if (!name || !desc.includes(name)) continue;
+        cast.push({ name, look: clip(n.desc, 40) });
+      }
+      const idx = readIndex(dataDir);
+      const cur = idx[ik];
+      if (!shouldQueue(cur, ik, dataDir)) return key;
+      idx[ik] = Object.assign({}, cur || {}, {
+        kind: 'scene', name: desc, worldId, life, turn,
+        style: style.zh, file: null, status: 'pending', ts: nowFn(),
+      });
+      writeIndex(dataDir, idx);
+      inFlight.add(ik);
+      queue.push({
+        dataDir, indexKey: ik, kind: 'scene', key, name: desc, style, worldId,
+        desc, cast, bibleTitle,
+      });
+      drain();
+      return key;
+    } catch (err) {
+      console.warn('[images] ensureScene 异常（已忽略，绝不影响回合）：'
+        + (err && err.message ? err.message : err));
+      return null;
+    }
+  }
+
   function imageList(dataDir, state) {
     return buildImageList(dataDir, state, ensureImages, (wid) => artJobs.has(wid));
   }
@@ -862,7 +987,7 @@ function createImages(cfg, opts) {
   }
 
   return {
-    ensureImages, imageList, waitIdle, serveImage, readIndex, listForState, providerStatus,
+    ensureImages, ensureScene, imageList, waitIdle, serveImage, readIndex, listForState, providerStatus,
     config: { provider, providers: chain.slice(), base, model, size, maxPerWorld, concurrency, mock, off },
   };
 }
@@ -881,15 +1006,16 @@ function configure(cfg, opts) {
 function reset() { _default = null; }
 
 function ensureImages(dataDir, state, list) { return defaultInstance().ensureImages(dataDir, state, list); }
+function ensureScene(dataDir, state, spec) { return defaultInstance().ensureScene(dataDir, state, spec); }
 function imageList(dataDir, state) { return defaultInstance().imageList(dataDir, state); }
 function waitIdle() { return defaultInstance().waitIdle(); }
 
 module.exports = {
   createImages, configure, reset,
   // 纯函数
-  inferStyle, imageKey, listForState, readIndex, serveImage,
+  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, listForState, readIndex, serveImage,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   // 默认实例委托
-  ensureImages, imageList, waitIdle,
+  ensureImages, ensureScene, imageList, waitIdle,
 };
