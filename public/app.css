@@ -421,4 +421,50 @@ p.has-tts-btn{position:relative;padding-right:42px}
     padding-top:22px;box-shadow:0 -10px 40px rgba(0,0,0,.6)}
   #usage-pop::before,.prologue-card::before,.item-card-modal-card::before{
     content:'';display:block;width:38px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+
+  /* ===== 手机端第 2 轮：点击区域 ≥40px、输入类 16px、checkbox 拨动开关 ===== */
+  /* 开新世界：随机 / 预设胶囊 / 属性 −+ / 三个输入框 */
+  #btn-random{min-height:40px;min-width:40px}
+  .preset{min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+  .alloc-row .btn.tiny{min-height:40px;min-width:40px}
+  .form input,.form textarea,.form select{font-size:16px}
+  /* 游戏页：建议行动胶囊 / 撤回 */
+  .suggestion{min-height:40px;min-width:40px}
+  .undo-btn{min-height:40px}
+  /* 角色面板「认识的人」🔊：透明 padding 把点击区域撑到 40x40，图标本身不变 */
+  .npc-voice-btn{min-width:40px;min-height:40px;padding:10px}
+  /* 用量面板：音色下拉整宽 16px ≥40px 高、复制按钮 ≥40px */
+  .tts-select,.npc-voice-select{font-size:16px;width:100%;max-width:none;min-height:40px}
+  .usage-copy{min-height:40px;min-width:40px}
+  /* 用量面板：checkbox 由被拉宽的细条改成 44x26 拨动开关，整行 ≥40px，文字左/开关右 */
+  .usage-friend-row{min-height:40px}
+  label.usage-friend-row{flex-direction:row-reverse;justify-content:space-between}
+  input[type=checkbox]{-webkit-appearance:none;appearance:none;flex:none;
+    width:44px;height:26px;margin:0;padding:0;border:1px solid var(--line);
+    border-radius:13px;background:var(--bg-2);position:relative;cursor:pointer;transition:.15s}
+  input[type=checkbox]::before{content:'';position:absolute;top:2px;left:2px;
+    width:20px;height:20px;border-radius:50%;background:var(--muted);transition:.15s}
+  input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+  input[type=checkbox]:checked::before{transform:translateX(18px);background:#fff}
+  /* 语速滑块：滑块头 ≥28px 便于拖动 */
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;
+    margin:0;padding:0;border:0;border-radius:0;background:transparent}
+  .tts-slider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--line)}
+  .tts-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:28px;height:28px;margin-top:-11px;border-radius:50%;background:var(--accent-2);cursor:pointer}
+  .tts-slider::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}
+  .tts-slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;
+    background:var(--accent-2);border:0;cursor:pointer}
+}
+
+/* ===== 手机横屏（如 844x390）：压顶栏 / 收输入区，叙事 ≥ 半屏，弹层 90vh 可滚动 ===== */
+@media (max-height:500px) and (orientation:landscape){
+  #action-input,input,textarea,select{font-size:16px}
+  .game-head{height:44px;max-height:44px;margin-bottom:4px;padding-bottom:0}
+  .composer{position:sticky;bottom:0;z-index:30;background:var(--bg);
+    padding:4px 0 calc(4px + env(safe-area-inset-bottom));margin-top:4px}
+  .suggestions{display:none}
+  #action-input{min-height:0;max-height:2.4em;resize:none;overflow-y:auto}
+  .stream{max-height:none;overflow:visible;min-height:50vh}
+  #usage-pop,.prologue-card,.item-card-modal-card{max-height:90vh;overflow-y:auto}
 }

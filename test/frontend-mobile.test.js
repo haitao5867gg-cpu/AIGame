@@ -103,3 +103,70 @@ test('手机端：public/js 无新增 innerHTML', () => {
     assert.equal(/\.innerHTML/.test(read('js/' + f)), false, f + ' 不得出现 .innerHTML');
   }
 });
+
+// ===== 手机端第 2 轮：≥40px 点击区域 / 16px 输入 / 开关 / 横屏 静态检查 =====
+// 抽出指定 @media 块的规则体（大括号配对，兼容内嵌规则块）。
+function bodiesOf(re) {
+  const bodies = [];
+  let m;
+  while ((m = re.exec(css)) !== null) {
+    const start = re.lastIndex;
+    let depth = 1, i = start;
+    while (i < css.length && depth > 0) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}') depth--;
+      i++;
+    }
+    bodies.push(css.slice(start, i - 1));
+  }
+  return bodies.join('\n');
+}
+
+test('手机端第 2 轮：开新世界 / 游戏页 / 用量面板各可点元素 min-height:40px', () => {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tapTargets = [
+    ['#btn-random', '随机按钮'],
+    ['.preset', '预设世界观胶囊'],
+    ['.alloc-row .btn.tiny', '属性 −/+ 按钮'],
+    ['.suggestion', '建议行动胶囊'],
+    ['.undo-btn', '撤回这一步'],
+    ['.npc-voice-btn', 'NPC 🔊 按钮'],
+    ['.tts-select', '用量面板音色下拉'],
+    ['.usage-copy', '复制按钮'],
+  ];
+  for (const [sel, name] of tapTargets) {
+    assert.match(mb, new RegExp(esc(sel) + '[^{]*\\{[^}]*min-height\\s*:\\s*40px'),
+      name + '（' + sel + '）在手机媒体查询里应有 min-height:40px');
+  }
+});
+
+test('手机端第 2 轮：input/textarea/select 16px，且显式覆盖 .form / .tts-select', () => {
+  assert.match(mb, /#action-input[^{]*\{[^}]*font-size\s*:\s*16px/, 'input/textarea/select 应 16px');
+  assert.match(mb, /\.form input[^{]*\{[^}]*font-size\s*:\s*16px/, '.form 输入框应显式 16px');
+  assert.match(mb, /\.tts-select[^{]*\{[^}]*font-size\s*:\s*16px/, '.tts-select 应显式 16px');
+});
+
+test('手机端第 2 轮：checkbox 为 appearance:none 的 44x26 拨动开关，整行 ≥40px', () => {
+  assert.match(mb, /input\[type=checkbox\][^{]*\{[^}]*appearance\s*:\s*none/, 'checkbox 应 appearance:none');
+  assert.match(mb, /input\[type=checkbox\][^{]*\{[^}]*width\s*:\s*44px/, '开关宽 44px');
+  assert.match(mb, /input\[type=checkbox\][^{]*\{[^}]*height\s*:\s*26px/, '开关高 26px');
+  assert.match(mb, /\.usage-friend-row\s*\{[^}]*min-height\s*:\s*40px/, '整行点击区域 ≥40px');
+});
+
+test('手机端第 2 轮：语速滑块头 ≥28px', () => {
+  assert.match(mb, /::-webkit-slider-thumb[^{]*\{[^}]*width\s*:\s*28px/, '滑块头宽 ≥28px');
+  assert.match(mb, /::-webkit-slider-thumb[^{]*\{[^}]*height\s*:\s*28px/, '滑块头高 ≥28px');
+});
+
+test('手机端第 2 轮：横屏媒体查询（顶栏 ≤44px、输入区压缩、弹层 90vh 可滚动）', () => {
+  assert.match(css, /@media\s*\(\s*max-height:\s*500px\s*\)\s*and\s*\(\s*orientation:\s*landscape\s*\)/,
+    '应有横屏媒体查询');
+  const lb = bodiesOf(/@media\s*\(\s*max-height:\s*500px\s*\)\s*and\s*\(\s*orientation:\s*landscape\s*\)\s*\{/g);
+  assert.ok(lb.length > 0, '应能抽出横屏规则体');
+  assert.match(lb, /\.game-head\s*\{[^}]*height\s*:\s*44px/, '顶栏高度压到 44px');
+  assert.match(lb, /\.suggestions\s*\{[^}]*display\s*:\s*none/, '建议行动行可隐藏');
+  assert.match(lb, /#action-input[^{]*\{[^}]*max-height/, '输入框压缩为单行');
+  assert.match(lb, /\.stream\s*\{[^}]*min-height\s*:\s*50vh/, '叙事至少半屏可见');
+  assert.match(lb, /#usage-pop[^{]*\{[^}]*max-height\s*:\s*90vh[^}]*overflow-y\s*:\s*auto/,
+    '弹出卡片最大高度 90vh 且可滚动');
+});
