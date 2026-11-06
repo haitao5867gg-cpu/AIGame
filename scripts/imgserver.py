@@ -123,7 +123,7 @@ def load():
     # Keep the CLIP encoders outside the pipeline so the pipeline's execution device is the GPU.
     ENCODERS[:] = [
         (pipe.tokenizer, pipe.text_encoder.to(torch.float32)),
-        (pipe.tokenizer_2, pipe.text_encoder_2.to(torch.bfloat16)),
+        (pipe.tokenizer_2, pipe.text_encoder_2.to(torch.float32)),
     ]
     pipe.register_modules(text_encoder=None, text_encoder_2=None)
     pipe.set_progress_bar_config(disable=True)
