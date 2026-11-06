@@ -267,3 +267,23 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
 .image-viewer img{max-width:90vw;max-height:86vh;border-radius:12px;
   box-shadow:0 10px 40px rgba(0,0,0,.65)}
+
+/* ---- 序章卡片 ---- */
+.prologue-mask{position:fixed;inset:0;z-index:85;background:rgba(9,8,6,.92);
+  display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
+.prologue-card{width:100%;max-width:560px;max-height:calc(100vh - 32px);overflow-y:auto;
+  -webkit-overflow-scrolling:touch;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;padding:26px 24px 22px;box-shadow:0 12px 48px rgba(0,0,0,.6)}
+.prologue-title{font-family:var(--serif);font-size:26px;letter-spacing:2px;margin:0 0 18px;
+  color:var(--ink);font-weight:600;text-align:center}
+.prologue-section{margin:0 0 16px}
+.prologue-sub{font-family:var(--sans);font-size:13px;letter-spacing:1px;color:var(--accent-2);
+  margin:0 0 6px;font-weight:600}
+.prologue-text{font-family:var(--serif);font-size:16px;line-height:2;color:var(--ink);margin:0;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
+.prologue-start{display:block;width:100%;margin-top:10px;padding:11px 0;font-size:15px}
+@media(max-width:375px){
+  .prologue-card{padding:20px 16px 18px}
+  .prologue-title{font-size:22px}
+  .prologue-text{font-size:15px}
+}

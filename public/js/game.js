@@ -94,6 +94,28 @@
       else hideDeath();
       scrollBottom();
       requestImages();
+
+      // 序章：首次进入（turn 0、未看过、四段齐全）弹出；缺失则后台补生成，
+      // 供面板入口使用。老世界（turn > 0）不自动弹出，卡片也不阻塞上面的回放。
+      var pr = state.bible && state.bible.prologue;
+      var wtitle = (state.bible && state.bible.title) || '无限世界';
+      var seen = false;
+      try { seen = !!localStorage.getItem('prologueSeen:' + id); } catch (_) {}
+      if (state.turn === 0 && !seen && pr && pr.world && pr.me && pr.goal && pr.now) {
+        showPrologue(wtitle, pr, function () {
+          try { localStorage.setItem('prologueSeen:' + id, '1'); } catch (_) {}
+        });
+      }
+      if (!pr) {
+        api('/api/worlds/' + encodeURIComponent(id) + '/prologue')
+          .then(function (data) {
+            if (data && data.prologue && currentState) {
+              currentState.bible = currentState.bible || {};
+              currentState.bible.prologue = data.prologue;
+            }
+          })
+          .catch(function () {});
+      }
     } catch (err) {
       toast(err.message);
     }
@@ -403,6 +425,41 @@
       wsChildren.push(el('div', 'world-setting', '势力 · ' + f.name + '（' + (f.stance || '') + '）'));
     });
     (bible.rules || []).forEach(function (r) { wsChildren.push(el('div', 'world-setting', '规则 · ' + r)); });
+    // 序章入口：有则直接重看（按钮显示「继续」），无则补生成后再弹出。
+    var prologueBtn = el('button', 'btn tiny', '序章');
+    prologueBtn.addEventListener('click', async function () {
+      var p = (currentState && currentState.bible && currentState.bible.prologue)
+        || (s.bible && s.bible.prologue);
+      var wt = (s.bible && s.bible.title) || '无限世界';
+      if (p) {
+        showPrologue(wt, p, null);
+        prologueBtn.textContent = '继续';
+        return;
+      }
+      prologueBtn.textContent = '生成中…';
+      prologueBtn.disabled = true;
+      try {
+        var data = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/prologue');
+        var gen = data && data.prologue;
+        if (gen) {
+          currentState.bible = currentState.bible || {};
+          currentState.bible.prologue = gen;
+          prologueBtn.textContent = '继续';
+          prologueBtn.disabled = false;
+          showPrologue(wt, gen, null);
+        } else {
+          prologueBtn.textContent = '序章';
+          prologueBtn.disabled = false;
+          toast('序章暂时生成不了，稍后再试');
+        }
+      } catch (_) {
+        prologueBtn.textContent = '序章';
+        prologueBtn.disabled = false;
+        toast('序章暂时生成不了，稍后再试');
+      }
+    });
+    panel.appendChild(prologueBtn);
+
     panel.appendChild(collapsible('世界设定', wsChildren));
 
     renderTopAttrs(s);
