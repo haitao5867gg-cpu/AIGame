@@ -10,6 +10,8 @@ const path = require('node:path');
 const env = require('./src/env.js');
 const game = require('./src/game.js');
 const imagesMod = require('./src/images.js');
+const accessMod = require('./src/access.js');
+const context = require('./src/context.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -32,13 +34,13 @@ const CONTENT_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders) {
   const text = JSON.stringify(body);
-  res.writeHead(status, {
+  res.writeHead(status, Object.assign({
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(text),
     'Cache-Control': 'no-store',
-  });
+  }, extraHeaders || {}));
   res.end(text);
 }
 
@@ -216,7 +218,14 @@ function triggerImages(images, dataDir, state) {
   }
 }
 
-async function handle(req, res, cfg, g, images, dataDir) {
+function handle(req, res, cfg, g, images, dataDir, access) {
+  const player = access.playerOf(req);
+  // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家。
+  return context.run({ playerId: player ? player.id : null },
+    () => route(req, res, cfg, g, images, dataDir, access, player));
+}
+
+async function route(req, res, cfg, g, images, dataDir, access, player) {
   const method = (req.method || 'GET').toUpperCase();
   let pathname;
   let searchParams = null;
@@ -232,6 +241,40 @@ async function handle(req, res, cfg, g, images, dataDir) {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // ---- 访问控制：仅登录页 / 登录 / 登出无需玩家身份 ----
+  const isPublic =
+    (pathname === '/login.html' && (method === 'GET' || method === 'HEAD')) ||
+    (pathname === '/api/login' && method === 'POST') ||
+    (pathname === '/api/logout' && method === 'POST');
+  if (!player && !isPublic) {
+    if (pathname.startsWith('/api/')) {
+      return sendJson(res, 401, { error: '需要先输入访问密码', login: true });
+    }
+    if (method === 'GET' || method === 'HEAD') {
+      res.writeHead(302, { Location: '/login.html', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+    return sendJson(res, 401, { error: '需要先输入访问密码', login: true });
+  }
+
+  // ---- 登录 / 登出 / 当前玩家 ----
+  if (pathname === '/api/login' && method === 'POST') {
+    // 主人（本机 / Tailscale 直连）无需密码，也不发 cookie。
+    if (player && player.host) {
+      return sendJson(res, 200, { ok: true, player: { id: player.id, name: player.name, host: true } });
+    }
+    const body = await readJsonBody(req);
+    const r = access.login(req, body);
+    return sendJson(res, r.status, r.body, r.cookie ? { 'Set-Cookie': r.cookie } : undefined);
+  }
+  if (pathname === '/api/logout' && method === 'POST') {
+    return sendJson(res, 200, { ok: true }, { 'Set-Cookie': access.logoutCookie(req) });
+  }
+  if (pathname === '/api/me' && method === 'GET') {
+    return sendJson(res, 200, { id: player.id, name: player.name, host: !!(player && player.host) });
   }
 
   // ---- 无世界 ID 的接口 ----
@@ -381,9 +424,10 @@ function createHttpServer(cfg) {
   const dataDir = env.resolveDataDir(cfg);
   const g = game.createGame(cfg, dataDir);
   const images = imagesMod.createImages(cfg);
+  const access = accessMod.createAccess(cfg, dataDir);
   const server = http.createServer((req, res) => {
     Promise.resolve()
-      .then(() => handle(req, res, cfg, g, images, dataDir))
+      .then(() => handle(req, res, cfg, g, images, dataDir, access))
       .catch((err) => {
         const status = (err && err.expose && err.status) || 500;
         const message = err && err.expose && err.message ? err.message : '服务器内部错误';

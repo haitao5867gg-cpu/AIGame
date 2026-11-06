@@ -22,6 +22,8 @@ const DEFAULTS = Object.freeze({
   PORT: '8787',
   HOST: '0.0.0.0',
   DATA_DIR: './data',
+  // 公网来客访问密码；留空则首次启动自动生成 6 位数字，与 HMAC 密钥一起存入 data/access.json。
+  ACCESS_PASSWORD: '',
   // ---- 图片生成（第 7 节）----
   // 出图提供方，可写成逗号分隔的回退链，如 siliconflow,zhipu,local（前一家失败就换下一家）。
   // 可选：siliconflow（硅基流动 Kolors，免费）| zhipu（智谱 cogview-3-flash，免费）| gateway（付费）| local | off
@@ -159,7 +161,7 @@ function getConfig() {
 function withoutKey(cfg) {
   const out = Object.assign({}, cfg);
   for (const key of Object.keys(out)) {
-    if (/api.?key/i.test(key) || /key$/i.test(key) || /token$/i.test(key)) delete out[key];
+    if (/api.?key/i.test(key) || /key$/i.test(key) || /token$/i.test(key) || /password$/i.test(key)) delete out[key];
   }
   return out;
 }

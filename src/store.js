@@ -10,6 +10,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const context = require('./context.js');
 
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -157,7 +158,13 @@ function readEvents(dataDir, worldId) {
 }
 
 function appendUsage(dataDir, record) {
-  appendJsonl(usagePath(dataDir), record);
+  // 请求级上下文里带着当前玩家：记用量时补上，方便按玩家统计（有值才补，已带则不改）。
+  let rec = record;
+  const playerId = context.currentPlayerId();
+  if (rec && typeof rec === 'object' && !('playerId' in rec) && playerId) {
+    rec = Object.assign({}, rec, { playerId });
+  }
+  appendJsonl(usagePath(dataDir), rec);
 }
 
 // ---- 撤回备份 ----

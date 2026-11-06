@@ -44,6 +44,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .home-head{text-align:center;padding:38px 0 16px}
 .home-head h1{font-size:40px;letter-spacing:8px;margin:0;color:var(--ink);font-weight:600}
 .home-head .sub{color:var(--muted);font-family:var(--sans);font-size:14px;margin-top:10px;letter-spacing:1px}
+.player-line{margin-top:10px;font-family:var(--sans);font-size:13px;color:var(--muted)}
+.g-player{font-family:var(--sans);font-size:13px;color:var(--muted)}
+.logout-link{font-family:var(--sans);font-size:12px;color:var(--muted);cursor:pointer;
+  text-decoration:underline;margin-left:10px;background:none;border:none;padding:0}
+.logout-link:hover{color:var(--accent-2)}
 .home-actions{text-align:center;margin:12px 0 28px}
 .world-list{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
 .world-card{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
@@ -265,6 +270,7 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     <header class="home-head">
       <h1>无限世界</h1>
       <p class="sub">一句话，开一个永不结束的世界</p>
+      <div class="player-line"><span id="home-player-name"></span><a id="home-logout" class="logout-link" hidden>退出</a></div>
     </header>
     <div class="home-actions"><button id="btn-new" class="btn primary">开新世界</button></div>
     <div id="world-list" class="world-list"></div>
@@ -304,9 +310,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       <button class="link" data-nav="#/">‹ 世界列表</button>
       <div id="g-title" class="game-head-title">无限世界</div>
       <div class="game-head-meta"><span id="g-life"></span><span id="g-turn"></span></div>
+      <span id="g-player-name" class="g-player"></span>
       <button id="btn-usage" class="btn tiny" aria-expanded="false" aria-controls="usage-pop">用量</button>
       <button id="btn-panel" class="btn tiny">角色面板</button>
       <button id="btn-export" class="btn tiny">导出</button>
+      <a id="g-logout" class="logout-link" hidden>退出</a>
       <div id="usage-pop" class="usage-pop" hidden></div>
     </header>
     <div class="g-subhead">
@@ -462,6 +470,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     var text = await res.text();
     var data = null;
     try { data = JSON.parse(text); } catch (_) { data = text; }
+    // 未登录 / 会话失效：跳到登录页。
+    if (res.status === 401 && data && data.login === true) {
+      location.href = '/login.html';
+      throw new Error('需要先输入访问密码');
+    }
     if (!res.ok) {
       var err = new Error((data && data.error) || ('请求失败（' + res.status + '）'));
       err.status = res.status;
@@ -1366,6 +1379,11 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: action }),
     });
+    // 未登录 / 会话失效：跳到登录页。
+    if (res.status === 401) {
+      location.href = '/login.html';
+      throw new Error('需要先输入访问密码');
+    }
     if (!res.ok || !res.body) throw new Error('流式请求失败（' + res.status + '）');
     var result = null;
     var streamError = null;
@@ -1520,6 +1538,24 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
     }
   }
 
+  // ---- 当前玩家：启动时取一次 /api/me，显示名字；来客给一个退出入口 ----
+  function renderPlayerInfo(me) {
+    if (!me) return;
+    var label = me.host ? '主人' : ('玩家：' + me.name);
+    $('home-player-name').textContent = label;
+    $('g-player-name').textContent = label;
+    $('home-logout').hidden = !!me.host;
+    $('g-logout').hidden = !!me.host;
+  }
+
+  function doLogout() {
+    fetch('/api/logout', { method: 'POST' }).then(function () {
+      location.href = '/login.html';
+    }).catch(function () {
+      location.href = '/login.html';
+    });
+  }
+
   // ---- 事件绑定 ----
   function boot() {
     $('btn-new').addEventListener('click', function () { location.hash = '#/new'; });
@@ -1556,6 +1592,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
     });
     window.addEventListener('hashchange', route);
+    // 启动时取一次当前玩家，显示名字 / 来客退出入口。
+    $('home-logout').addEventListener('click', function (e) { e.preventDefault(); doLogout(); });
+    $('g-logout').addEventListener('click', function (e) { e.preventDefault(); doLogout(); });
+    api('/api/me').then(renderPlayerInfo).catch(function () {});
     route();
   }
 
