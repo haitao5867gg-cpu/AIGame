@@ -870,20 +870,41 @@ test('画风设定：LLM 返回字段不全 → 关键词规则兜底，且不�
   assert.equal(Object.values(images.readIndex(dataDir))[0].style, '水墨淡彩插画｜中国古代仙侠｜米白宣纸色背景');
 });
 
-test('画风设定：styles.json 里旧版本（无 v 或 v≠2）条目作废，重新生成并带上 v=2', async (t) => {
+test('画风设定：styles.json 里旧条目（无 v）照用，缓存 key 保持「画风｜时代」，不调 LLM；背景按规则补', async (t) => {
   const dataDir = tmpDir(t);
   fs.mkdirSync(path.join(dataDir, 'images'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'images', 'styles.json'), JSON.stringify({
-    wold: { zh: '水墨淡彩写实修仙', en: 'x', eraZh: 'y', eraEn: 'z', avoidZh: 'a', bgZh: 'b', bgEn: 'c' },
+    wold: { zh: '水墨淡彩写实修仙', en: 'ink-wash xianxia', eraZh: '中国古代修仙宗门底层', eraEn: 'ancient China', avoidZh: '现代物品' },
   }));
   let directed = 0;
+  const calls = [];
   images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }),
-    { fetchImpl: freeFetch(null), artDirector: async () => { directed += 1; return XIANXIA_ART; } });
+    { fetchImpl: freeFetch(calls), artDirector: async () => { directed += 1; return XIANXIA_ART; } });
   const st = xianxiaState('wold');
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
-  assert.equal(directed, 1);
-  const styles = JSON.parse(fs.readFileSync(path.join(dataDir, 'images', 'styles.json'), 'utf8'));
-  assert.equal(styles.wold.v, 2);
-  assert.equal(styles.wold.zh, XIANXIA_ART.zh);
+  assert.equal(directed, 0);
+  const e = Object.values(images.readIndex(dataDir))[0];
+  assert.equal(e.style, '水墨淡彩写实修仙｜中国古代修仙宗门底层');
+  assert.match(calls[0].body.prompt, /米白宣纸色背景，无文字，无印章/);
+});
+
+test('画风设定：已有旧图（无画风设定、key 只有画风词）的老世界沿用旧 key，不生成设定、不重画', async (t) => {
+  const dataDir = tmpDir(t);
+  const st = xianxiaState('wlegacy');
+  const k = 'item-' + images.imageKey('item', '旧铜灯', '水墨手绘插画', 'wlegacy');
+  fs.mkdirSync(path.join(dataDir, 'images'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'images', k + '.jpg'), JPEG);
+  fs.writeFileSync(path.join(dataDir, 'images', 'index.json'), JSON.stringify({
+    [k]: { kind: 'item', name: '旧铜灯', style: '水墨手绘插画', worldId: 'wlegacy', file: k + '.jpg', status: 'ready', ts: 1 },
+  }));
+  let directed = 0;
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(calls), artDirector: async () => { directed += 1; return XIANXIA_ART; } });
+  const list = images.imageList(dataDir, st);
+  await images.waitIdle();
+  assert.equal(directed, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(list.items['旧铜灯'].status, 'ready');
 });

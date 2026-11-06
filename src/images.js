@@ -40,26 +40,26 @@ const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 // 顺序即优先级：先匹配先生效。
 const STYLE_RULES = Object.freeze([
 // 每条只给一种媒介 + 一种笔触（不混用「写实」与「水墨」），并给固定背景色调。
-  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, zh: '水墨淡彩插画', en: 'Chinese ink-wash painting with light color washes',
+  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, legacyZh: '水墨手绘插画', zh: '水墨淡彩插画', en: 'Chinese ink-wash painting with light color washes',
     eraZh: '中国古代仙侠', eraEn: 'ancient China, xianxia', avoidZh: '现代物品，科技，霓虹，赛博朋克，西装，枪械，塑料',
     bgZh: '米白宣纸色背景', bgEn: 'plain off-white rice paper background' },
-  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, zh: '复古铜版线描淡彩', en: 'vintage engraving line art with sepia washes',
+  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, legacyZh: '复古蒸汽朋克手绘', zh: '复古铜版线描淡彩', en: 'vintage engraving line art with sepia washes',
     eraZh: '蒸汽机械时代', eraEn: 'steam-powered clockwork era', avoidZh: '现代电子产品，霓虹，塑料',
     bgZh: '旧羊皮纸色背景', bgEn: 'plain aged parchment background' },
-  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, zh: '数字厚涂概念插画', en: 'digital painterly concept art',
+  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, legacyZh: '科幻概念插画', zh: '数字厚涂概念插画', en: 'digital painterly concept art',
     eraZh: '未来科幻', eraEn: 'futuristic sci-fi', avoidZh: '古装，魔法',
     bgZh: '深灰蓝纯色背景', bgEn: 'plain dark slate blue background' },
-  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, zh: '民国月份牌画风', en: '1930s Chinese calendar poster painting',
+  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, legacyZh: '复古民国画报风', zh: '民国月份牌画风', en: '1930s Chinese calendar poster painting',
     eraZh: '1930 年代民国', eraEn: '1930s Republican China', avoidZh: '现代电子产品，未来科技',
     bgZh: '暖米黄纯色背景', bgEn: 'plain warm cream background' },
-  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, zh: '粗粝炭笔素描淡彩', en: 'gritty charcoal sketch with muted color washes',
+  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, legacyZh: '末日写实插画', zh: '粗粝炭笔素描淡彩', en: 'gritty charcoal sketch with muted color washes',
     eraZh: '末日废土', eraEn: 'post-apocalyptic wasteland', avoidZh: '整洁现代都市，魔法',
     bgZh: '灰褐纯色背景', bgEn: 'plain dusty grey-brown background' },
 ]);
-const DEFAULT_STYLE = Object.freeze({ zh: '手绘水彩插画', en: 'hand-drawn watercolor illustration',
+const DEFAULT_STYLE = Object.freeze({ legacyZh: '手绘插画', zh: '手绘水彩插画', en: 'hand-drawn watercolor illustration',
   bgZh: '浅米色纯色背景', bgEn: 'plain light beige background' });
 const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh', 'bgZh', 'bgEn'];
-// 画风设定版本：规则变了就升版本，styles.json 里旧版本条目作废、重新生成（图会按新画风重画）。
+// 画风设定版本：新生成的条目带 v=2。为了不让老世界整体重画，旧条目（无 v）照用、缓存 key 保持旧格式。
 const ART_VERSION = 2;
 const NO_TEXT_ZH = '无文字，无印章，无书法字，无水印';
 const NO_TEXT_EN = 'no calligraphy, no seal stamps, no written characters, no text, no watermark';
@@ -92,11 +92,12 @@ function ruleArt(bible) {
   const text = `${b.title == null ? '' : b.title} ${b.tone == null ? '' : b.tone}`;
   for (const r of STYLE_RULES) {
     if (r.re.test(text)) {
-      return { zh: r.zh, en: r.en, eraZh: r.eraZh, eraEn: r.eraEn, avoidZh: r.avoidZh, bgZh: r.bgZh, bgEn: r.bgEn };
+      return { zh: r.zh, en: r.en, eraZh: r.eraZh, eraEn: r.eraEn, avoidZh: r.avoidZh, bgZh: r.bgZh, bgEn: r.bgEn,
+        legacyZh: r.legacyZh };
     }
   }
   return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en, eraZh: '', eraEn: '', avoidZh: '',
-    bgZh: DEFAULT_STYLE.bgZh, bgEn: DEFAULT_STYLE.bgEn };
+    bgZh: DEFAULT_STYLE.bgZh, bgEn: DEFAULT_STYLE.bgEn, legacyZh: DEFAULT_STYLE.legacyZh };
 }
 
 function stylesPath(dataDir) { return path.join(imagesDir(dataDir), 'styles.json'); }
@@ -112,15 +113,42 @@ function cachedArt(dataDir, state) {
   if (fromBible) return fromBible;
   const worldId = String(s.id == null ? '' : s.id);
   const e = readStyles(dataDir)[worldId];
-  if (!e || Number(e.v) !== ART_VERSION) return null; // 旧版本条目作废，重新生成
-  return normalizeArt(e);
+  if (!e || typeof e !== 'object') return null;
+  if (Number(e.v) === ART_VERSION) return normalizeArt(e);
+  // 旧条目（4f1e02a 生成，无背景字段）：照用，缓存 key 保持「画风｜时代」，老图不重画；背景按规则补。
+  const rb = ruleArt(s.bible);
+  const legacy = normalizeArt(Object.assign({ bgZh: rb.bgZh, bgEn: rb.bgEn }, e));
+  if (!legacy) return null;
+  legacy.legacyKey = `${legacy.zh}｜${legacy.eraZh}`;
+  return legacy;
+}
+
+// 4f1e02a 之前就有图、但还没有画风设定的老世界：沿用最早的缓存 key（只有画风词），不触发整体重画。
+function hasLegacyImages(dataDir, worldId) {
+  const idx = readIndex(dataDir);
+  return Object.keys(idx).some((k) => {
+    const e = idx[k];
+    return e && String(e.worldId) === worldId && e.status === 'ready' && !String(e.style || '').includes('｜');
+  });
+}
+
+// 世界当前用的画风：{ style, needsArt }。needsArt=true 表示该生成画风设定（新世界）。
+function styleForWorld(dataDir, state) {
+  const s = state && typeof state === 'object' ? state : {};
+  const cached = cachedArt(dataDir, s);
+  if (cached) return { style: styleFromArt(cached), needsArt: false };
+  const rule = ruleArt(s.bible);
+  if (hasLegacyImages(dataDir, String(s.id == null ? '' : s.id))) {
+    return { style: styleFromArt(Object.assign({}, rule, { legacyKey: rule.legacyZh })), needsArt: false };
+  }
+  return { style: styleFromArt(rule), needsArt: true };
 }
 
 // job.style：zh 进缓存 key（画风 / 时代 / 背景变了 → 旧图自动重画），其余字段给提示词用。
 function styleFromArt(art) {
   const a = art || ruleArt(null);
   return {
-    zh: [a.zh, a.eraZh, a.bgZh].filter(Boolean).join('｜'),
+    zh: a.legacyKey || [a.zh, a.eraZh, a.bgZh].filter(Boolean).join('｜'),
     en: a.en, artZh: a.zh, eraZh: a.eraZh || '', eraEn: a.eraEn || '', avoidZh: a.avoidZh || '',
     bgZh: a.bgZh || DEFAULT_STYLE.bgZh, bgEn: a.bgEn || DEFAULT_STYLE.bgEn,
   };
@@ -285,7 +313,7 @@ function buildImageList(dataDir, state, ensureFn, isGenerating) {
   const s = state && typeof state === 'object' ? state : {};
   ensureFn(dataDir, s, listForState(s));
   const idx = readIndex(dataDir);
-  const style = styleFromArt(cachedArt(dataDir, s) || ruleArt(s.bible));
+  const style = styleForWorld(dataDir, s).style;
   const worldId = String(s.id == null ? '' : s.id);
   const gen = typeof isGenerating === 'function' && isGenerating(worldId);
   const statusOf = (i, kind, name, st, wid) => {
@@ -392,8 +420,8 @@ function createImages(cfg, opts) {
   // 返回 {style, ready}。ready=false 表示正在生成画风设定，本次先不排队（生成后会自动重新 ensure）。
   function resolveStyle(dataDir, state, list) {
     const worldId = String(state.id == null ? '' : state.id);
-    const cached = cachedArt(dataDir, state);
-    if (cached) return { style: styleFromArt(cached), ready: true };
+    const sw = styleForWorld(dataDir, state);
+    if (!sw.needsArt) return { style: sw.style, ready: true };
     const failedAt = artFailedAt.get(worldId);
     if (mock || (failedAt != null && nowFn() - failedAt < ART_RETRY_MS)) {
       return { style: styleFromArt(ruleArt(state.bible)), ready: true };
