@@ -398,6 +398,7 @@ if (require.main === module) {
     process.stdout.write(
       `无限世界服务已启动： http://${cfg.HOST}:${port}（mock=${cfg.LLM_MOCK}）\n`,
     );
+    require('./src/imgsupervisor.js').startImageSupervisor(cfg);
   });
 }
 

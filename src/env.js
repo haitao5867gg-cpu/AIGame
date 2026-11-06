@@ -29,6 +29,10 @@ const DEFAULTS = Object.freeze({
   IMAGE_SIZE: '1024x1024',
   IMAGE_MAX_PER_WORLD: '40',      // 仅 gateway 生效，防止花钱失控
   IMAGE_CONCURRENCY: '1',
+  // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
+  IMAGE_LOCAL_PYTHON: '',
+  IMAGE_HF_HOME: '',
+  IMAGE_LORA: '',
 });
 
 const NUMERIC_KEYS = Object.freeze([
