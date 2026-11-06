@@ -186,12 +186,12 @@ test('getConfig 是可用函数', () => {
 });
 
 // ---- 图片配置（第 7 节）----
-test('load: IMAGE_* 规格默认值（local / 1024x1024 / 40 / 1 / model）', () => {
+test('load: IMAGE_* 规格默认值（local / 768x768 / 40 / 1 / model）', () => {
   const cfg = env.load(missingFile(), {});
   assert.equal(cfg.IMAGE_PROVIDER, 'local');
   assert.equal(cfg.IMAGE_BASE_URL, 'http://127.0.0.1:8790/v1');
   assert.equal(cfg.IMAGE_MODEL, 'Doubao-seedream-4.0');
-  assert.equal(cfg.IMAGE_SIZE, '1024x1024');
+  assert.equal(cfg.IMAGE_SIZE, '768x768');
   assert.equal(cfg.IMAGE_MAX_PER_WORLD, 40);
   assert.equal(cfg.IMAGE_CONCURRENCY, 1);
   assert.equal(typeof cfg.IMAGE_MAX_PER_WORLD, 'number');

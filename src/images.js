@@ -216,7 +216,12 @@ function createImages(cfg, opts) {
       : 'http://127.0.0.1:8790/v1';
   }
   const model = String(c.IMAGE_MODEL || 'Doubao-seedream-4.0');
-  const size = String(c.IMAGE_SIZE || '1024x1024');
+  const size = String(c.IMAGE_SIZE || '768x768');
+  // Seedream 要求至少 960x960 像素；配置偏小时 gateway 自动用 1024x1024。
+  const gatewaySize = (() => {
+    const m = /^(\d+)x(\d+)$/i.exec(size);
+    return m && Number(m[1]) * Number(m[2]) >= 921600 ? size : '1024x1024';
+  })();
   const rawMax = Number(c.IMAGE_MAX_PER_WORLD);
   const maxPerWorld = Number.isFinite(rawMax) && rawMax >= 0 ? rawMax : 40;
   const concurrency = Math.max(1, Number(c.IMAGE_CONCURRENCY) || 1);
@@ -277,7 +282,7 @@ function createImages(cfg, opts) {
     let body;
     if (isGateway) {
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      body = { model, prompt, size, n: 1, response_format: 'b64_json', watermark: false };
+      body = { model, prompt, size: gatewaySize, n: 1, response_format: 'b64_json', watermark: false };
     } else {
       body = { prompt, size, response_format: 'b64_json' };
     }

@@ -13,9 +13,9 @@ const path = require('node:path');
 const CHECK_MS = 30000;
 const START_GRACE_MS = 120000; // loading SDXL takes 20~50 s; don't start a second copy meanwhile
 const MAX_STARTS_PER_HOUR = 3;
-// The SDXL server needs ~9 GB of RAM (weights stay in RAM with CPU offload). Never start it on a
+// The SDXL server peaks at ~5.7 GB of RAM while loading. Never start it on a
 // machine that is short of memory: on 2026-11-06 it starved the 16 GB home PC.
-const DEFAULT_MIN_FREE_MB = 10000;
+const DEFAULT_MIN_FREE_MB = 7000;
 
 function healthUrlOf(baseUrl) {
   return String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '') + '/health';

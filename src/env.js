@@ -26,14 +26,14 @@ const DEFAULTS = Object.freeze({
   IMAGE_PROVIDER: 'local',        // local | gateway | off
   IMAGE_BASE_URL: '',              // 空则按提供方取默认（见 normalize）
   IMAGE_MODEL: 'Doubao-seedream-4.0', // gateway 用
-  IMAGE_SIZE: '1024x1024',
+  IMAGE_SIZE: '768x768',          // 本地服务上限 768（8G 显存）；gateway 时请设 1024x1024
   IMAGE_MAX_PER_WORLD: '40',      // 仅 gateway 生效，防止花钱失控
   IMAGE_CONCURRENCY: '1',
   // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
   IMAGE_LOCAL_PYTHON: '',
   IMAGE_HF_HOME: '',
   IMAGE_LORA: '',
-  IMAGE_LOCAL_MIN_FREE_MB: '10000', // 空闲内存低于此值不启动本地画图服务
+  IMAGE_LOCAL_MIN_FREE_MB: '7000', // 空闲内存低于此值不启动本地画图服务（加载峰值约 5.7G）
 });
 
 const NUMERIC_KEYS = Object.freeze([
