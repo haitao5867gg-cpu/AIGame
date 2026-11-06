@@ -21,7 +21,11 @@ const prefs = require('./prefs.js');
 
 // GET /api/images/<file> 严格校验：只允许 <kind>-<12位16进制>.<jpg|svg>。
 // 正则保证文件名里没有斜杠 / 多余的点，天然挡住路径穿越。
-const FILE_NAME_RE = /^(item|npc|scene)-[0-9a-f]{12}\.(jpg|png|svg)$/;
+const FILE_NAME_RE = /^(item|npc|hero|scene)-[0-9a-f]{12}\.(jpg|png|svg)$/;
+// 只懂英文的提供方（cloudflare / local）：翻译结果里只要还有一个汉字，就当成失败、跳过该家。
+const HAS_CHINESE = /[一-鿿]/;
+// 场景多参考图出图默认模型；配置成空字符串即停用参考图、直接走文生图回退链。
+const DEFAULT_SCENE_REF_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
 const FAILED_COOLDOWN_MS = 10 * 60 * 1000; // failed 10 分钟后才允许重试
 const IMAGE_TIMEOUT_MS = 60000;            // 单次出图 HTTP 超时
 const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000; // 回退链里某家失败后 5 分钟内排到最后
@@ -166,10 +170,10 @@ function styleFromArt(art) {
 }
 
 // 缓存 key = sha1(kind|name|style[|worldId]) 前 12 位（十六进制）。
-// 物品不带 worldId（跨世界共享）；NPC 带 worldId（重名但长相不同）。
+// 物品不带 worldId（跨世界共享）；NPC / 主角带 worldId（重名但长相不同）。
 function imageKey(kind, name, style, worldId) {
   let s = `${kind}|${name}|${style}`;
-  if (kind === 'npc') s += `|${worldId == null ? '' : worldId}`;
+  if (kind === 'npc' || kind === 'hero') s += `|${worldId == null ? '' : worldId}`;
   return crypto.createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 12);
 }
 
@@ -225,8 +229,12 @@ function gatewayPrompt(job) {
   const world = `世界背景：${title}${st.eraZh ? '，' + st.eraZh : ''}`;
   const avoid = st.avoidZh ? `，不要出现${st.avoidZh}` : '';
   const bg = st.bgZh || DEFAULT_STYLE.bgZh;
-  if (job.kind === 'npc') {
-    return `${art}。${world}。游戏角色半身肖像：${job.name}，${job.role}，${clip(job.desc, 60)}，`
+  if (job.kind === 'npc' || job.kind === 'hero') {
+    // 主角形象图走 NPC 一样的半身像链路，只是把名字换成「主角」+ 外貌。
+    const who = job.kind === 'hero'
+      ? `主角，${clip(job.desc, 60)}`
+      : `${job.name}，${job.role}，${clip(job.desc, 60)}`;
+    return `${art}。${world}。游戏角色半身肖像：${who}，`
       + `穿着符合该时代的服饰，面部清晰，${bg}，${NO_TEXT_ZH}${avoid}`;
   }
   return `${art}。${world}。游戏道具图标：${job.name}，该时代的器物，单个物体居中，完整可辨认，`
@@ -240,7 +248,7 @@ function localPrompt(enDesc, kind, styleEn, eraEn, bgEn) {
   const era = eraEn ? `, ${eraEn} style` : '';
   enDesc = String(enDesc).replace(/[.。\s]+$/, '');
   const bg = bgEn || DEFAULT_STYLE.bgEn;
-  if (kind === 'npc') {
+  if (kind === 'npc' || kind === 'hero') {
     return `${styleEn}. ${enDesc}${era}, period-accurate clothing, half-body portrait, clear face, ${bg}, ${NO_TEXT_EN}`;
   }
   return `${styleEn}. ${enDesc}${era}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
@@ -284,7 +292,16 @@ function cleanEnglish(text, maxWords) {
   return t;
 }
 
-// ---- 待生成清单：当前物品 + 当前 NPC（role/desc 取自 bible.npcs）----
+// 主角身份：名字 + 形象（形象可能缺失）。key 用「名字|形象」，与 NPC 一样按世界区分。
+function heroIdentity(state) {
+  const ch = (state && state.character && typeof state.character === 'object') ? state.character : {};
+  const rawName = typeof ch.name === 'string' ? ch.name.trim() : '';
+  const rawDesc = typeof ch.appearance === 'string' ? ch.appearance.trim() : '';
+  const name = rawName || '你';
+  return { name, desc: rawDesc, keyName: `${name}|${rawDesc}`, described: !!(rawName || rawDesc) };
+}
+
+// ---- 待生成清单：主角 + 当前物品 + 当前 NPC（role/desc 取自 bible.npcs）----
 // 纯函数，单独导出便于测试。列表元素形如 {kind, name, role, desc}。
 function listForState(state) {
   const s = state && typeof state === 'object' ? state : {};
@@ -299,6 +316,8 @@ function listForState(state) {
     }
   }
   const out = [];
+  const hero = heroIdentity(s);
+  out.push({ kind: 'hero', name: hero.name, role: '主角', desc: hero.desc });
   const items = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
   for (const it of items) {
     if (typeof it === 'string' && it.trim()) {
@@ -389,7 +408,52 @@ function buildImageList(dataDir, state, ensureFn, isGenerating) {
     if (!k) continue;
     npcs[k] = statusOf(idx, 'npc', k, style.zh, worldId);
   }
-  return { items, npcs };
+  const hero = statusOf(idx, 'hero', heroIdentity(s).keyName, style.zh, worldId);
+  return { hero, items, npcs };
+}
+
+// 场景多参考图：只收集 status=ready 且文件真实存在的图。顺序固定：主角、NPC(≤2)、物品(≤1)，共 ≤4 张。
+function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames) {
+  const refs = [];
+  const idx = readIndex(dataDir);
+  const ready = (ik) => {
+    const e = idx[ik];
+    if (!e || e.status !== 'ready' || typeof e.file !== 'string' || !e.file) return null;
+    const p = path.join(imagesDir(dataDir), e.file);
+    if (!fs.existsSync(p)) return null;
+    return { p, e };
+  };
+  const firstWords = (t, n) => String(t == null ? '' : t).trim()
+    .split(/\s+/).filter(Boolean).slice(0, n).join(' ');
+  // 主角形象图
+  if (castNames.some((n) => n === '你' || n === heroId.name)) {
+    const ik = indexKeyOf('hero', imageKey('hero', heroId.keyName, style.zh, worldId));
+    const r = ready(ik);
+    if (r) refs.push({ path: r.p, label: 'the main character', type: 'person', enFirst: '' });
+  }
+  // NPC 头像：除主角外最多 2 个；说明优先用该头像当初的英文描述，保证提示词是英文
+  let npcUsed = 0;
+  for (const name of castNames) {
+    if (npcUsed >= 2 || refs.length >= 4) break;
+    if (name === '你' || name === heroId.name) continue;
+    const ik = indexKeyOf('npc', imageKey('npc', name, style.zh, worldId));
+    const r = ready(ik);
+    if (!r) continue;
+    const enFirst = firstWords(r.e.enPrompt, 8);
+    refs.push({ path: r.p, label: enFirst ? `${enFirst} (NPC)` : 'the NPC', type: 'person', enFirst: '' });
+    npcUsed += 1;
+  }
+  // 物品图：最多 1 个；说明优先用该物品索引项的 enPrompt 前 12 个词，没有就 the item
+  for (const name of itemNames) {
+    if (refs.length >= 4) break;
+    const ik = indexKeyOf('item', imageKey('item', name, style.zh, worldId));
+    const r = ready(ik);
+    if (!r) continue;
+    const enFirst = firstWords(r.e.enPrompt, 12);
+    refs.push({ path: r.p, label: enFirst ? `the ${enFirst} (item)` : 'the item', type: 'item', enFirst });
+    break;
+  }
+  return refs.slice(0, 4);
 }
 
 // ---- 核心：可实例化的图片管理器（进程内全局队列）----
@@ -414,6 +478,9 @@ function createImages(cfg, opts) {
   const cfAccount = String(c.CLOUDFLARE_ACCOUNT_ID || '');
   const cfToken = String(c.CLOUDFLARE_API_TOKEN || '');
   const cfModel = String(c.IMAGE_CLOUDFLARE_MODEL || '@cf/black-forest-labs/flux-1-schnell');
+  // 场景多参考图模型：未配置时用默认，显式空字符串表示停用参考图。
+  const sceneRefModel = c.IMAGE_SCENE_REF_MODEL == null
+    ? DEFAULT_SCENE_REF_MODEL : String(c.IMAGE_SCENE_REF_MODEL);
   const msKey = String(c.MODELSCOPE_API_KEY || '');
   const msModel = String(c.IMAGE_MODELSCOPE_MODEL || 'Tongyi-MAI/Z-Image-Turbo');
   const providerCooldown = new Map(); // provider → 冷却截止时间
@@ -523,9 +590,10 @@ function createImages(cfg, opts) {
     writeIndex(dataDir, idx);
   }
 
-  // 非流式翻译（local 用）：让回合模型把中文信息翻成一句 ≤25 词的英文画面描述。
+  // 非流式翻译（local / cloudflare 用）：让回合模型把中文信息翻成一句 ≤25 词的英文画面描述。
   // 失败一律返回空串（由上层用兜底短语），绝不抛错。
-  async function translate(job) {
+  // subjectOverride：多参考图场景改翻 place + action（不再翻外貌），其余走默认口径。
+  async function translate(job, subjectOverride) {
     try {
       const isScene = job.kind === 'scene';
       const eraZh = job.style && job.style.eraZh ? job.style.eraZh : '';
@@ -533,17 +601,25 @@ function createImages(cfg, opts) {
       let subject;
       let system;
       if (isScene) {
-        const cast = (Array.isArray(job.cast) ? job.cast : []).slice(0, 3)
-          .map((c) => `${clip(c && c.name, 20)}：${clip(c && c.look, 40)}`).join('；');
-        subject = `场景：${clip(job.desc, 60)}；在场人物：${cast}；世界：${job.bibleTitle}；时代背景：${eraZh}`;
+        if (subjectOverride != null) {
+          subject = subjectOverride;
+        } else {
+          const cast = (Array.isArray(job.cast) ? job.cast : []).slice(0, 3)
+            .map((c) => `${clip(c && c.name, 20)}：${clip(c && c.look, 40)}`).join('；');
+          subject = `场景：${clip(job.desc, 60)}；在场人物：${cast}；世界：${job.bibleTitle}；时代背景：${eraZh}`;
+        }
         system = 'Output ONLY one English visual description (at most 40 words) of the game scene '
           + 'for an image generator. Describe the setting, atmosphere and wide composition; keep clothing '
           + 'and objects period-accurate to the world\'s era, never modern or futuristic unless the world '
           + 'itself is. Do NOT include any person name or quotation marks. No explanation.';
       } else {
-        subject = job.kind === 'npc'
-          ? `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`
-          : `物品：${job.name}；世界：${job.bibleTitle}${era}`;
+        if (job.kind === 'npc') {
+          subject = `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
+        } else if (job.kind === 'hero') {
+          subject = `主角：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
+        } else {
+          subject = `物品：${job.name}；世界：${job.bibleTitle}${era}`;
+        }
         system = 'Output ONLY one English visual description (at most 25 words) of the subject '
           + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
           + 'of that era\'s materials and craft, people wear that era\'s clothing; never modern or futuristic '
@@ -567,6 +643,14 @@ function createImages(cfg, opts) {
       console.warn('[images] 翻译失败，使用英文兜底：' + (err && err.message ? err.message : err));
       return '';
     }
+  }
+
+  // 只懂英文的提供方用的翻译：结果里只要还有汉字就视为失败并抛错，让回退链换下一家中文提供方，
+  // 绝不把中文提示词喂给 flux / local。返回空串表示真正的翻译失败，由上层用英文兜底短语。
+  async function englishDesc(job, subjectOverride) {
+    const e = await translate(job, subjectOverride);
+    if (HAS_CHINESE.test(e)) throw new Error('翻译结果含中文，跳过只懂英文的提供方');
+    return e;
   }
 
   // 带超时的 fetch；超时 / 网络错误统一翻成中文错误。
@@ -704,12 +788,88 @@ function createImages(cfg, opts) {
     return Buffer.from(b64, 'base64');
   }
 
+  // Cloudflare FLUX.2 klein 多参考图：multipart/form-data，返回 {result:{image:<base64 JPEG>}}。
+  // 1024x1024 的 jpg/png 可直接传，不必缩放；响应头 cf-ai-neurons 是本次消耗。
+  async function callCloudflareRefs(prompt, refs) {
+    if (!cfAccount || !cfToken) throw new Error('未配置 CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN');
+    const url = CLOUDFLARE_API_BASE + encodeURIComponent(cfAccount) + '/ai/run/' + sceneRefModel;
+    const form = new FormData();
+    form.append('prompt', prompt);
+    form.append('width', '1024');
+    form.append('height', '576');
+    for (let i = 0; i < refs.length; i++) {
+      const r = refs[i];
+      const bytes = fs.readFileSync(r.path);
+      const isPng = /\.png$/i.test(r.path);
+      form.append(`input_image_${i}`,
+        new Blob([new Uint8Array(bytes)], { type: isPng ? 'image/png' : 'image/jpeg' }),
+        `ref${i}.${isPng ? 'png' : 'jpg'}`);
+    }
+    const resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfToken}` },
+      body: form,
+    });
+    let data;
+    try {
+      data = typeof (resp && resp.json) === 'function' ? await resp.json() : resp;
+    } catch (_) {
+      throw new Error('Cloudflare 多参考图返回不是合法 JSON'
+        + (resp && resp.status ? `（HTTP ${resp.status}）` : ''));
+    }
+    if (resp && (resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400))) {
+      const msg = data && typeof data.message === 'string' ? '：' + clip(data.message, 200) : '';
+      throw new Error('Cloudflare 多参考图 HTTP ' + resp.status + msg);
+    }
+    if (data && data.success === false) {
+      const e = Array.isArray(data.errors) && data.errors[0];
+      throw new Error('Cloudflare 多参考图错误：' + clip((e && e.message) || JSON.stringify(data.errors), 200));
+    }
+    const b64 = data && data.result && data.result.image;
+    if (typeof b64 !== 'string' || !b64) throw new Error('Cloudflare 多参考图返回缺少 result.image');
+    let neurons;
+    if (resp && resp.headers && typeof resp.headers.get === 'function') {
+      const raw = resp.headers.get('cf-ai-neurons');
+      if (raw != null && raw !== '' && Number.isFinite(Number(raw))) neurons = Number(raw);
+    }
+    return { bytes: Buffer.from(b64, 'base64'), neurons };
+  }
+
+  // 场景多参考图英文提示词：先翻译 place + action（不再翻外貌），再按 image 序号指代各参考图。
+  async function sceneWithRefs(job) {
+    const st = job.style || {};
+    const eraEn = st.eraEn || '';
+    const eraZh = st.eraZh || '';
+    const place = String(job.place == null ? '' : job.place);
+    const action = String(job.action == null ? '' : job.action);
+    const subject = `场景地点：${clip(place, 60)}；画面动作：${clip(action, 160)}；`
+      + `世界：${job.bibleTitle || ''}；时代背景：${eraZh}`;
+    const enDesc = (await englishDesc(job, subject)) || 'a dramatic game scene';
+    const parts = job.refs.map((r, i) => {
+      if (r.type === 'item') {
+        return r.enFirst ? `the ${r.enFirst} from image ${i} (item)` : `the item from image ${i}`;
+      }
+      return `the person from image ${i} (${r.label})`;
+    });
+    const hasItem = job.refs.some((r) => r.type === 'item');
+    const keep = "Keep each person's face, hair and clothing exactly as in their reference image"
+      + (hasItem ? ' and the item exactly as in its reference image' : '');
+    const prompt = `${st.en || ''}. Wide cinematic 16:9 scene, ${eraEn} style. ${enDesc}. `
+      + `In the scene: ${parts.join('; ')}. ${keep}. `
+      + 'Period-accurate setting, atmospheric lighting, clean image, unsigned.';
+    const { bytes, neurons } = await callCloudflareRefs(prompt, job.refs);
+    return {
+      bytes, prompt, enPrompt: enDesc, provider: 'cloudflare', model: sceneRefModel,
+      neurons, refCount: job.refs.length,
+    };
+  }
+
   // 用单个提供方出一张图：返回 {bytes, prompt, enPrompt, model}。
   async function runProvider(p, job) {
     const isScene = job.kind === 'scene';
     const zhPrompt = () => (isScene ? scenePromptZh(job) : gatewayPrompt(job));
     const enFallback = () => (isScene ? 'a dramatic game scene'
-      : (job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item'));
+      : ((job.kind === 'npc' || job.kind === 'hero') ? 'a mysterious person' : 'a mysterious item'));
     const enPromptOf = (e) => (isScene
       ? scenePromptEn(e, job.style)
       : localPrompt(e, job.kind, job.style.en, job.style.eraEn, job.style.bgEn));
@@ -719,8 +879,8 @@ function createImages(cfg, opts) {
     }
     if (p === 'cloudflare') {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
-      let enPrompt = await translate(job);
-      if (!enPrompt) enPrompt = enFallback();
+      // 翻译结果若仍是中文，englishDesc 会抛错，让 generate 换下一家中文提供方。
+      const enPrompt = (await englishDesc(job)) || enFallback();
       const prompt = enPromptOf(enPrompt);
       return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
     }
@@ -736,9 +896,8 @@ function createImages(cfg, opts) {
       const prompt = zhPrompt();
       return { bytes: await callImageApi(prompt, true), prompt, enPrompt: '', model };
     }
-    // local：先翻译，再拼英文提示词。
-    let enPrompt = await translate(job);
-    if (!enPrompt) enPrompt = enFallback();
+    // local：先翻译，再拼英文提示词；翻译仍是中文就抛错让回退链换下一家。
+    const enPrompt = (await englishDesc(job)) || enFallback();
     const prompt = enPromptOf(enPrompt);
     return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
   }
@@ -771,6 +930,8 @@ function createImages(cfg, opts) {
     let ok = false;
     let usedProvider = provider;
     let usedModel = chain[0] === 'gateway' ? model : 'local';
+    let neurons;
+    let refCount = 0;
     try {
       let filename;
       let bytes;
@@ -781,22 +942,37 @@ function createImages(cfg, opts) {
         filename = svgName(job.kind, job.key);
         bytes = Buffer.from(mockSvg(job.name), 'utf8');
       } else {
-        const r = await generate(job);
+        let r = null;
+        // 场景 + 有参考图 + 链里有 cloudflare 且配置齐全 → 先试多参考图，失败无条件落回文生图。
+        if (job.kind === 'scene' && sceneRefModel && chain.includes('cloudflare')
+            && cfAccount && cfToken && Array.isArray(job.refs) && job.refs.length) {
+          try {
+            r = await sceneWithRefs(job);
+          } catch (err) {
+            console.warn('[images] 多参考图出图失败，落回文生图：'
+              + (err && err.message ? err.message : err));
+          }
+        }
+        if (!r) r = await generate(job);
         bytes = r.bytes;
         prompt = r.prompt;
         enPrompt = r.enPrompt;
         usedProvider = r.provider;
         usedModel = r.model;
+        if (r.neurons != null) neurons = r.neurons;
+        if (r.refCount) refCount = r.refCount;
         const isPng = bytes && bytes.length >= 4
           && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
         filename = isPng ? pngName(job.kind, job.key) : jpgName(job.kind, job.key);
       }
       writeBinaryAtomic(path.join(imagesDir(job.dataDir), filename), bytes);
-      updateEntry(job.dataDir, job.indexKey, {
+      const patch = {
         kind: job.kind, name: job.name, style: job.style.zh, worldId: job.worldId,
         file: filename, status: 'ready', ts: nowFn(),
         enPrompt, prompt, provider: usedProvider,
-      });
+      };
+      if (refCount) patch.refCount = refCount;
+      updateEntry(job.dataDir, job.indexKey, patch);
       ok = true;
     } catch (err) {
       console.warn('[images] 生成失败 ' + job.indexKey + '：' + (err && err.message ? err.message : err));
@@ -807,11 +983,13 @@ function createImages(cfg, opts) {
       }
     } finally {
       try {
-        store.appendUsage(job.dataDir, {
+        const row = {
           ts: nowFn(), kind: job.kind === 'scene' ? 'scene' : 'image', provider: usedProvider,
           model: usedModel,
           ok, ms: nowFn() - t0, worldId: job.worldId,
-        });
+        };
+        if (neurons != null) row.neurons = neurons;
+        store.appendUsage(job.dataDir, row);
       } catch (e) {
         console.warn('[images] 记录用量失败：' + (e && e.message ? e.message : e));
       }
@@ -880,10 +1058,16 @@ function createImages(cfg, opts) {
         }
       }
       for (const item of (Array.isArray(list) ? list : [])) {
-        const kind = item && item.kind === 'npc' ? 'npc' : 'item';
+        const rawKind = item && item.kind;
+        const kind = rawKind === 'npc' || rawKind === 'hero' ? rawKind : 'item';
+        // 没有主角名字 / 形象时不排主角形象图（老存档兼容：不给无名状态凭空多一张图）。
+        if (kind === 'hero' && !heroIdentity(s).described) continue;
         const name = item && typeof item.name === 'string' ? item.name.trim() : '';
         if (!name) continue;
-        const key = imageKey(kind, name, style.zh, worldId);
+        const desc = item && typeof item.desc === 'string' ? item.desc : '';
+        // 主角 key 用「名字|形象」，与 NPC 一样带 worldId。
+        const keyName = kind === 'hero' ? `${name}|${desc}` : name;
+        const key = imageKey(kind, keyName, style.zh, worldId);
         const ik = indexKeyOf(kind, key);
         const cur = idx[ik];
         if (!shouldQueue(cur, ik, dataDir)) continue;
@@ -898,7 +1082,7 @@ function createImages(cfg, opts) {
         queue.push({
           dataDir, indexKey: ik, kind, key, name, style, worldId,
           role: item && typeof item.role === 'string' ? item.role : '',
-          desc: item && typeof item.desc === 'string' ? item.desc : '',
+          desc,
           bibleTitle: (s.bible && s.bible.title) || '',
           bibleTone: (s.bible && s.bible.tone) || '',
         });
@@ -937,14 +1121,46 @@ function createImages(cfg, opts) {
       const ik = indexKeyOf('scene', key);
       const style = styleForWorld(dataDir, s).style;
       const bibleTitle = (s.bible && s.bible.title) || '';
-      const npcs = (s.bible && Array.isArray(s.bible.npcs)) ? s.bible.npcs : [];
-      const cast = [];
-      for (const n of npcs) {
-        if (cast.length >= 3) break;
-        const name = n && typeof n.name === 'string' ? n.name.trim() : '';
-        if (!name || !desc.includes(name)) continue;
-        cast.push({ name, look: clip(n.desc, 40) });
+      const bibleNpcs = (s.bible && Array.isArray(s.bible.npcs)) ? s.bible.npcs : [];
+      const heroId = heroIdentity(s);
+
+      // cast：新签名传名字数组；缺失时按 desc 里出现的 NPC 名字匹配（保持旧行为）。
+      let castNames;
+      if (Array.isArray(q.cast)) {
+        castNames = q.cast.filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim());
+      } else {
+        castNames = [];
+        for (const n of bibleNpcs) {
+          if (castNames.length >= 3) break;
+          const name = n && typeof n.name === 'string' ? n.name.trim() : '';
+          if (!name || !desc.includes(name)) continue;
+          castNames.push(name);
+        }
       }
+      // items：新签名传物品名数组；缺失时按 desc 里出现的物品名匹配。
+      let itemNames;
+      if (Array.isArray(q.items)) {
+        itemNames = q.items.filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim());
+      } else {
+        itemNames = [];
+        const curItems = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
+        for (const it of curItems) {
+          if (typeof it === 'string' && it.trim() && desc.includes(it.trim())) itemNames.push(it.trim());
+        }
+      }
+      // 中文提示词 / 非参考图翻译用的 cast（{name, look}）：主角用外貌，NPC 用设定里的描述。
+      const npcLook = {};
+      for (const n of bibleNpcs) {
+        if (n && typeof n.name === 'string') npcLook[n.name.trim()] = clip(n.desc, 40);
+      }
+      const cast = [];
+      for (const name of castNames.slice(0, 3)) {
+        cast.push({ name, look: (name === '你' || name === heroId.name) ? heroId.desc : (npcLook[name] || '') });
+      }
+
+      // 参考图：主角形象 + NPC 头像(≤2) + 物品图(≤1)，只取 ready 且文件存在的。
+      const refs = collectRefs(dataDir, worldId, style, heroId, castNames, itemNames);
+
       const idx = readIndex(dataDir);
       const cur = idx[ik];
       if (!shouldQueue(cur, ik, dataDir)) return key;
@@ -957,6 +1173,9 @@ function createImages(cfg, opts) {
       queue.push({
         dataDir, indexKey: ik, kind: 'scene', key, name: desc, style, worldId,
         desc, cast, bibleTitle,
+        place: typeof q.place === 'string' ? q.place : '',
+        action: typeof q.action === 'string' ? q.action : '',
+        refs,
       });
       drain();
       return key;
@@ -1016,6 +1235,7 @@ module.exports = {
   inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, listForState, readIndex, serveImage,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
+  DEFAULT_SCENE_REF_MODEL,
   // 默认实例委托
   ensureImages, ensureScene, imageList, waitIdle,
 };

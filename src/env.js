@@ -48,6 +48,8 @@ const DEFAULTS = Object.freeze({
   CLOUDFLARE_ACCOUNT_ID: '',
   CLOUDFLARE_API_TOKEN: '',
   IMAGE_CLOUDFLARE_MODEL: '@cf/black-forest-labs/flux-1-schnell',
+  // 场景多参考图出图模型（Cloudflare FLUX.2 klein）；留空字符串则停用参考图、直接走文生图回退链。
+  IMAGE_SCENE_REF_MODEL: '@cf/black-forest-labs/flux-2-klein-4b',
   IMAGE_MODELSCOPE_MODEL: 'Tongyi-MAI/Z-Image-Turbo',
   // 本地画图服务由游戏服务看护启动（src/imgsupervisor.js）；不配 IMAGE_LOCAL_PYTHON 则不启动
   IMAGE_LOCAL_PYTHON: '',
