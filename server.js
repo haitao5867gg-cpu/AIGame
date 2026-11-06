@@ -329,6 +329,12 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     const st = images.providerStatus();
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
+    const cfLimit = Number(cfg.CLOUDFLARE_DAILY_NEURONS) || 10000;
+    const cfReserve = Number(cfg.CLOUDFLARE_RESERVE_FROM) || 7000;
+    const cfUsed = llmMod.cloudflareNeuronsToday(store.readJsonl(store.usagePath(dataDir)), now);
+    u.images.cloudflare = {
+      used: cfUsed, limit: cfLimit, remaining: Math.max(0, cfLimit - cfUsed), reserveFrom: cfReserve,
+    };
     if (isHost) {
       // host 专属字段：全局今日 token（用全局上限）、今日各玩家、访问密码、临时隧道地址。
       u.global = g.usageToday().tokens;

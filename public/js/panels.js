@@ -142,6 +142,13 @@
     var sec2 = el('div', 'usage-sec');
     sec2.appendChild(el('h4', null, '今日出图'));
     sec2.appendChild(el('div', 'usage-main', parts.join(' · ')));
+    var cf = im.cloudflare;
+    if (cf) {
+      var cfLine = cf.remaining <= 0
+        ? 'Cloudflare 今日额度已用完，明早 8 点重置'
+        : 'Cloudflare 今日约剩 ' + cf.remaining + ' / ' + cf.limit + '（超过 ' + cf.reserveFrom + ' 后只留给场景图）';
+      sec2.appendChild(el('div', 'usage-sub', cfLine));
+    }
     Object.keys(im.cooling || {}).forEach(function (p) {
       var min = Math.max(1, Math.ceil(im.cooling[p] / 60000));
       sec2.appendChild(el('div', 'usage-cool', (PROVIDER_ZH[p] || p) + ' 冷却中 约 ' + min + ' 分钟'));

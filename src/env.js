@@ -48,6 +48,9 @@ const DEFAULTS = Object.freeze({
   CLOUDFLARE_ACCOUNT_ID: '',
   CLOUDFLARE_API_TOKEN: '',
   IMAGE_CLOUDFLARE_MODEL: '@cf/black-forest-labs/flux-1-schnell',
+  // Cloudflare 每日免费 Neurons 额度（UTC 零点重置）；今日已用达到预留线后只留给场景图。
+  CLOUDFLARE_DAILY_NEURONS: '10000',
+  CLOUDFLARE_RESERVE_FROM: '7000',
   // 场景多参考图出图模型（Cloudflare FLUX.2 klein）；留空字符串则停用参考图、直接走文生图回退链。
   IMAGE_SCENE_REF_MODEL: '@cf/black-forest-labs/flux-2-klein-4b',
   IMAGE_MODELSCOPE_MODEL: 'Tongyi-MAI/Z-Image-Turbo',
@@ -61,6 +64,7 @@ const DEFAULTS = Object.freeze({
 const NUMERIC_KEYS = Object.freeze([
   'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'LLM_PLAYER_DAILY_TOKEN_LIMIT', 'PORT',
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
+  'CLOUDFLARE_DAILY_NEURONS', 'CLOUDFLARE_RESERVE_FROM',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

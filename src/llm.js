@@ -419,6 +419,30 @@ function dayKey(ts) {
   );
 }
 
+// UTC 日期口径（Cloudflare 每日免费额度按 UTC 零点重置）：YYYY-MM-DD。
+function utcDayKey(ts) {
+  const d = new Date(ts);
+  return (
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-` +
+    `${String(d.getUTCDate()).padStart(2, '0')}`
+  );
+}
+
+// 今日（UTC）Cloudflare 出图消耗的 Neurons 估算，纯函数。
+// 有 neurons 字段的记录直接累加；没有 neurons 的成功记录按 175 估算（老记录）；别的 provider 不计。
+function cloudflareNeuronsToday(rows, now) {
+  const day = utcDayKey(now);
+  let total = 0;
+  for (const r of rows) {
+    if (!r || typeof r !== 'object' || r.provider !== 'cloudflare') continue;
+    if (utcDayKey(r.ts) !== day) continue;
+    const n = r.neurons;
+    if (n != null && n !== '' && Number.isFinite(Number(n))) total += Number(n);
+    else if (r.ok) total += 175;
+  }
+  return total;
+}
+
 // 用量记录归属：没有 playerId 字段的老记录算 host 的。
 function rowPlayerId(r) {
   return r && typeof r.playerId === 'string' && r.playerId ? r.playerId : 'host';
@@ -809,6 +833,6 @@ function createClient(cfg, dataDir) {
 }
 
 module.exports = {
-  createClient, PURPOSES, parseExtraBody, summarizeToday, summarizePlayers,
+  createClient, PURPOSES, parseExtraBody, summarizeToday, summarizePlayers, cloudflareNeuronsToday,
   createNarrationDecoder, decodeNarration, readSSE,
 };

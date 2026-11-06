@@ -192,6 +192,22 @@ function sceneDayKey(ts) {
   );
 }
 
+// Cloudflare 每日免费额度按 UTC 零点重置；返回 ts 所在 UTC 日之后的下一个 UTC 零点。
+function nextUtcMidnight(ts) {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+
+// HTTP 429 且正文含 "daily free allocation" 或错误码 4006 → Cloudflare 今日免费额度用完。
+function isCfDailyAllocExhausted(status, data) {
+  if (Number(status) !== 429) return false;
+  let text = '';
+  try { text = typeof data === 'string' ? data : JSON.stringify(data || {}); } catch (_) { /* 忽略 */ }
+  if (/daily free allocation/i.test(text)) return true;
+  const errs = data && Array.isArray(data.errors) ? data.errors : [];
+  return errs.some((e) => Number(e && e.code) === 4006);
+}
+
 function indexKeyOf(kind, key) { return `${kind}-${key}`; }
 function jpgName(kind, key) { return `${kind}-${key}.jpg`; }
 function pngName(kind, key) { return `${kind}-${key}.png`; }
@@ -419,6 +435,10 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames) {
   const ready = (ik) => {
     const e = idx[ik];
     if (!e || e.status !== 'ready' || typeof e.file !== 'string' || !e.file) return null;
+    // 参考图不能带水印：硅基流动（及 provider 缺失的老记录）的图右下角有「AI生成」水印，
+    // 会被带进场景图；只收 cloudflare / local 生成的图作参考。
+    const prov = String(e.provider || '');
+    if (prov !== 'cloudflare' && prov !== 'local') return null;
     const p = path.join(imagesDir(dataDir), e.file);
     if (!fs.existsSync(p)) return null;
     return { p, e };
@@ -478,6 +498,9 @@ function createImages(cfg, opts) {
   const cfAccount = String(c.CLOUDFLARE_ACCOUNT_ID || '');
   const cfToken = String(c.CLOUDFLARE_API_TOKEN || '');
   const cfModel = String(c.IMAGE_CLOUDFLARE_MODEL || '@cf/black-forest-labs/flux-1-schnell');
+  // Cloudflare 每日免费额度（UTC 零点重置）：今日已用达到预留线后，非场景图让出 cloudflare。
+  const cfReserveFrom = Number(c.CLOUDFLARE_RESERVE_FROM) > 0 ? Number(c.CLOUDFLARE_RESERVE_FROM) : 7000;
+  let cfExhaustedUntil = 0; // 429 今日额度用完后的冷却截止：下一个 UTC 零点
   // 场景多参考图模型：未配置时用默认，显式空字符串表示停用参考图。
   const sceneRefModel = c.IMAGE_SCENE_REF_MODEL == null
     ? DEFAULT_SCENE_REF_MODEL : String(c.IMAGE_SCENE_REF_MODEL);
@@ -501,6 +524,18 @@ function createImages(cfg, opts) {
   const doFetch = o.fetchImpl || ((...args) => globalThis.fetch(...args));
   const nowFn = o.now || (() => Date.now());
   const sleepFn = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+
+  // 今日（UTC）Cloudflare 已用 Neurons；读取失败按 0 处理。
+  function cfUsedToday(now, dataDir) {
+    try {
+      return llm.cloudflareNeuronsToday(store.readJsonl(store.usagePath(dataDir)), now);
+    } catch (_) { return 0; }
+  }
+  // 429 今日免费额度用完：把 cloudflare 冷却设到下一个 UTC 零点（而非 5 分钟）。
+  function markCfExhausted() {
+    cfExhaustedUntil = nextUtcMidnight(nowFn());
+    providerCooldown.set('cloudflare', cfExhaustedUntil);
+  }
 
   // ---- 每个世界的画风设定：缺失时用对话模型按 bible 生成一次，缓存到 data/images/styles.json ----
   const artJobs = new Map();   // worldId → Promise（本进程正在生成）
@@ -778,14 +813,38 @@ function createImages(cfg, opts) {
   async function callCloudflare(prompt) {
     if (!cfAccount || !cfToken) throw new Error('未配置 CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN');
     const url = CLOUDFLARE_API_BASE + encodeURIComponent(cfAccount) + '/ai/run/' + cfModel;
-    const data = await postJson(url, { Authorization: `Bearer ${cfToken}` }, { prompt, steps: 4 });
+    const resp = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfToken}` },
+      body: JSON.stringify({ prompt, steps: 4 }),
+    });
+    let data;
+    try {
+      data = typeof (resp && resp.json) === 'function' ? await resp.json() : resp;
+    } catch (_) {
+      throw new Error('Cloudflare 返回不是合法 JSON'
+        + (resp && resp.status ? `（HTTP ${resp.status}）` : ''));
+    }
+    // 429 且今日免费额度用完 → 冷却到下一个 UTC 零点（而不是 5 分钟）。
+    if (isCfDailyAllocExhausted(resp && resp.status, data)) markCfExhausted();
+    if (resp && (resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400))) {
+      const first = data && Array.isArray(data.errors) && data.errors[0];
+      const msg = data && typeof data.message === 'string' ? '：' + clip(data.message, 200)
+        : (first && typeof first.message === 'string') ? '：' + clip(first.message, 200) : '';
+      throw new Error('Cloudflare HTTP ' + resp.status + msg);
+    }
     if (data && data.success === false) {
       const e = Array.isArray(data.errors) && data.errors[0];
       throw new Error('Cloudflare 错误：' + clip((e && e.message) || JSON.stringify(data.errors), 200));
     }
     const b64 = data && data.result && data.result.image;
     if (typeof b64 !== 'string' || !b64) throw new Error('Cloudflare 返回缺少 result.image');
-    return Buffer.from(b64, 'base64');
+    let neurons;
+    if (resp && resp.headers && typeof resp.headers.get === 'function') {
+      const raw = resp.headers.get('cf-ai-neurons');
+      if (raw != null && raw !== '' && Number.isFinite(Number(raw))) neurons = Number(raw);
+    }
+    return { bytes: Buffer.from(b64, 'base64'), neurons };
   }
 
   // Cloudflare FLUX.2 klein 多参考图：multipart/form-data，返回 {result:{image:<base64 JPEG>}}。
@@ -817,6 +876,8 @@ function createImages(cfg, opts) {
       throw new Error('Cloudflare 多参考图返回不是合法 JSON'
         + (resp && resp.status ? `（HTTP ${resp.status}）` : ''));
     }
+    // 429 且今日免费额度用完 → 冷却到下一个 UTC 零点（而不是 5 分钟）。
+    if (isCfDailyAllocExhausted(resp && resp.status, data)) markCfExhausted();
     if (resp && (resp.ok === false || (typeof resp.status === 'number' && resp.status >= 400))) {
       const msg = data && typeof data.message === 'string' ? '：' + clip(data.message, 200) : '';
       throw new Error('Cloudflare 多参考图 HTTP ' + resp.status + msg);
@@ -886,7 +947,8 @@ function createImages(cfg, opts) {
       // 翻译结果若仍是中文，englishDesc 会抛错，让 generate 换下一家中文提供方。
       const enPrompt = (await englishDesc(job)) || enFallback();
       const prompt = enPromptOf(enPrompt);
-      return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
+      const { bytes, neurons } = await callCloudflare(prompt);
+      return { bytes, neurons, prompt, enPrompt, model: cfModel };
     }
     if (p === 'modelscope') {
       const prompt = zhPrompt();
@@ -909,8 +971,16 @@ function createImages(cfg, opts) {
   // 按回退链依次尝试；最近失败过的提供方排到最后。全部失败才抛错。
   async function generate(job) {
     const now = nowFn();
-    const fresh = chain.filter((p) => !(providerCooldown.get(p) > now));
-    const order = fresh.concat(chain.filter((p) => !fresh.includes(p)));
+    // Cloudflare 额度耐用策略：
+    //  - 429 今日额度用完后冷却到下一个 UTC 零点，期间所有出图完全跳过 cloudflare；
+    //  - 今日已用达到预留线时，物品 / 头像 / 主角形象图让出 cloudflare，只留场景图使用。
+    let cfAllowed = chain.includes('cloudflare') && !(cfExhaustedUntil > now);
+    if (cfAllowed && job.kind !== 'scene' && cfUsedToday(now, job.dataDir) >= cfReserveFrom) {
+      cfAllowed = false;
+    }
+    const effective = cfAllowed ? chain : chain.filter((p) => p !== 'cloudflare');
+    const fresh = effective.filter((p) => !(providerCooldown.get(p) > now));
+    const order = fresh.concat(effective.filter((p) => !fresh.includes(p)));
     const errors = [];
     for (const p of order) {
       try {
@@ -921,11 +991,15 @@ function createImages(cfg, opts) {
         const msg = err && err.message ? err.message : String(err);
         errors.push(`${p}：${msg}`);
         if (chain.length > 1) {
-          providerCooldown.set(p, nowFn() + PROVIDER_COOLDOWN_MS);
+          // 已冷却到 UTC 零点的 cloudflare 不要被 5 分钟冷却覆盖。
+          if (!(p === 'cloudflare' && cfExhaustedUntil > nowFn())) {
+            providerCooldown.set(p, nowFn() + PROVIDER_COOLDOWN_MS);
+          }
           console.warn(`[images] ${p} 出图失败，换下一家：${msg}`);
         }
       }
     }
+    if (!order.length) throw new Error('没有可用的出图提供方（Cloudflare 今日额度已用完）');
     throw new Error(errors.join('；'));
   }
 
@@ -949,7 +1023,8 @@ function createImages(cfg, opts) {
         let r = null;
         // 场景 + 有参考图 + 链里有 cloudflare 且配置齐全 → 先试多参考图，失败无条件落回文生图。
         if (job.kind === 'scene' && sceneRefModel && chain.includes('cloudflare')
-            && cfAccount && cfToken && Array.isArray(job.refs) && job.refs.length) {
+            && cfAccount && cfToken && !(cfExhaustedUntil > nowFn())
+            && Array.isArray(job.refs) && job.refs.length) {
           try {
             r = await sceneWithRefs(job);
           } catch (err) {
@@ -1236,7 +1311,7 @@ function waitIdle() { return defaultInstance().waitIdle(); }
 module.exports = {
   createImages, configure, reset,
   // 纯函数
-  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, listForState, readIndex, serveImage,
+  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, listForState, readIndex, serveImage, collectRefs,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   DEFAULT_SCENE_REF_MODEL,
