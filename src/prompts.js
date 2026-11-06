@@ -116,6 +116,7 @@ const TURN_OUTPUT_FORMAT = [
   ' "rumor":"一句 ≤40 字的坊间传闻（可选）",',
   ' "move_to":"≤12 字的地点名（可选）",',
   ' "time_passes":1,',
+  ' "scene":{"draw":false,"desc":"≤40 字的中文画面描述"},',
   ' "event":{"title":"事件标题","desc":"事件描述"},',
   ' "event_check":{"attr":"体魄","response_quality":2}}',
   '说明：',

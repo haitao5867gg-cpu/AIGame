@@ -58,6 +58,9 @@ const OMEN_MAX_GAP = 2;
 const RUMOR_MAX = 40;
 const RUMORS_MAX = 10;
 
+// 场景插图 desc 上限：引擎消毒时去首尾空白、截到 60 字（模型建议 ≤40 字）。
+const SCENE_DESC_MAX = 60;
+
 // 事实账本：本回合新确立的客观事实，[{turn,text}]；单条 ≤30 字，每回合 0~2 条，最多 40 条（丢最旧）。
 const FACT_TEXT_MAX = 30;
 const FACTS_MAX = 40;
