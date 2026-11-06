@@ -408,6 +408,22 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { prologue });
   }
 
+  // 物品介绍：GET /api/worlds/:id/items（按需补生成缺失介绍，按当前物品栏顺序返回）。
+  const itemsMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/items$/);
+  if (itemsMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(itemsMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
+    const items = await g.ensureItemInfo(id);
+    return sendJson(res, 200, { items });
+  }
+
   // 图片状态：GET /api/worlds/:id/images（只含当前物品 / NPC；顺手给老存档补图）。
   const imagesMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/images$/);
   if (imagesMatch) {

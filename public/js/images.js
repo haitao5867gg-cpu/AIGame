@@ -7,13 +7,13 @@
 
   // 依据 {status,url} 生成图位元素：ready→<img>、pending→柔和闪烁占位、
   // failed / none→首字圆角色块。shapeClass 决定是 64px 方图还是 40px 圆头像。
-  function makeImageVisual(name, info, shapeClass) {
+  function makeImageVisual(name, info, shapeClass, noViewer) {
     var st = info && info.status;
     if (st === 'ready' && info.url) {
       var img = el('img', shapeClass);
       img.src = info.url;
       img.alt = name;
-      img.addEventListener('click', function () { openImageViewer(info.url); });
+      if (!noViewer) img.addEventListener('click', function () { openImageViewer(info.url); });
       return img;
     }
     if (st === 'pending') return el('div', shapeClass + ' img-pending');
@@ -30,8 +30,10 @@
     if (!items.length) { box.appendChild(el('span', 'muted', '（无）')); return; }
     items.forEach(function (name) {
       var card = el('div', 'item-card');
-      card.appendChild(makeImageVisual(name, imageState.items[name], 'item-thumb'));
+      // 物品卡片点击打开介绍卡；缩略图不再单独看大图（大图在卡片里点仍可看原图）。
+      card.appendChild(makeImageVisual(name, imageState.items[name], 'item-thumb', true));
       card.appendChild(el('div', 'item-card-name', name));
+      card.addEventListener('click', function () { showItemCard(name); });
       box.appendChild(card);
     });
   }

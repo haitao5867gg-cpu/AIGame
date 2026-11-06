@@ -253,7 +253,8 @@ function gatewayPrompt(job) {
     return `${art}。${world}。游戏角色半身肖像：${who}，`
       + `穿着符合该时代的服饰，面部清晰，${bg}，${NO_TEXT_ZH}${avoid}`;
   }
-  return `${art}。${world}。游戏道具图标：${job.name}，该时代的器物，单个物体居中，完整可辨认，`
+  const itemDesc = job.desc && typeof job.desc === 'string' ? `（${clip(job.desc, 60)}）` : '';
+  return `${art}。${world}。游戏道具图标：${job.name}${itemDesc}，该时代的器物，单个物体居中，完整可辨认，`
     + `${bg}，${NO_TEXT_ZH}${avoid}`;
 }
 
@@ -335,9 +336,13 @@ function listForState(state) {
   const hero = heroIdentity(s);
   out.push({ kind: 'hero', name: hero.name, role: '主角', desc: hero.desc });
   const items = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
+  const itemInfo = (s.itemInfo && typeof s.itemInfo === 'object') ? s.itemInfo : {};
   for (const it of items) {
     if (typeof it === 'string' && it.trim()) {
-      out.push({ kind: 'item', name: it.trim(), role: '', desc: '' });
+      const name = it.trim();
+      const meta = itemInfo[name];
+      const desc = meta && typeof meta === 'object' && typeof meta.desc === 'string' ? meta.desc : '';
+      out.push({ kind: 'item', name, role: '', desc });
     }
   }
   const npc = s.npcAttitude && typeof s.npcAttitude === 'object' ? s.npcAttitude : {};
@@ -653,7 +658,8 @@ function createImages(cfg, opts) {
         } else if (job.kind === 'hero') {
           subject = `主角：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
         } else {
-          subject = `物品：${job.name}；世界：${job.bibleTitle}${era}`;
+          const itemDesc = job.desc && typeof job.desc === 'string' ? `（${clip(job.desc, 60)}）` : '';
+          subject = `物品：${job.name}${itemDesc}；世界：${job.bibleTitle}${era}`;
         }
         system = 'Output ONLY one English visual description (at most 25 words) of the subject '
           + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
@@ -1311,7 +1317,7 @@ function waitIdle() { return defaultInstance().waitIdle(); }
 module.exports = {
   createImages, configure, reset,
   // 纯函数
-  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, listForState, readIndex, serveImage, collectRefs,
+  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, gatewayPrompt, listForState, readIndex, serveImage, collectRefs,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   DEFAULT_SCENE_REF_MODEL,

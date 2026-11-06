@@ -1,6 +1,29 @@
 'use strict';
 
-const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, SCENE_PLACE_MAX, SCENE_NAME_MAX, SCENE_CAST_MAX, SCENE_ITEMS_MAX, SCENE_ACTION_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
+const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, ITEM_INFO_DESC_MAX, ITEM_INFO_TYPE_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, SCENE_PLACE_MAX, SCENE_NAME_MAX, SCENE_CAST_MAX, SCENE_ITEMS_MAX, SCENE_ACTION_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
+
+// 物品介绍消毒：只接受 allowedNames 里的名字（实际被接受的物品名），
+// desc 去空白截 60 字、type 去空白截 6 字（可选）；无介绍文字的条目不落库。
+// 纯函数，供建世界 / 回合 / 补介绍共用。
+function cleanItemInfo(raw, allowedNames) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const allowed = new Set((Array.isArray(allowedNames) ? allowedNames : []).map((n) => String(n).trim()));
+  for (const key of Object.keys(raw)) {
+    const name = String(key).trim();
+    if (!allowed.has(name)) continue;
+    const v = raw[key];
+    if (!v || typeof v !== 'object') continue;
+    const desc = typeof v.desc === 'string' ? v.desc.trim().slice(0, ITEM_INFO_DESC_MAX) : '';
+    if (!desc) continue;
+    const entry = { desc };
+    if (typeof v.type === 'string' && v.type.trim()) {
+      entry.type = v.type.trim().slice(0, ITEM_INFO_TYPE_MAX);
+    }
+    out[name] = entry;
+  }
+  return out;
+}
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -148,6 +171,8 @@ function normalizeState(state) {
   const s = cloneState(state || {});
   if (typeof s.pendingEventTheme !== 'string' || !s.pendingEventTheme) s.pendingEventTheme = null;
   if (typeof s.rebirthOpening !== 'string') s.rebirthOpening = '';
+  // 老存档缺物品介绍：补空表，接口 /items 会按需补生成。
+  if (!s.itemInfo || typeof s.itemInfo !== 'object' || Array.isArray(s.itemInfo)) s.itemInfo = {};
   if (!Array.isArray(s.rumors)) s.rumors = [];
   if (!Array.isArray(s.pastLives)) s.pastLives = [];
   if (!Array.isArray(s.facts)) s.facts = [];
@@ -297,6 +322,7 @@ function cleanDialogueTics(text) {
 module.exports = {
   clamp,
   cleanDialogueTics,
+  cleanItemInfo,
   toInt,
   unit,
   internalReject,

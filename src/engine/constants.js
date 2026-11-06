@@ -42,6 +42,9 @@ const INTERNAL_REJECT_TAG = '[internal]';
 
 const ITEMS_ADD_MAX = 2;
 const ITEM_NAME_MAX = 12;
+// 随身物品介绍：desc 去空白截 60 字，type 截 6 字（可选）。
+const ITEM_INFO_DESC_MAX = 60;
+const ITEM_INFO_TYPE_MAX = 6;
 const NARRATION_MIN = 10;
 const NARRATION_MAX = 1200;
 const RECENT_MAX = 6;
@@ -130,6 +133,8 @@ module.exports = {
   INTERNAL_REJECT_TAG,
   ITEMS_ADD_MAX,
   ITEM_NAME_MAX,
+  ITEM_INFO_DESC_MAX,
+  ITEM_INFO_TYPE_MAX,
   NARRATION_MIN,
   NARRATION_MAX,
   RECENT_MAX,

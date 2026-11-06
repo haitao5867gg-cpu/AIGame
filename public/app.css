@@ -287,3 +287,30 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   .prologue-title{font-size:22px}
   .prologue-text{font-size:15px}
 }
+
+/* ---- 随身物品介绍卡片（遮罩 + 居中卡片，复刻序章观感） ---- */
+.item-card-mask{position:fixed;inset:0;z-index:85;background:rgba(9,8,6,.92);
+  display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
+.item-card-modal-card{width:100%;max-width:380px;max-height:calc(100vh - 32px);overflow-y:auto;
+  -webkit-overflow-scrolling:touch;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;padding:18px 18px 20px;box-shadow:0 12px 48px rgba(0,0,0,.6)}
+.item-card-hero{display:block;width:100%;height:200px;object-fit:cover;border-radius:10px;
+  background:var(--bg);border:1px solid var(--line);margin:0 0 14px}
+.item-card-hero[src]{cursor:zoom-in}
+.item-card-hero-fallback{display:flex;align-items:center;justify-content:center;color:#e6c9a0;
+  font-family:var(--serif);font-size:64px;
+  background:radial-gradient(circle at 35% 30%,rgba(192,57,43,.45),rgba(40,30,22,.9))}
+.item-card-title{font-family:var(--serif);font-size:22px;letter-spacing:1px;margin:0 0 8px;
+  color:var(--ink);font-weight:600;text-align:center;word-break:break-all}
+.item-card-tags{text-align:center;min-height:20px;margin:0 0 10px}
+.item-card-type{display:inline-block;font-family:var(--sans);font-size:12px;color:var(--accent-2);
+  border:1px solid var(--accent-2);border-radius:10px;padding:1px 10px;letter-spacing:1px}
+.item-card-desc{font-family:var(--serif);font-size:16px;line-height:1.9;color:var(--ink);margin:0 0 16px;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;min-height:30px}
+.item-card-close{display:block;width:100%;margin-top:4px}
+@media(max-width:375px){
+  .item-card-modal-card{padding:14px 14px 16px}
+  .item-card-hero{height:160px}
+  .item-card-title{font-size:20px}
+  .item-card-desc{font-size:15px}
+}

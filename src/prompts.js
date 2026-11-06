@@ -106,6 +106,7 @@ const TURN_OUTPUT_FORMAT = [
   '{"narration":"第二人称叙事，10~1200 字，分成 2~4 个短段落，段落间用 \\n\\n 分隔",',
   ' "state_diff":{"心智":1},',
   ' "items_add":[],"items_remove":[],',
+  ' "items_info":{"新物品名":{"desc":"…","type":"…"}},',
   ' "overstep":false,',
   ' "npc_attitude":{"某人":1},',
   ' "persona_tags":["冒险"],',
@@ -143,6 +144,9 @@ const TURN_OUTPUT_FORMAT = [
   '  不得凭空让它出现，也不得把它写进 items_add；items_add 只能填本回合真实获得的新物品。',
   '- 物品栏必须与叙事同步：叙事里交出、丢失、用掉、被收走的物品，必须同时写进 items_remove；',
   '  只有真正得到新物品才写 items_add。已失去的物品不能再出现在角色身上，也不能在后续叙述里被重新使用。',
+  '- items_add 里的每个新物品都要在 items_info 里给 1~2 句介绍和类型：',
+  '  desc ≤60 字，说清它是什么、有什么用或特别之处、来历；type ≤6 字（法器/丹药/兵器/杂物/信物/文书…，可选）；',
+  '  items_info 的键必须与 items_add 的物品名完全一致，不要给未加入物品栏的东西写介绍。',
   '- overstep 是可选布尔：玩家本回合行动属于越界（声称不存在的能力或物品、要求直接成为统治者、无理强闯禁地等）',
   '  时填 true，否则省略该字段或写 false；越界后果一律按【越界升级】给出的累计次数与阶梯处理，' +
   '  第 1 次也要留印记，重复同一种越界请求必须升级处置、不得与上次相同。',
@@ -157,7 +161,7 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
-  ' "start":{"place","situation","items":[str x2~3],"facts":[str x2~3]},',
+  ' "start":{"place","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
@@ -171,6 +175,8 @@ const WORLD_OUTPUT_FORMAT = [
   '  voice 只描述风格（句式长短、语气、用词习惯），不要写成『句尾加某个字』『每句都以…结尾』这类机械规则；' +
   '  每个 NPC 必须明显不同：句式长短、用词、语气、是否解释、是否带隐喻都要拉开差异，作为台词的语言指纹；',
   'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
+  'start.items_info 给 start.items 里每个物品 1~2 句介绍和类型，键与物品名一致：',
+  '  desc ≤60 字（是什么、有什么用或特别之处、来历），type ≤6 字（法器/丹药/兵器/杂物/信物/文书…，可选）；',
   'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
@@ -435,6 +441,29 @@ function buildPrologueMessages(state) {
   ];
 }
 
+// 老物品补介绍：回合模型一次批量给若干物品写介绍，输出 {物品名:{desc,type}}。
+function buildItemsInfoMessages(state, names) {
+  const list = (Array.isArray(names) ? names : [])
+    .filter((n) => typeof n === 'string' && n.trim())
+    .map((n) => n.trim());
+  const system = [
+    '你是「无限世界」的物品考据官，只输出一个 JSON 对象，不要解释文字。',
+    '为下列随身物品各写一段简短介绍与一个类型。',
+    '输出 JSON：{"物品名":{"desc":"…","type":"…"}}，键必须是给出的物品名，不要增删、不要改字。',
+    'desc：1~2 句，说清它是什么、有什么用或特别之处、来历，≤60 字。',
+    'type：可选的类型词（如 法器/丹药/兵器/杂物/信物/文书），≤6 字；没有合适的就省略该键。',
+  ].join('\n');
+  const user = [
+    section('世界设定', worldBibleText(state && state.bible)),
+    section('需要介绍的物品', list.join('、')),
+    '请据此逐个给出介绍，只输出 JSON。',
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 建世界：输入玩家一句话，输出 bible + apex。
 function buildWorldMessages(seed, input) {
   const i = input || {};
@@ -575,6 +604,7 @@ function parseJson(text) {
 module.exports = {
   buildTurnMessages,
   buildPrologueMessages,
+  buildItemsInfoMessages,
   buildWorldMessages,
   buildChapterMessages,
   buildApexMessages,

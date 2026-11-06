@@ -31,6 +31,7 @@ module.exports = {
   NARRATION_MAX: constants.NARRATION_MAX,
   clamp: util.clamp,
   cleanDialogueTics: util.cleanDialogueTics,
+  cleanItemInfo: util.cleanItemInfo,
   toInt: util.toInt,
   allocateAttrs: world.allocateAttrs,
   startingFacts: util.startingFacts,

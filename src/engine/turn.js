@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
-const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, advanceClock, cloneState } = require('./util.js');
+const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
 const { apexConditionMet, applyDeath } = require('./life.js');
@@ -74,6 +74,12 @@ function resolveTurn(state, input, opts) {
   s.character.items = s.character.items
     .filter((i) => !applied.items_remove.includes(i))
     .concat(applied.items_add);
+  // 新增物品介绍：只接受本回合真正加入的物品名，介绍消毒后并入 itemInfo。
+  // 物品被移除时保留介绍（再次获得可复用），故只增不删。
+  const itemInfoAdd = cleanItemInfo(prop.items_info, applied.items_add);
+  if (Object.keys(itemInfoAdd).length) {
+    s.itemInfo = Object.assign({}, s.itemInfo || {}, itemInfoAdd);
+  }
   for (const name of Object.keys(applied.npc_attitude)) {
     if (!Object.prototype.hasOwnProperty.call(s.npcAttitude, name)) s.npcAttitude[name] = 0;
     s.npcAttitude[name] = clamp(s.npcAttitude[name] + applied.npc_attitude[name], NPC_MIN, NPC_MAX);

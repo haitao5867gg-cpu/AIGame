@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS } = require('./constants.js');
-const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue } = require('./util.js');
+const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue, cleanItemInfo } = require('./util.js');
 
 // ---- 建世界 / 分配属性点 ----
 
@@ -44,6 +44,7 @@ function createWorld(spec, opts) {
   const prologue = normalizePrologue(bible.prologue);
   if (prologue) bible.prologue = prologue;
   else delete bible.prologue;
+  const startItems = startingItems(bible);
   return {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
@@ -56,7 +57,7 @@ function createWorld(spec, opts) {
       name: s.name || '',
       appearance: s.appearance || '',
       attrs: allocateAttrs(s.alloc),
-      items: startingItems(bible),
+      items: startItems,
       marks: [],
       alive: true,
       bornTurn: 0,
@@ -82,6 +83,8 @@ function createWorld(spec, opts) {
     rebirthOpening: '',      // 本世（第 1 世为空）由重生生成的新一世开场叙事
     highlightUntilTurn: 0,
     awaitingRebirth: false,
+    // 起始物品介绍：只接受真正加入物品栏的名字，desc/type 由 cleanItemInfo 消毒。
+    itemInfo: cleanItemInfo(bible.start && bible.start.items_info, startItems),
   };
 }
 

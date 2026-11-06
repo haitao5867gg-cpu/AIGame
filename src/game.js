@@ -403,6 +403,44 @@ function createGame(cfg, dataDir) {
     });
   }
 
+  // 老物品补介绍：世界锁内找出 character.items 中缺介绍的物品，用回合模型一次批量生成，
+  // 校验后写回并保存；任何失败都返回现有介绍，绝不抛错影响游戏。
+  // 返回按 character.items 顺序的 [{name,desc,type}]，供 GET /items 直接带出。
+  async function ensureItemInfo(worldId) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) return [];
+      const items = (state.character && Array.isArray(state.character.items)) ? state.character.items : [];
+      const info = (state.itemInfo && typeof state.itemInfo === 'object') ? state.itemInfo : {};
+      const missing = items.filter((n) => typeof n === 'string' && n.trim()
+        && !(info[n] && typeof info[n] === 'object' && typeof info[n].desc === 'string' && info[n].desc));
+      if (missing.length) {
+        try {
+          const rp = await callParsed(
+            'items-info', turnModel,
+            prompts.buildItemsInfoMessages(state, missing),
+            { items: missing }, [],
+          );
+          const cleaned = engine.cleanItemInfo(rp.parsed, missing);
+          if (Object.keys(cleaned).length) {
+            state.itemInfo = Object.assign({}, info, cleaned);
+            store.saveWorld(dataDir, state);
+          }
+        } catch (_) { /* LLM 报错 / 解析失败 → 返回现有介绍，绝不抛错 */ }
+      }
+      const finalInfo = (state.itemInfo && typeof state.itemInfo === 'object') ? state.itemInfo : {};
+      return items.map((name) => {
+        const meta = (finalInfo[name] && typeof finalInfo[name] === 'object') ? finalInfo[name] : {};
+        return {
+          name,
+          desc: typeof meta.desc === 'string' ? meta.desc : '',
+          type: typeof meta.type === 'string' ? meta.type : '',
+        };
+      });
+    });
+  }
+
   function listWorlds() {
     return store.listWorlds(dataDir);
   }
@@ -484,6 +522,7 @@ function createGame(cfg, dataDir) {
         state_diff: out.state_diff,
         items_add: out.items_add,
         items_remove: out.items_remove,
+        items_info: out.items_info, // 新增物品介绍，引擎只接受实际加入的名字
         npc_attitude: out.npc_attitude,
         persona_tags: out.persona_tags,
         suggestions: out.suggestions,
@@ -693,7 +732,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, ensurePrologue, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, ensurePrologue, ensureItemInfo, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn, listScenes,
   };
 }

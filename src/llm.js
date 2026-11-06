@@ -20,6 +20,7 @@ const PURPOSES = Object.freeze({
   EPITAPH: 'epitaph', // 前世墓志铭（死亡时额外调用）
   REBIRTH: 'rebirth', // 新一世开场（重生时额外调用）
   PROLOGUE: 'prologue', // 老世界补序章（GET /prologue 时额外调用）
+  ITEMS_INFO: 'items-info', // 老物品补介绍（GET /items 时批量生成）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -245,6 +246,11 @@ function mockWorld(m) {
         place: '灰烬港',
         situation: '你在一条搁浅的船上醒来，手里攥着一封无字信。',
         items: ['一封无字信', '旧铜灯', '半张海图'],
+        items_info: {
+          '一封无字信': { desc: '一封没有落款的旧信，收信人不明，像藏着一段未了的约。', type: '信物' },
+          '旧铜灯': { desc: '灯身斑驳却长明的旧铜灯，雾夜可照路，来历无人说得清。', type: '法器' },
+          '半张海图': { desc: '残存半幅的航路图，标着一处不在任何册子上的岛屿。', type: '文书' },
+        },
         // 开局关键时间/规则事实，锁定满月日期等时间线，写入 state.facts（叙事不得改写）。
         facts: ['满月在三日后', '城门每日戌时落锁', '报出真名会被登记'],
       },
@@ -278,6 +284,10 @@ function mockTurn(m) {
     state_diff: { 心智: 1 },
     items_add: turn % 5 === 0 ? ['一枚旧币'] : [],
     items_remove: [],
+    // 新增物品的介绍与 items_add 同步给出（引擎只接受真正加入的名字）。
+    items_info: turn % 5 === 0
+      ? { '一枚旧币': { desc: '拾来的一枚磨损旧币，面文已模糊，或可换些小物。', type: '杂物' } }
+      : {},
     npc_attitude: {},
     persona_tags: ['冒险'],
     suggestions: ['继续沿旧道探查', '向守夜人打听钟声', '先去枯井集市补给'],
@@ -396,6 +406,20 @@ function mockPrologue() {
   };
 }
 
+// 老物品补介绍：mock 下按请求名单逐个给一份简单介绍（确定性假数据）。
+function mockItemsInfo(m) {
+  const names = (m && Array.isArray(m.items)) ? m.items : [];
+  const out = {};
+  for (const name of names) {
+    if (typeof name !== 'string' || !name.trim()) continue;
+    out[name.trim()] = {
+      desc: `随身的一件${name.trim()}，来历已不可考，却总在紧要处派上用场。`,
+      type: '杂物',
+    };
+  }
+  return out;
+}
+
 function mockFor(purpose, m) {
   switch (purpose) {
     case PURPOSES.WORLD: return mockWorld(m);
@@ -405,6 +429,7 @@ function mockFor(purpose, m) {
     case PURPOSES.EPITAPH: return mockEpitaph(m);
     case PURPOSES.REBIRTH: return mockRebirthOpening(m);
     case PURPOSES.PROLOGUE: return mockPrologue();
+    case PURPOSES.ITEMS_INFO: return mockItemsInfo(m);
     default: return mockTurn(m);
   }
 }
