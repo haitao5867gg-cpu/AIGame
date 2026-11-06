@@ -1,7 +1,7 @@
 'use strict';
 
 const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
-const { clamp, toInt } = require('./util.js');
+const { clamp, toInt, cleanDialogueTics } = require('./util.js');
 
 // ---- validateProposal：把 LLM 提议消毒成实际可应用的 diff ----
 
@@ -25,6 +25,7 @@ function validateProposal(state, proposal) {
     narration = narration.slice(0, NARRATION_MAX);
     rejected.push(`叙事超过 ${NARRATION_MAX} 字，已截断`);
   }
+  narration = cleanDialogueTics(narration);
   applied.narration = narration;
   if (narration.length < NARRATION_MIN) {
     return { applied, rejected, error: `叙事过短（少于 ${NARRATION_MIN} 字），本回合无效，请重试` };

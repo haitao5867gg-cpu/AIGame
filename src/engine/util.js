@@ -250,8 +250,32 @@ function normalizePrologue(raw) {
   return out;
 }
 
+// 兜底清理：模型把 voice「总在句尾提问」当成口头禅标签，在台词末尾硬贴
+// 「，问？」「，说：」等机械尾巴。只清理中文引号「…」内、紧贴结束引号的
+// 这几种固定模式；引号外旁白与其它正常文字一律不动。纯函数。
+function cleanDialogueTics(text) {
+  if (typeof text !== 'string' || !text.includes('」')) return text;
+  return text.replace(/「([^」]*)」/g, (_full, inner) => {
+    // 「，说：」「，答：」「，道：」：删掉这个分句，不加问号。
+    const sayTail = /[，、]\s*(?:说|答|道)\s*[：:]\s*$/;
+    if (sayTail.test(inner)) {
+      return '「' + inner.replace(sayTail, '') + '」';
+    }
+    // 「，问？」「，问?」「、问？」：删掉这个分句并确保句末是问号；
+    // 原句末已有句号/问号/省略号则不重复加（避免「？，问？」出现双问号）。
+    const askTail = /[，、]\s*问\s*[？?]\s*$/;
+    if (askTail.test(inner)) {
+      let body = inner.replace(askTail, '');
+      if (!/[。？！…!?]$/.test(body)) body += '？';
+      return '「' + body + '」';
+    }
+    return '「' + inner + '」';
+  });
+}
+
 module.exports = {
   clamp,
+  cleanDialogueTics,
   toInt,
   unit,
   internalReject,
