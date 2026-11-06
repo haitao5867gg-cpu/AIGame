@@ -104,8 +104,10 @@
   var undoBusy = false;       // 撤回请求进行中
   var undoArmed = false;      // 撤回按钮是否处于二次确认态
   var undoArmTimer = null;
+  // 当前玩家偏好：/api/me 的 prefs.scenes（默认开），用量面板据此初始化开关。
+  var myPrefs = { scenes: true };
   // 图片：/images 状态、当前世界、轮询
-  var imageState = { items: {}, npcs: {} };
+  var imageState = { items: {}, npcs: {}, scenes: {} };
   var imageWorldId = null;
   var imagePollTimer = null;
   var imagePollStart = 0;

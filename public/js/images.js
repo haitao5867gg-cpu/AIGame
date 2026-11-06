@@ -54,9 +54,37 @@
     });
   }
 
+  // 场景插图：遍历 .scene-frame，按 data-scene 查 imageState.scenes 填图 / 占位 / 隐藏。
+  function renderScenes() {
+    var scenes = imageState.scenes || {};
+    var frames = document.querySelectorAll('.scene-frame');
+    Array.prototype.forEach.call(frames, function (frame) {
+      var key = frame.getAttribute('data-scene');
+      var info = scenes[key];
+      frame.hidden = false;
+      if (!info || info.status === 'pending') return; // 后端刚排队 / 还在生成：保持占位
+      if (info.status !== 'ready' || !info.url) {     // failed / none：整框隐藏不占位
+        frame.hidden = true;
+        return;
+      }
+      var existing = frame.querySelector('img.scene-img');
+      if (existing && existing.getAttribute('data-scene-url') === info.url) return; // 同一 url 不重建
+      frame.classList.remove('img-pending');
+      frame.textContent = '';
+      var img = el('img', 'scene-img');
+      img.alt = '';
+      img.setAttribute('data-scene-url', info.url);
+      img.addEventListener('load', function () { img.classList.add('loaded'); });
+      img.addEventListener('click', function () { openImageViewer(info.url); });
+      img.src = info.url;
+      frame.appendChild(img);
+    });
+  }
+
   function renderImages() {
     renderItemGrid();
     renderNpcList();
+    renderScenes();
   }
 
   function openImageViewer(url) {
@@ -79,19 +107,28 @@
 
   function hasPendingImage(st) {
     var vals = [];
-    var it = st.items || {}, np = st.npcs || {};
+    var it = st.items || {}, np = st.npcs || {}, sc = st.scenes || {};
     Object.keys(it).forEach(function (k) { vals.push(it[k]); });
     Object.keys(np).forEach(function (k) { vals.push(np[k]); });
-    return vals.some(function (v) { return v && v.status === 'pending'; });
+    Object.keys(sc).forEach(function (k) { vals.push(sc[k]); });
+    if (vals.some(function (v) { return v && v.status === 'pending'; })) return true;
+    // 页面上有 .scene-frame 但 scenes 里还没有对应项（刚出完回合，后端刚排队）也算 pending。
+    var frames = document.querySelectorAll('.scene-frame');
+    for (var i = 0; i < frames.length; i++) {
+      var key = frames[i].getAttribute('data-scene');
+      if (key && !Object.prototype.hasOwnProperty.call(sc, key)) return true;
+    }
+    return false;
   }
 
-  // 请求一次 /images；若仍有 pending，则每 4 秒轮询，最多 90 秒。
+  // 请求一次 /images；若仍有 pending，则每 4 秒轮询，最多 150 秒（150000ms）。
+  // 旧上限 90000ms（90 秒）不够：场景图可能排在物品图后面才排队生成。
   // 离开世界或全部就绪即停止。图片请求失败不影响游戏，静默忽略。
   async function fetchImages(id) {
     try {
       var data = await api('/api/worlds/' + encodeURIComponent(id) + '/images');
       if (id !== currentWorldId) return; // 已离开该世界：丢弃过期响应
-      imageState = { items: data.items || {}, npcs: data.npcs || {} };
+      imageState = { items: data.items || {}, npcs: data.npcs || {}, scenes: data.scenes || {} };
       renderImages();
       if (!hasPendingImage(imageState)) stopImagePoll();
     } catch (err) {
@@ -105,15 +142,15 @@
     if (!currentWorldId) return;
     var id = currentWorldId;
     if (imageWorldId !== id) { // 换了世界：清空旧图，避免串图
-      imageState = { items: {}, npcs: {} };
+      imageState = { items: {}, npcs: {}, scenes: {} };
       imageWorldId = id;
       renderImages();
     }
     imagePollStart = Date.now();
     fetchImages(id);
     imagePollTimer = setInterval(function () {
-      if (id !== currentWorldId || Date.now() - imagePollStart >= 90000) {
-        stopImagePoll(); // 离开世界 / 超过 90 秒
+      if (id !== currentWorldId || Date.now() - imagePollStart >= 150000) {
+        stopImagePoll(); // 离开世界 / 超过 150 秒
         return;
       }
       fetchImages(id);

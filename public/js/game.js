@@ -180,8 +180,14 @@
 
   // 一次性渲染完整叙事（历史回放 / result 最终补齐）：按 \n\n 拆成多个 <p>，
   // 旧存档没有分段的长段落按句末标点每约 80 字自动切段。
-  function appendNarration(text, badges) {
+  // sceneId 为 "<life>-<turn>" 时，块最上面放一个插图框（初始闪烁占位，由 renderScenes 填图）。
+  function appendNarration(text, badges, sceneId) {
     var wrap = el('div', 'narration-block');
+    if (sceneId) {
+      var frame = el('div', 'scene-frame img-pending');
+      frame.setAttribute('data-scene', sceneId);
+      wrap.appendChild(frame);
+    }
     splitNarration(text).forEach(function (para) {
       wrap.appendChild(el('p', 'narration', para));
     });
@@ -221,7 +227,10 @@
     if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
     if (rec.event) appendEventCard(rec.event);
-    if (rec.narration) appendNarration(rec.narration, rec.badges || []);
+    if (rec.narration) {
+      var logSceneId = (rec.scene && rec.scene.draw) ? (rec.life + '-' + rec.turn) : null;
+      appendNarration(rec.narration, rec.badges || [], logSceneId);
+    }
     if (rec.settlement) appendSettlementCard(rec.settlement);
     if (rec.death) appendDivider('第 ' + rec.life + ' 世 · 终');
   }
@@ -560,7 +569,9 @@
     currentState = res.state;
     renderHeader(res.state);
     if (res.event) appendEventCard(res.event);
-    appendNarration(res.narration, badgesFromApplied(res.applied));
+    var sceneId = (res.scene && res.scene.draw && res.sceneKey)
+      ? (res.state.life + '-' + res.state.turn) : null;
+    appendNarration(res.narration, badgesFromApplied(res.applied), sceneId);
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
     renderEventBanner(res.state.activeEvent);

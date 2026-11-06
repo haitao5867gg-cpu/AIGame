@@ -136,6 +136,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .stream{flex:1;overflow-y:auto;max-height:60vh;padding:4px 2px 16px}
 @media(max-width:859px){.stream{max-height:50vh}}
 .narration-block{margin:14px 0}
+/* 关键回合场景插图：16:9 框，ready 后 <img> 淡入；不挤压下方文字 */
+.scene-frame{width:100%;aspect-ratio:16/9;max-height:min(38vh,320px);border-radius:10px;overflow:hidden;
+  margin:4px 0 12px;border:1px solid var(--line);background:var(--bg-2)}
+.scene-img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in;
+  opacity:0;transition:opacity .6s}
+.scene-img.loaded{opacity:1}
 .narration{font-size:17px;line-height:1.9;white-space:pre-wrap;margin:0 0 1.15em}
 .narration-block>.narration:last-of-type{margin-bottom:0}
 .opening{font-size:17px;line-height:1.95;white-space:pre-wrap;color:var(--ink);

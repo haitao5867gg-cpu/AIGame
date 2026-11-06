@@ -81,6 +81,33 @@
       box.appendChild(friend);
     }
 
+    // ---- 场景插图开关（主人和来客都显示）----
+    var sceneSec = el('div', 'usage-sec');
+    sceneSec.appendChild(el('h4', null, '场景插图'));
+    var sceneRow = el('label', 'usage-friend-row');
+    var sceneCb = el('input');
+    sceneCb.type = 'checkbox';
+    sceneCb.checked = !!myPrefs.scenes;
+    sceneRow.appendChild(sceneCb);
+    sceneRow.appendChild(el('span', '', '关键回合配插图'));
+    sceneCb.addEventListener('change', function () {
+      var wanted = sceneCb.checked;
+      api('/api/prefs', {
+        method: 'POST',
+        body: JSON.stringify({ scenes: wanted }),
+      }).then(function (r) {
+        var on = (r && r.prefs && typeof r.prefs.scenes === 'boolean') ? r.prefs.scenes : wanted;
+        myPrefs.scenes = on;
+        sceneCb.checked = on;
+        toast(on ? '已开启场景插图' : '已关闭场景插图');
+      }).catch(function (err) {
+        sceneCb.checked = !wanted; // 失败还原
+        toast(err.message || '设置失败');
+      });
+    });
+    sceneSec.appendChild(sceneRow);
+    box.appendChild(sceneSec);
+
     // ---- 今日对话 token ----
     var t = d.tokens || {};
     var sec1 = el('div', 'usage-sec');
@@ -177,6 +204,7 @@
   // ---- 当前玩家：启动时取一次 /api/me，显示名字；来客给一个退出入口 ----
   function renderPlayerInfo(me) {
     if (!me) return;
+    if (me.prefs && typeof me.prefs.scenes === 'boolean') myPrefs.scenes = me.prefs.scenes;
     var label = me.host ? '主人' : ('玩家：' + me.name);
     $('home-player-name').textContent = label;
     $('g-player-name').textContent = label;
