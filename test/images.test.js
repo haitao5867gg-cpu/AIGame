@@ -16,6 +16,11 @@ function tmpDir(t) {
   return dir;
 }
 
+// 默认不让画风设定走真实对话模型：artDirector 返回 null → 关键词规则兜底。
+function withArt(opts) { return Object.assign({ artDirector: async () => null }, opts || {}); }
+function configureT(cfg, opts) { return images.configure(cfg, withArt(opts)); }
+function createT(cfg, opts) { return images.createImages(cfg, withArt(opts)); }
+
 function baseCfg(overrides) {
   return Object.assign({
     IMAGE_PROVIDER: 'gateway',
@@ -102,7 +107,7 @@ test('mock：不访问网络，写占位 SVG（文件名 .svg、status ready、u
   const dataDir = tmpDir(t);
   stubWarn(t);
   let fetched = false;
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: true }), {
+  configureT(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: true }), {
     fetchImpl: () => { fetched = true; return Promise.reject(new Error('不应访问网络')); },
   });
   const state = makeState();
@@ -127,7 +132,7 @@ test('共享缓存去重：不同世界同名同画风物品只生成一次（�
   const dataDir = tmpDir(t);
   stubWarn(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: okFetch(calls) });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: okFetch(calls) });
   const s1 = makeState({
     id: 'wA', bible: { title: '蒸汽朋克长安', tone: '', npcs: [] },
     character: { items: ['旧铜灯'] }, npcAttitude: {},
@@ -149,7 +154,7 @@ test('共享缓存去重：不同世界同名同画风物品只生成一次（�
 test('NPC 按世界区分：重名但不同世界生成两张图', async (t) => {
   const dataDir = tmpDir(t);
   stubWarn(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: true }));
+  configureT(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: true }));
   const s1 = makeState({
     id: 'wA', bible: { title: '蒸汽朋克长安', tone: '', npcs: [{ name: '守夜人', role: '甲', desc: '甲' }] },
     character: { items: [] }, npcAttitude: { '守夜人': 0 },
@@ -170,7 +175,7 @@ test('gateway 上限：超过 IMAGE_MAX_PER_WORLD 不再排队；请求体/鉴�
   const dataDir = tmpDir(t);
   stubWarn(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway', IMAGE_MAX_PER_WORLD: 2 }), {
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway', IMAGE_MAX_PER_WORLD: 2 }), {
     fetchImpl: okFetch(calls),
   });
   const state = makeState({
@@ -203,7 +208,7 @@ test('failed 冷却：10 分钟内不重试，过后允许重试', async (t) => 
     calls.push({ url, body: typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body });
     return { ok: true, json: async () => ({ error: { message: '额度不足' } }) };
   };
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), {
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), {
     fetchImpl: failFetch, now: () => nowVal,
   });
   const state = makeState({
@@ -236,7 +241,7 @@ test('failed 冷却：10 分钟内不重试，过后允许重试', async (t) => 
 test('假 fetch 成功写 jpg（字节正确）；失败标 failed 且 url 为 null；成功/失败都记 image 用量', async (t) => {
   const dataDir = tmpDir(t);
   stubWarn(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: okFetch(null) });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: okFetch(null) });
   const okState = makeState({
     id: 'wok', character: { items: ['旧铜灯'] }, npcAttitude: {},
     bible: { title: '蒸汽朋克长安', tone: '', npcs: [] },
@@ -253,7 +258,7 @@ test('假 fetch 成功写 jpg（字节正确）；失败标 failed 且 url 为 n
   assert.match(okList.items['旧铜灯'].url, /^\/api\/images\//);
 
   // 失败：error 字段 → failed
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), {
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), {
     fetchImpl: async () => ({ ok: true, json: async () => ({ error: { message: 'boom' } }) }),
   });
   const failState = makeState({
@@ -295,7 +300,7 @@ test('local 翻译成功：英文提示词 + enPrompt 入索引；请求体无 m
   };
   t.after(() => { global.fetch = original; });
 
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: false }));
+  configureT(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: false }));
   const state = makeState({
     character: { items: ['旧铜灯'] }, npcAttitude: {},
     bible: { title: '蒸汽朋克长安', tone: '', npcs: [] },
@@ -307,7 +312,7 @@ test('local 翻译成功：英文提示词 + enPrompt 入索引；请求体无 m
   const entry = idx[Object.keys(idx)[0]];
   assert.equal(entry.status, 'ready');
   assert.equal(entry.enPrompt, 'a rusty brass lantern glowing in fog');
-  assert.match(entry.prompt, /^a rusty brass lantern glowing in fog, single object centered, game item icon,/);
+  assert.match(entry.prompt, /^steampunk hand-drawn illustration, steam-powered clockwork era setting\. a rusty brass lantern glowing in fog, period-accurate object, single object centered, game item icon,/);
   assert.match(entry.prompt, /steampunk hand-drawn illustration/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].body.prompt, entry.prompt);
@@ -334,7 +339,7 @@ test('local 翻译失败：用英文兜底短语，仍能出图，不抛错', as
   };
   t.after(() => { global.fetch = original; });
 
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: false }));
+  configureT(baseCfg({ IMAGE_PROVIDER: 'local', LLM_MOCK: false }));
   const itemState = makeState({
     id: 'wi', character: { items: ['旧铜灯'] }, npcAttitude: {},
     bible: { title: '蒸汽朋克长安', tone: '', npcs: [] },
@@ -345,7 +350,7 @@ test('local 翻译失败：用英文兜底短语，仍能出图，不抛错', as
   let entry = idx[Object.keys(idx).find((k) => idx[k].kind === 'item')];
   assert.equal(entry.status, 'ready', '翻译失败仍要出图');
   assert.equal(entry.enPrompt, 'a mysterious item');
-  assert.match(entry.prompt, /a mysterious item, single object centered/);
+  assert.match(entry.prompt, /a mysterious item, period-accurate object, single object centered/);
 
   // NPC 用另一个兜底短语
   const npcState = makeState({
@@ -368,7 +373,7 @@ test('不阻塞：ensureImages 同步立即返回，慢 fetch 不拖住调用方
     released = true;
     resolve({ ok: true, json: async () => ({ data: [{ b64_json: JPEG.toString('base64') }] }) });
   }, 60));
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: slowFetch });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: slowFetch });
   const state = makeState({ character: { items: ['旧铜灯'] }, npcAttitude: {} });
   const t0 = Date.now();
   const ret = images.ensureImages(dataDir, state, images.listForState(state));
@@ -383,7 +388,7 @@ test('不阻塞：ensureImages 同步立即返回，慢 fetch 不拖住调用方
 test('IMAGE_PROVIDER=off：什么都不生成，列表为 none', async (t) => {
   const dataDir = tmpDir(t);
   stubWarn(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'off' }), {
+  configureT(baseCfg({ IMAGE_PROVIDER: 'off' }), {
     fetchImpl: () => { throw new Error('off 不应访问网络'); },
   });
   const state = makeState();
@@ -405,7 +410,7 @@ test('GET /images 老存档补图：list 时无索引项会顺手排队，先 pe
   const slowFetch = () => gate.then(() => ({
     ok: true, json: async () => ({ data: [{ b64_json: JPEG.toString('base64') }] }),
   }));
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: slowFetch });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: slowFetch });
   const state = makeState();
   const first = images.imageList(dataDir, state);
   assert.equal(first.items['无字信'].status, 'pending', '请求时顺手排队，立即返回 pending');
@@ -420,7 +425,7 @@ test('GET /images 老存档补图：list 时无索引项会顺手排队，先 pe
 test('imageList 只含当前 character.items 与 npcAttitude 的名字', async (t) => {
   const dataDir = tmpDir(t);
   stubWarn(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'off' }));
+  configureT(baseCfg({ IMAGE_PROVIDER: 'off' }));
   const state = makeState({
     character: { items: ['无字信', '旧铜灯'] },
     npcAttitude: { '守夜人': 0, '铸剑师': 2 },
@@ -491,7 +496,7 @@ function oneItemState(id) {
 test('siliconflow：请求体 / 鉴权头 / 中文提示词正确，下载 URL 写 jpg，用量记 siliconflow', async (t) => {
   const dataDir = tmpDir(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: freeFetch(calls) });
   const st = oneItemState('wsf');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -514,7 +519,7 @@ test('回退链：siliconflow 失败换 zhipu；失败的一家进冷却，下�
   const dataDir = tmpDir(t);
   stubWarn(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: freeFetch(calls, { sf: 'fail' }) });
   const st = makeState({ id: 'wfb', npcAttitude: {}, bible: { title: '蒸汽朋克长安', tone: '', npcs: [] } });
   images.ensureImages(dataDir, st, images.listForState(st)); // 两件物品
@@ -538,7 +543,7 @@ test('回退链：没配 Key 的一家不发请求直接跳过；全部失败标
   const dataDir = tmpDir(t);
   stubWarn(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: freeFetch(calls, { zp: 'fail' }) });
   const st = oneItemState('wnk');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -550,19 +555,19 @@ test('回退链：没配 Key 的一家不发请求直接跳过；全部失败标
 
 test('回退链：免费链不受 IMAGE_MAX_PER_WORLD 限制；链里有 gateway 时才限', async (t) => {
   const dataDir = tmpDir(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k', IMAGE_MAX_PER_WORLD: 1 }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k', IMAGE_MAX_PER_WORLD: 1 }),
     { fetchImpl: freeFetch(null) });
   const st = makeState({ id: 'wcap', npcAttitude: {}, bible: { title: 'x', tone: '', npcs: [] } });
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
   const idx = images.readIndex(dataDir);
   assert.equal(Object.values(idx).filter((e) => e.status === 'ready').length, 2);
-  assert.equal(images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu,gateway' })).config.providers.join(','), 'zhipu,gateway');
+  assert.equal(configureT(baseCfg({ IMAGE_PROVIDER: 'zhipu,gateway' })).config.providers.join(','), 'zhipu,gateway');
 });
 
 test('重启后遗留的 pending（不在本进程 inFlight 里）会重新排队并生成', async (t) => {
   const dataDir = tmpDir(t);
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(null) });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(null) });
   const st = oneItemState('wstale');
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
@@ -573,7 +578,7 @@ test('重启后遗留的 pending（不在本进程 inFlight 里）会重新排�
   idx[k] = Object.assign({}, idx[k], { status: 'pending', file: null });
   store.atomicWriteJson(path.join(dataDir, 'images', 'index.json'), idx);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(calls) });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(calls) });
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
   assert.equal(calls.length, 2, '应重新请求生成');
@@ -592,7 +597,7 @@ test('提供方返回 PNG 字节时存成 .png，serveImage 返回 image/png', a
     }
     return base(url, opts);
   };
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sf-k' }), { fetchImpl });
+  configureT(baseCfg({ IMAGE_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sf-k' }), { fetchImpl });
   const st = oneItemState('wpng');
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
@@ -610,7 +615,7 @@ test('providerStatus：返回出图链，只列仍在冷却的提供方及剩余
   const dataDir = tmpDir(t);
   stubWarn(t);
   let now = 1_000_000;
-  const inst = images.createImages(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
+  const inst = createT(baseCfg({ IMAGE_PROVIDER: 'siliconflow,zhipu', SILICONFLOW_API_KEY: 'sf-k', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: freeFetch(null, { sf: 'fail' }), now: () => now });
   assert.deepEqual(inst.providerStatus(), { chain: ['siliconflow', 'zhipu'], cooling: {} });
   const st = oneItemState('wps');
@@ -647,7 +652,7 @@ test('modelscope：异步提交 → 轮询到 SUCCEED → 下载 output_images[0
   const dataDir = tmpDir(t);
   const calls = [];
   const sleeps = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
     { fetchImpl: msFetch(calls, ['PENDING', 'RUNNING', 'SUCCEED']), sleep: async (ms) => { sleeps.push(ms); } });
   const st = oneItemState('wms');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -671,7 +676,7 @@ test('modelscope：任务 FAILED 换下一家（zhipu）；没配 Key 直接跳�
   const dataDir = tmpDir(t);
   stubWarn(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: 'ms-k', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: 'ms-k', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: msFetch(calls, ['FAILED']), sleep: async () => {} });
   const st = oneItemState('wmsf');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -681,7 +686,7 @@ test('modelscope：任务 FAILED 换下一家（zhipu）；没配 Key 直接跳�
 
   const dataDir2 = tmpDir(t);
   const calls2 = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'modelscope,zhipu', MODELSCOPE_API_KEY: '', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: msFetch(calls2), sleep: async () => {} });
   images.ensureImages(dataDir2, st, images.listForState(st));
   await images.waitIdle();
@@ -693,7 +698,7 @@ test('modelscope：一直 RUNNING 到超时则失败', async (t) => {
   const dataDir = tmpDir(t);
   stubWarn(t);
   let n = 0;
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'modelscope', MODELSCOPE_API_KEY: 'ms-k' }),
     { fetchImpl: msFetch(null, ['RUNNING']), sleep: async () => { n += 1; } });
   const st = oneItemState('wmst');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -719,7 +724,7 @@ function cfFetch(calls, behavior) {
 test('cloudflare：URL 带账户与模型、Bearer Token、steps=4、英文提示词，base64 解码落盘', async (t) => {
   const dataDir = tmpDir(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t' }),
     { fetchImpl: cfFetch(calls), translate: async () => 'old brass oil lamp' });
   const st = oneItemState('wcf');
   images.ensureImages(dataDir, st, images.listForState(st));
@@ -728,7 +733,7 @@ test('cloudflare：URL 带账户与模型、Bearer Token、steps=4、英文提�
   assert.equal(calls[0].url, images.CLOUDFLARE_API_BASE + 'acc1/ai/run/@cf/black-forest-labs/flux-1-schnell');
   assert.equal(calls[0].headers.Authorization, 'Bearer cf-t');
   assert.equal(calls[0].body.steps, 4);
-  assert.match(calls[0].body.prompt, /^old brass oil lamp, single object centered/);
+  assert.match(calls[0].body.prompt, /\. old brass oil lamp, period-accurate object, single object centered/);
   const e = Object.values(images.readIndex(dataDir))[0];
   assert.equal(e.status, 'ready');
   assert.equal(e.provider, 'cloudflare');
@@ -741,7 +746,7 @@ test('cloudflare：额度用完（success:false）换下一家；账户或 Token
   const st = oneItemState('wcff');
   const dataDir = tmpDir(t);
   const calls = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: 'cf-t', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: cfFetch(calls, { fail: true }), translate: async () => 'lamp' });
   images.ensureImages(dataDir, st, images.listForState(st));
   await images.waitIdle();
@@ -749,10 +754,114 @@ test('cloudflare：额度用完（success:false）换下一家；账户或 Token
 
   const dataDir2 = tmpDir(t);
   const calls2 = [];
-  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: '', ZHIPU_API_KEY: 'zp-k' }),
+  configureT(baseCfg({ IMAGE_PROVIDER: 'cloudflare,zhipu', CLOUDFLARE_ACCOUNT_ID: 'acc1', CLOUDFLARE_API_TOKEN: '', ZHIPU_API_KEY: 'zp-k' }),
     { fetchImpl: cfFetch(calls2), translate: async () => 'lamp' });
   images.ensureImages(dataDir2, st, images.listForState(st));
   await images.waitIdle();
   assert.ok(!calls2.some((c) => c.url.startsWith(images.CLOUDFLARE_API_BASE)));
   assert.equal(Object.values(images.readIndex(dataDir2))[0].provider, 'zhipu');
+});
+
+// ---- 每个世界的画风设定 + 锁时代的提示词 ----
+const XIANXIA_ART = {
+  zh: '中国古风水墨仙侠插画', en: 'ancient Chinese xianxia ink-wash illustration',
+  eraZh: '中国古代修仙宗门', eraEn: 'ancient China, cultivation sect', avoidZh: '现代物品，霓虹，赛博朋克',
+};
+function xianxiaState(id) {
+  return makeState({
+    id, character: { items: ['旧铜灯'] }, npcAttitude: {},
+    bible: { title: '杂役百年', tone: '低阶修仙的土腥气', rules: ['灵根决定上限'], places: [{ name: '外门' }], npcs: [] },
+  });
+}
+
+test('画风设定：LLM 生成一次写入 styles.json，提示词带画风 / 世界背景 / 时代，负面词带 avoid；之后复用缓存', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  let directed = 0;
+  let seenBrief = '';
+  const director = async (state, messages) => { directed += 1; seenBrief = messages[1].content; return XIANXIA_ART; };
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sf-k' }),
+    { fetchImpl: freeFetch(calls), artDirector: director });
+  const st = xianxiaState('wart');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(directed, 1);
+  assert.match(seenBrief, /杂役百年/);
+  assert.match(seenBrief, /外门/);
+  const styles = JSON.parse(fs.readFileSync(path.join(dataDir, 'images', 'styles.json'), 'utf8'));
+  assert.equal(styles.wart.zh, XIANXIA_ART.zh);
+  const body = calls[0].body;
+  assert.match(body.prompt, /^中国古风水墨仙侠插画。世界背景：杂役百年，中国古代修仙宗门。游戏道具图标：旧铜灯，该时代的器物/);
+  assert.match(body.prompt, /不要出现现代物品，霓虹，赛博朋克$/);
+  assert.match(body.negative_prompt, /现代物品，霓虹，赛博朋克$/);
+  const e = Object.values(images.readIndex(dataDir))[0];
+  assert.equal(e.style, '中国古风水墨仙侠插画｜中国古代修仙宗门');
+  assert.equal(e.status, 'ready');
+
+  // 新实例（模拟重启）：直接读缓存，不再调 LLM，也不重画。
+  const calls2 = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'siliconflow', SILICONFLOW_API_KEY: 'sf-k' }),
+    { fetchImpl: freeFetch(calls2), artDirector: director });
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(directed, 1);
+  assert.equal(calls2.length, 0);
+});
+
+test('画风设定：bible.art 优先，不调 LLM；画风变了缓存 key 变，旧图自动重画', async (t) => {
+  const dataDir = tmpDir(t);
+  let directed = 0;
+  const director = async () => { directed += 1; return null; };
+  // 先用关键词规则兜底出一张
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(null), artDirector: director });
+  const st = xianxiaState('wbible');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.equal(directed, 1);
+  const before = Object.values(images.readIndex(dataDir));
+  assert.equal(before.length, 1);
+  assert.equal(before[0].style, '水墨手绘插画｜中国古代仙侠'); // 关键词兜底也带时代
+
+  // bible 里写了画风 → 优先用它，key 变化 → 重新出图
+  const st2 = Object.assign({}, st, { bible: Object.assign({}, st.bible, { art: XIANXIA_ART }) });
+  const calls = [];
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }), { fetchImpl: freeFetch(calls), artDirector: director });
+  images.ensureImages(dataDir, st2, images.listForState(st2));
+  await images.waitIdle();
+  assert.equal(directed, 1, 'bible.art 存在时不调 LLM');
+  assert.equal(calls.filter((c) => c.url === images.ZHIPU_URL).length, 1, '画风变了应重画');
+  const after = Object.values(images.readIndex(dataDir)).filter((e) => e.style === '中国古风水墨仙侠插画｜中国古代修仙宗门');
+  assert.equal(after.length, 1);
+  assert.equal(after[0].status, 'ready');
+});
+
+test('画风设定：cloudflare 英文提示词以画风 + 时代开头，翻译请求带时代背景与锁时代要求', async (t) => {
+  const dataDir = tmpDir(t);
+  const calls = [];
+  let tMessages = null;
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: 'a', CLOUDFLARE_API_TOKEN: 't' }), {
+    fetchImpl: cfFetch(calls),
+    artDirector: async () => XIANXIA_ART,
+    translate: async (job, messages) => { tMessages = messages; return 'a tarnished bronze oil lamp'; },
+  });
+  const st = xianxiaState('wcfart');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.match(tMessages[0].content, /MUST fit the world's era/);
+  assert.match(tMessages[1].content, /时代背景：中国古代修仙宗门/);
+  assert.equal(calls[0].body.prompt,
+    'ancient Chinese xianxia ink-wash illustration, ancient China, cultivation sect setting. a tarnished bronze oil lamp, '
+    + 'period-accurate object, single object centered, game item icon, plain light background, no text');
+});
+
+test('画风设定：LLM 返回字段不全 → 关键词规则兜底，且不写 styles.json', async (t) => {
+  const dataDir = tmpDir(t);
+  stubWarn(t);
+  images.configure(baseCfg({ IMAGE_PROVIDER: 'zhipu', ZHIPU_API_KEY: 'zp-k' }),
+    { fetchImpl: freeFetch(null), artDirector: async () => ({ zh: '只有一个字段' }) });
+  const st = xianxiaState('wbad');
+  images.ensureImages(dataDir, st, images.listForState(st));
+  await images.waitIdle();
+  assert.ok(!fs.existsSync(path.join(dataDir, 'images', 'styles.json')));
+  assert.equal(Object.values(images.readIndex(dataDir))[0].style, '水墨手绘插画｜中国古代仙侠');
 });

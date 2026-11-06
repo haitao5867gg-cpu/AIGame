@@ -39,13 +39,20 @@ const LOCAL_DEFAULT_BASE = 'http://127.0.0.1:8790/v1';
 // ---- 画风推断：从 bible.title / tone 用简单关键词规则推一个画风（中英各一份）----
 // 顺序即优先级：先匹配先生效。
 const STYLE_RULES = Object.freeze([
-  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, zh: '水墨手绘插画', en: 'Chinese ink wash illustration' },
-  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, zh: '复古蒸汽朋克手绘', en: 'steampunk hand-drawn illustration' },
-  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, zh: '科幻概念插画', en: 'sci-fi concept art illustration' },
-  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, zh: '复古民国画报风', en: 'vintage 1930s poster illustration' },
-  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, zh: '末日写实插画', en: 'post-apocalyptic gritty illustration' },
+  { re: /修仙|仙侠|武侠|古代|古风|江湖|侠客|朝代|王朝/, zh: '水墨手绘插画', en: 'Chinese ink wash illustration',
+    eraZh: '中国古代仙侠', eraEn: 'ancient China, xianxia', avoidZh: '现代物品，科技，霓虹，赛博朋克，西装，枪械，塑料' },
+  { re: /蒸汽|机械|朋克|齿轮|机关|锅炉|发条/, zh: '复古蒸汽朋克手绘', en: 'steampunk hand-drawn illustration',
+    eraZh: '蒸汽机械时代', eraEn: 'steam-powered clockwork era', avoidZh: '现代电子产品，霓虹，塑料' },
+  { re: /赛博|未来|星际|深海|科幻|太空|宇宙|银河|机甲/, zh: '科幻概念插画', en: 'sci-fi concept art illustration',
+    eraZh: '未来科幻', eraEn: 'futuristic sci-fi', avoidZh: '古装，魔法' },
+  { re: /民国|上海|近代|旗袍|谍战|百乐门|租界/, zh: '复古民国画报风', en: 'vintage 1930s poster illustration',
+    eraZh: '1930 年代民国', eraEn: '1930s Republican China', avoidZh: '现代电子产品，未来科技' },
+  { re: /末日|丧尸|僵尸|尸潮|废土|灾变|核战/, zh: '末日写实插画', en: 'post-apocalyptic gritty illustration',
+    eraZh: '末日废土', eraEn: 'post-apocalyptic wasteland', avoidZh: '整洁现代都市，魔法' },
 ]);
 const DEFAULT_STYLE = Object.freeze({ zh: '手绘插画', en: 'hand-drawn game illustration' });
+const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh'];
+const ART_RETRY_MS = 30 * 60 * 1000; // 画风 LLM 生成失败后，30 分钟内先用关键词规则兜底、不再重试
 
 function inferStyle(bible) {
   const b = bible && typeof bible === 'object' ? bible : {};
@@ -54,6 +61,52 @@ function inferStyle(bible) {
     if (rule.re.test(text)) return { zh: rule.zh, en: rule.en };
   }
   return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en };
+}
+
+// 规范化画风设定：五个字段都是非空短字符串才算有效。
+function normalizeArt(a) {
+  if (!a || typeof a !== 'object') return null;
+  const out = {};
+  for (const f of ART_FIELDS) {
+    const v = typeof a[f] === 'string' ? a[f].replace(/\s+/g, ' ').trim() : '';
+    if (!v) return null;
+    out[f] = clip(v, 60);
+  }
+  return out;
+}
+
+// 关键词规则兜底的画风设定（LLM 不可用 / 失败时）。
+function ruleArt(bible) {
+  const b = bible && typeof bible === 'object' ? bible : {};
+  const text = `${b.title == null ? '' : b.title} ${b.tone == null ? '' : b.tone}`;
+  for (const r of STYLE_RULES) {
+    if (r.re.test(text)) return { zh: r.zh, en: r.en, eraZh: r.eraZh, eraEn: r.eraEn, avoidZh: r.avoidZh };
+  }
+  return { zh: DEFAULT_STYLE.zh, en: DEFAULT_STYLE.en, eraZh: '', eraEn: '', avoidZh: '' };
+}
+
+function stylesPath(dataDir) { return path.join(imagesDir(dataDir), 'styles.json'); }
+function readStyles(dataDir) {
+  const v = store.readJson(stylesPath(dataDir), {});
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
+// 世界的画风设定：bible.art → data/images/styles.json 缓存 → null（尚未生成）。
+function cachedArt(dataDir, state) {
+  const s = state && typeof state === 'object' ? state : {};
+  const fromBible = normalizeArt(s.bible && s.bible.art);
+  if (fromBible) return fromBible;
+  const worldId = String(s.id == null ? '' : s.id);
+  return normalizeArt(readStyles(dataDir)[worldId]);
+}
+
+// job.style：zh 进缓存 key（画风或时代变了 → 旧图自动重画），其余字段给提示词用。
+function styleFromArt(art) {
+  const a = art || ruleArt(null);
+  return {
+    zh: a.eraZh ? `${a.zh}｜${a.eraZh}` : a.zh,
+    en: a.en, artZh: a.zh, eraZh: a.eraZh || '', eraEn: a.eraEn || '', avoidZh: a.avoidZh || '',
+  };
 }
 
 // 缓存 key = sha1(kind|name|style[|worldId]) 前 12 位（十六进制）。
@@ -93,21 +146,29 @@ function clip(s, n) {
 
 // ---- 提示词 ----
 // gateway 用中文。
+// 画风放最前（权重高），再写世界背景 + 时代，锁定器物 / 服饰，最后写主体。
 function gatewayPrompt(job) {
+  const st = job.style;
   const title = job.bibleTitle || '';
-  const style = job.style.zh;
+  const art = st.artZh || st.zh;
+  const world = `世界背景：${title}${st.eraZh ? '，' + st.eraZh : ''}`;
+  const avoid = st.avoidZh ? `，不要出现${st.avoidZh}` : '';
   if (job.kind === 'npc') {
-    return `游戏角色半身肖像：${job.name}，${job.role}，${clip(job.desc, 60)}。世界：${title}。${style}，面部清晰，简洁暗色背景，无文字，无水印`;
+    return `${art}。${world}。游戏角色半身肖像：${job.name}，${job.role}，${clip(job.desc, 60)}，`
+      + `穿着符合该时代的服饰，面部清晰，简洁暗色背景，无文字，无水印${avoid}`;
   }
-  return `游戏道具图标：${job.name}。世界：${title}。${style}，单个物体居中，完整可辨认，浅色纯色背景，无文字，无水印`;
+  return `${art}。${world}。游戏道具图标：${job.name}，该时代的器物，单个物体居中，完整可辨认，`
+    + `浅色纯色背景，无文字，无水印${avoid}`;
 }
 
 // local 用英文：翻译出的一句画面描述 + 固定模板。
-function localPrompt(enDesc, kind, styleEn) {
+// flux 不支持负面提示词：画风和时代放最前，用正面描述锁时代。
+function localPrompt(enDesc, kind, styleEn, eraEn) {
+  const head = eraEn ? `${styleEn}, ${eraEn} setting` : styleEn;
   if (kind === 'npc') {
-    return `${enDesc}, half-body portrait, clear face, ${styleEn}, simple dark background, no text`;
+    return `${head}. ${enDesc}, period-accurate clothing, half-body portrait, clear face, simple dark background, no text`;
   }
-  return `${enDesc}, single object centered, game item icon, ${styleEn}, plain light background, no text`;
+  return `${head}. ${enDesc}, period-accurate object, single object centered, game item icon, plain light background, no text`;
 }
 
 // 翻译结果清洗：取首行、去引号、截断到 ≤25 个英文单词。
@@ -188,7 +249,7 @@ function serveImage(dataDir, filename) {
 }
 
 // 根据索引项拼出接口返回用的 {status, url}。
-function statusOf(idx, kind, name, style, worldId) {
+function statusOfEntry(idx, kind, name, style, worldId) {
   const ik = indexKeyOf(kind, imageKey(kind, name, style, worldId));
   const e = idx[ik];
   if (!e) return { status: 'none', url: null };
@@ -199,12 +260,18 @@ function statusOf(idx, kind, name, style, worldId) {
 }
 
 // GET /api/worlds/:id/images 的响应。顺手对没有索引项的补排队（老存档补图）。
-function buildImageList(dataDir, state, ensureFn) {
+// isGenerating(worldId)=true 表示该世界画风设定还在生成：没图的项先报 pending，前端会继续轮询。
+function buildImageList(dataDir, state, ensureFn, isGenerating) {
   const s = state && typeof state === 'object' ? state : {};
   ensureFn(dataDir, s, listForState(s));
   const idx = readIndex(dataDir);
-  const style = inferStyle(s.bible);
+  const style = styleFromArt(cachedArt(dataDir, s) || ruleArt(s.bible));
   const worldId = String(s.id == null ? '' : s.id);
+  const gen = typeof isGenerating === 'function' && isGenerating(worldId);
+  const statusOf = (i, kind, name, st, wid) => {
+    const r = statusOfEntry(i, kind, name, st, wid);
+    return gen && r.status !== 'ready' ? { status: 'pending', url: null } : r;
+  };
   const items = {};
   const npcs = {};
   const curItems = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
@@ -264,6 +331,73 @@ function createImages(cfg, opts) {
   const nowFn = o.now || (() => Date.now());
   const sleepFn = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
 
+  // ---- 每个世界的画风设定：缺失时用对话模型按 bible 生成一次，缓存到 data/images/styles.json ----
+  const artJobs = new Map();   // worldId → Promise（本进程正在生成）
+  const artFailedAt = new Map(); // worldId → 上次失败时间
+
+  async function directArt(dataDir, state) {
+    const b = state.bible && typeof state.bible === 'object' ? state.bible : {};
+    const brief = [
+      `标题：${clip(b.title, 40)}`,
+      `基调：${clip(b.tone, 120)}`,
+      Array.isArray(b.rules) ? `规则：${clip(b.rules.join('；'), 200)}` : '',
+      Array.isArray(b.places) ? `地点：${clip(b.places.map((p) => (p && p.name) || p).join('、'), 120)}` : '',
+    ].filter(Boolean).join('\n');
+    const messages = [
+      {
+        role: 'system',
+        content: '你是游戏美术指导。根据世界设定，给这个世界的所有道具图标和人物肖像定一个统一画风，只输出 JSON：'
+          + '{"zh":"中文画风短语，≤16字","en":"English art style phrase, ≤12 words",'
+          + '"eraZh":"时代与地域，≤16字","eraEn":"era and region in English, ≤10 words",'
+          + '"avoidZh":"不该出现在画面里、与时代冲突的元素，中文逗号分隔，≤30字"}。'
+          + '例：修仙世界 → {"zh":"中国古风水墨仙侠插画","en":"ancient Chinese xianxia ink-wash illustration",'
+          + '"eraZh":"中国古代修仙宗门","eraEn":"ancient China, cultivation sect","avoidZh":"现代物品，科技，霓虹，赛博朋克，西装，枪械"}',
+      },
+      { role: 'user', content: brief },
+    ];
+    if (typeof o.artDirector === 'function') return normalizeArt(await o.artDirector(state, messages));
+    if (mock) return null;
+    const client = llm.createClient(c, dataDir);
+    const out = await client.complete({ purpose: 'turn', model: llmModel, messages, responseFormat: 'json_object' });
+    let parsed = null;
+    try { parsed = JSON.parse(String(out && out.content).replace(/^```(?:json)?|```$/g, '').trim()); } catch (_) { /* 落到兜底 */ }
+    return normalizeArt(parsed);
+  }
+
+  // 返回 {style, ready}。ready=false 表示正在生成画风设定，本次先不排队（生成后会自动重新 ensure）。
+  function resolveStyle(dataDir, state, list) {
+    const worldId = String(state.id == null ? '' : state.id);
+    const cached = cachedArt(dataDir, state);
+    if (cached) return { style: styleFromArt(cached), ready: true };
+    const failedAt = artFailedAt.get(worldId);
+    if (mock || (failedAt != null && nowFn() - failedAt < ART_RETRY_MS)) {
+      return { style: styleFromArt(ruleArt(state.bible)), ready: true };
+    }
+    if (!artJobs.has(worldId)) {
+      const job = (async () => {
+        let art = null;
+        try { art = await directArt(dataDir, state); } catch (err) {
+          console.warn('[images] 生成画风设定失败，用关键词规则兜底：' + (err && err.message ? err.message : err));
+        }
+        if (art) {
+          const all = readStyles(dataDir);
+          all[worldId] = Object.assign({}, art, { ts: nowFn() });
+          fs.mkdirSync(imagesDir(dataDir), { recursive: true });
+          store.atomicWriteJson(stylesPath(dataDir), all);
+          console.log(`[images] 世界 ${worldId} 画风：${art.zh}｜${art.eraZh}`);
+        } else {
+          artFailedAt.set(worldId, nowFn());
+        }
+      })().finally(() => {
+        artJobs.delete(worldId);
+        ensureImages(dataDir, state, list);
+        notifyIdle();
+      });
+      artJobs.set(worldId, job);
+    }
+    return { style: null, ready: false };
+  }
+
   const queue = [];
   const inFlight = new Set();       // 已排队 / 处理中，避免同一 key 重复排队
   const worldCount = new Map();     // gateway：按世界估算已排队数量
@@ -281,14 +415,17 @@ function createImages(cfg, opts) {
   // 失败一律返回空串（由上层用兜底短语），绝不抛错。
   async function translate(job) {
     try {
+      const era = job.style && job.style.eraZh ? `；时代背景：${job.style.eraZh}` : '';
       const subject = job.kind === 'npc'
-        ? `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}`
-        : `物品：${job.name}；世界：${job.bibleTitle}`;
+        ? `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`
+        : `物品：${job.name}；世界：${job.bibleTitle}${era}`;
       const messages = [
         {
           role: 'system',
           content: 'Output ONLY one English visual description (at most 25 words) of the subject '
-            + 'for an image generator. Do NOT include any person name or quotation marks. No explanation.',
+            + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
+            + 'of that era\'s materials and craft, people wear that era\'s clothing; never modern or futuristic '
+            + 'unless the world itself is. Do NOT include any person name or quotation marks. No explanation.',
         },
         { role: 'user', content: subject },
       ];
@@ -372,10 +509,11 @@ function createImages(cfg, opts) {
   }
 
   // 硅基流动（Kolors，免费）：返回 images[0].url，需再下载。
-  async function callSiliconflow(prompt) {
+  async function callSiliconflow(prompt, style) {
     if (!sfKey) throw new Error('未配置 SILICONFLOW_API_KEY');
     const data = await postJson(SILICONFLOW_URL, { Authorization: `Bearer ${sfKey}` }, {
-      model: sfModel, prompt, negative_prompt: '文字，水印，签名，边框，模糊，畸形',
+      model: sfModel, prompt,
+      negative_prompt: '文字，水印，签名，边框，模糊，畸形' + (style && style.avoidZh ? '，' + style.avoidZh : ''),
       image_size: FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
     });
     const u = data && Array.isArray(data.images) && data.images[0] && data.images[0].url;
@@ -445,13 +583,13 @@ function createImages(cfg, opts) {
   async function runProvider(p, job) {
     if (p === 'siliconflow') {
       const prompt = gatewayPrompt(job);
-      return { bytes: await callSiliconflow(prompt), prompt, enPrompt: '', model: sfModel };
+      return { bytes: await callSiliconflow(prompt, job.style), prompt, enPrompt: '', model: sfModel };
     }
     if (p === 'cloudflare') {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
       let enPrompt = await translate(job);
       if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-      const prompt = localPrompt(enPrompt, job.kind, job.style.en);
+      const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn);
       return { bytes: await callCloudflare(prompt), prompt, enPrompt, model: cfModel };
     }
     if (p === 'modelscope') {
@@ -469,7 +607,7 @@ function createImages(cfg, opts) {
     // local：先翻译，再拼英文提示词。
     let enPrompt = await translate(job);
     if (!enPrompt) enPrompt = job.kind === 'npc' ? 'a mysterious person' : 'a mysterious item';
-    const prompt = localPrompt(enPrompt, job.kind, job.style.en);
+    const prompt = localPrompt(enPrompt, job.kind, job.style.en, job.style.eraEn);
     return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
   }
 
@@ -549,7 +687,7 @@ function createImages(cfg, opts) {
   }
 
   function notifyIdle() {
-    if (active !== 0 || queue.length !== 0 || idleWaiters.length === 0) return;
+    if (active !== 0 || queue.length !== 0 || artJobs.size !== 0 || idleWaiters.length === 0) return;
     const ws = idleWaiters.splice(0);
     for (const r of ws) r();
   }
@@ -577,7 +715,9 @@ function createImages(cfg, opts) {
       if (off) return; // 什么都不生成
       const s = state && typeof state === 'object' ? state : {};
       const worldId = String(s.id == null ? '' : s.id);
-      const style = inferStyle(s.bible);
+      const resolved = resolveStyle(dataDir, s, list);
+      if (!resolved.ready) return; // 画风设定生成中，完成后会自动重新 ensure
+      const style = resolved.style;
       const idx = readIndex(dataDir);
       let changed = false;
       let wcount = null;
@@ -637,11 +777,11 @@ function createImages(cfg, opts) {
   }
 
   function imageList(dataDir, state) {
-    return buildImageList(dataDir, state, ensureImages);
+    return buildImageList(dataDir, state, ensureImages, (wid) => artJobs.has(wid));
   }
 
   function waitIdle() {
-    if (active === 0 && queue.length === 0) return Promise.resolve();
+    if (active === 0 && queue.length === 0 && artJobs.size === 0) return Promise.resolve();
     return new Promise((resolve) => idleWaiters.push(resolve));
   }
 
