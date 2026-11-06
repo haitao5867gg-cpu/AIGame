@@ -17,6 +17,8 @@ const DEFAULTS = Object.freeze({
   LLM_MOCK: '0',
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
+  // 每位玩家（含主人）各自的每日 token 上限；0 表示不限。与全局上限相互独立。
+  LLM_PLAYER_DAILY_TOKEN_LIMIT: '1000000',
   LLM_EXTRA_BODY: '', // JSON 字符串，合并进 LLM 请求体；解析失败忽略并告警
   LLM_BASE_URL: '',  // LLM_BASE 的别名；gateway 图片默认复用「LLM base URL」
   PORT: '8787',
@@ -50,7 +52,7 @@ const DEFAULTS = Object.freeze({
 });
 
 const NUMERIC_KEYS = Object.freeze([
-  'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'PORT',
+  'LLM_TIMEOUT_MS', 'LLM_DAILY_TOKEN_LIMIT', 'LLM_PLAYER_DAILY_TOKEN_LIMIT', 'PORT',
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_LOCAL_MIN_FREE_MB',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;

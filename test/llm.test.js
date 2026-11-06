@@ -6,6 +6,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const llm = require('../src/llm.js');
+const context = require('../src/context.js');
+
+function seedUsage(dir, rows) {
+  fs.writeFileSync(path.join(dir, 'usage.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
 
 function tmpDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aigame-llm-'));
@@ -171,4 +176,122 @@ test('mock 数据覆盖新字段：mockWorld 带 start.facts、mockTurn 带 over
   assert.equal(JSON.parse(t7.content).overstep, true, '约每 7 回合模拟一次越界');
   const t8 = await client.complete({ purpose: 'turn', model: 'm', messages: [], mock: { turn: 8 } });
   assert.equal(JSON.parse(t8.content).overstep, false);
+});
+
+// ---- 每人每日 token 上限 ----
+test('summarizeToday：按 playerId 只统计该玩家 token/出图，无 playerId 记录算 host；不传保持全局', () => {
+  const now = new Date(2026, 10, 5, 12, 0, 0).getTime();
+  const day = 24 * 3600 * 1000;
+  const rows = [
+    { ts: now - 1000, prompt_tokens: 10, completion_tokens: 2, playerId: 'pA', ok: true },
+    { ts: now - 2000, prompt_tokens: 5, completion_tokens: 1, playerId: 'pB', ok: true },
+    { ts: now - 3000, prompt_tokens: 7, completion_tokens: 3, ok: true },           // 无 playerId → host
+    { ts: now - 4000, prompt_tokens: 100, completion_tokens: 100, ok: true },        // 无 playerId → host
+    { ts: now - 2 * day, prompt_tokens: 999, completion_tokens: 999, playerId: 'pA', ok: true }, // 昨天
+    { ts: now - 5000, kind: 'image', provider: 'local', ok: true, playerId: 'pA' },
+    { ts: now - 6000, kind: 'image', provider: 'local', ok: false },                // 无 playerId → host
+  ];
+
+  const a = llm.summarizeToday(rows, now, 100, 'pA');
+  assert.deepEqual(a.tokens, { prompt: 10, completion: 2, total: 12, limit: 100, remaining: 88 });
+  assert.deepEqual(a.images.total, { ok: 1, fail: 0 });
+
+  const b = llm.summarizeToday(rows, now, 100, 'pB');
+  assert.deepEqual(b.tokens, { prompt: 5, completion: 1, total: 6, limit: 100, remaining: 94 });
+  assert.deepEqual(b.images.total, { ok: 0, fail: 0 });
+
+  const h = llm.summarizeToday(rows, now, 100, 'host');
+  assert.deepEqual(h.tokens, { prompt: 107, completion: 103, total: 210, limit: 100, remaining: 0 });
+  assert.deepEqual(h.images.total, { ok: 0, fail: 1 });
+
+  // 不传 playerId：保持原行为（全局、含所有玩家）
+  const all = llm.summarizeToday(rows, now, 100);
+  assert.deepEqual(all.tokens, { prompt: 122, completion: 106, total: 228, limit: 100, remaining: 0 });
+  assert.deepEqual(all.images.total, { ok: 1, fail: 1 });
+});
+
+test('summarizePlayers：今日每个玩家按 total 降序、含 host、无 playerId 记录算 host', () => {
+  const now = new Date(2026, 10, 5, 12, 0, 0).getTime();
+  const rows = [
+    { ts: now - 1000, prompt_tokens: 30, completion_tokens: 0, playerId: 'pA' },
+    { ts: now - 2000, prompt_tokens: 10, completion_tokens: 0, playerId: 'pB' },
+    { ts: now - 3000, prompt_tokens: 20, completion_tokens: 0 },                 // → host
+    { ts: now - 25 * 3600 * 1000, prompt_tokens: 999, completion_tokens: 0, playerId: 'pC' }, // 昨天
+  ];
+  const out = llm.summarizePlayers(rows, now);
+  assert.deepEqual(out.map((p) => p.id), ['pA', 'host', 'pB']);
+  assert.deepEqual(out.map((p) => p.total), [30, 20, 10]);
+});
+
+test('每人每日上限：当前玩家今日用量达到上限返回 429，其他玩家 / 无玩家身份不受影响', async (t) => {
+  const dir = tmpDir(t);
+  const now = Date.now();
+  seedUsage(dir, [
+    { ts: now, model: 'm', purpose: 'turn', prompt_tokens: 60, completion_tokens: 0, playerId: 'pA', ok: true },
+  ]);
+  const cfg = baseCfg({ LLM_MOCK: true, LLM_PLAYER_DAILY_TOKEN_LIMIT: 50 });
+  const client = llm.createClient(cfg, dir);
+
+  await context.run({ playerId: 'pA' }, async () => {
+    await assert.rejects(
+      () => client.complete({ purpose: 'turn', model: 'm', messages: [] }),
+      (err) => err.status === 429 && err.expose === true &&
+        /你今天的 token 用量已达上限 50，明天再来吧/.test(err.message),
+    );
+  });
+  await context.run({ playerId: 'pB' }, async () => {
+    const res = await client.complete({ purpose: 'turn', model: 'm', messages: [] });
+    assert.equal(res.ok, true, '别的玩家不受影响');
+  });
+  const res = await client.complete({ purpose: 'turn', model: 'm', messages: [] });
+  assert.equal(res.ok, true, '无玩家身份时也不受每人上限影响');
+});
+
+test('每人每日上限：主人（host）不受每人上限约束，只受全局上限', async (t) => {
+  const dir = tmpDir(t);
+  const now = Date.now();
+  seedUsage(dir, [
+    { ts: now, model: 'm', purpose: 'turn', prompt_tokens: 80, completion_tokens: 0, ok: true }, // 无 playerId
+  ]);
+  const cfg = baseCfg({ LLM_MOCK: true, LLM_PLAYER_DAILY_TOKEN_LIMIT: 50 });
+  const client = llm.createClient(cfg, dir);
+
+  await context.run({ playerId: 'host' }, async () => {
+    const r = await client.complete({ purpose: 'turn', model: 'm', messages: [] });
+    assert.equal(r.ok, true);
+  });
+  await context.run({ playerId: 'pX' }, async () => {
+    const r = await client.complete({ purpose: 'turn', model: 'm', messages: [] });
+    assert.equal(r.ok, true);
+  });
+});
+
+test('每人每日上限：LLM_PLAYER_DAILY_TOKEN_LIMIT=0 表示不限', async (t) => {
+  const dir = tmpDir(t);
+  const now = Date.now();
+  seedUsage(dir, [
+    { ts: now, model: 'm', purpose: 'turn', prompt_tokens: 999999, completion_tokens: 0, playerId: 'pA', ok: true },
+  ]);
+  const cfg = baseCfg({ LLM_MOCK: true, LLM_PLAYER_DAILY_TOKEN_LIMIT: 0 });
+  const client = llm.createClient(cfg, dir);
+  await context.run({ playerId: 'pA' }, async () => {
+    const r = await client.complete({ purpose: 'turn', model: 'm', messages: [] });
+    assert.equal(r.ok, true);
+  });
+});
+
+test('全局每日上限逻辑保留不变：任何人达到全局上限都被拦', async (t) => {
+  const dir = tmpDir(t);
+  const now = Date.now();
+  seedUsage(dir, [
+    { ts: now, model: 'm', purpose: 'turn', prompt_tokens: 100, completion_tokens: 0, playerId: 'pA', ok: true },
+  ]);
+  const cfg = baseCfg({ LLM_MOCK: true, LLM_DAILY_TOKEN_LIMIT: 50 });
+  const client = llm.createClient(cfg, dir);
+  await context.run({ playerId: 'pB' }, async () => {
+    await assert.rejects(
+      () => client.complete({ purpose: 'turn', model: 'm', messages: [] }),
+      (err) => err.status === 429 && /今日 token 用量已达上限 50/.test(err.message),
+    );
+  });
 });

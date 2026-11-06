@@ -374,3 +374,20 @@ test('前端：进入世界/回合结果后请求 /images，pending 每 4 秒轮
   assert.ok(/function renderResult[\s\S]*?requestImages\(\)/.test(html), '回合结果后应请求一次');
   assert.ok(/stopImagePoll\(\)/.test(html), '全部就绪 / 离开世界应停止轮询');
 });
+
+test('前端：用量面板主人专属区（朋友访问 / 复制 / 隧道 / 今日各玩家 / 全局 token）', () => {
+  // 按 host 专属字段判定主人，来客分支不渲染这些内容
+  assert.ok(/var isHost = !!d\.access/.test(html), '用 access 字段区分主人');
+  assert.ok(/朋友访问/.test(html), '应有朋友访问区');
+  assert.ok(/访问密码/.test(html), '应显示访问密码（等宽）');
+  assert.ok(/隧道未启动/.test(html), 'tunnel.url 为空时显示隧道未启动');
+  assert.ok(/d\.tunnel && d\.tunnel\.url/.test(html), '有值时显示朋友链接');
+  assert.ok(/navigator\.clipboard\.writeText/.test(html), '复制用 clipboard.writeText');
+  assert.ok(/selectUsageText\(/.test(html), '复制失败时选中文本');
+  assert.ok(/今日各玩家/.test(html), '应有今日各玩家区');
+  assert.ok(/d\.players/.test(html) && /fmtWan\(p\.total\)/.test(html), '各玩家用量用 fmtWan');
+  assert.ok(/全局 token/.test(html) && /d\.global/.test(html), '应有全局 token 行');
+  // 等宽文本可换行，375px 不横向溢出
+  assert.ok(/\.usage-mono\{[^}]*word-break:break-all/.test(html), '等宽文本应换行');
+  assert.ok(/\.usage-friend-row\{[^}]*flex-wrap:wrap/.test(html), '朋友访问行应换行');
+});

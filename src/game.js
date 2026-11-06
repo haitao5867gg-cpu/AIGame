@@ -374,8 +374,8 @@ function createGame(cfg, dataDir) {
     return client.summarizeUsage(Date.now());
   }
 
-  function usageToday() {
-    return client.usageToday(Date.now());
+  function usageToday(playerId) {
+    return client.usageToday(Date.now(), playerId);
   }
 
   // GET /api/worlds/:id/export：state.json（去掉 apex 等内部字段，用公开状态）

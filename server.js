@@ -12,6 +12,8 @@ const game = require('./src/game.js');
 const imagesMod = require('./src/images.js');
 const accessMod = require('./src/access.js');
 const context = require('./src/context.js');
+const store = require('./src/store.js');
+const llmMod = require('./src/llm.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -46,6 +48,15 @@ function sendJson(res, status, body, extraHeaders) {
 
 function sendError(res, status, message) {
   sendJson(res, status, { error: String(message) });
+}
+
+// 带世界 ID 的接口在调 game 之前校验归属；不是本人一律 404，且不泄露世界是否存在。
+function requireOwner(res, dataDir, id, player) {
+  if (accessMod.ownerOf(dataDir, id) !== player.id) {
+    sendError(res, 404, '世界不存在');
+    return false;
+  }
+  return true;
 }
 
 function readJsonBody(req) {
@@ -285,18 +296,33 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
     return sendJson(res, 200, g.usage());
   }
   if (pathname === '/api/usage/today' && method === 'GET') {
-    const u = g.usageToday();
+    const now = Date.now();
+    const isHost = !!(player && player.host);
+    // 来客：只看自己（按 player.id 过滤，用每人上限）；主人：保持原来的全局视图（全局上限）。
+    const u = isHost ? g.usageToday() : g.usageToday(player.id);
     const st = images.providerStatus();
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
+    if (isHost) {
+      // host 专属字段：全局今日 token（用全局上限）、今日各玩家、访问密码、隧道地址（占位）。
+      u.global = g.usageToday().tokens;
+      const names = access.playerNames();
+      u.players = llmMod.summarizePlayers(store.readJsonl(store.usagePath(dataDir)), now)
+        .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total }));
+      u.access = { password: access.password() };
+      u.tunnel = { url: null };
+    }
     return sendJson(res, 200, u);
   }
   if (pathname === '/api/worlds' && method === 'GET') {
-    return sendJson(res, 200, g.listWorlds());
+    const list = g.listWorlds().filter((w) => accessMod.ownerOf(dataDir, w.id) === player.id);
+    return sendJson(res, 200, list);
   }
   if (pathname === '/api/worlds' && method === 'POST') {
     const body = await readJsonBody(req);
     const world = await g.buildWorld(body);
+    // 建世界成功后登记归属；无记录的老世界默认归 host。
+    accessMod.setOwner(dataDir, world.id, player.id);
     // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
     triggerImages(images, dataDir, world);
     return sendJson(res, 201, world);
@@ -314,6 +340,8 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
       return sendError(res, 400, '非法的世界 ID');
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    // 校验归属必须在开流（startEventStream）之前，越权直接返回 404 JSON。
+    if (!requireOwner(res, dataDir, id, player)) return;
     return handleStreamTurn(req, res, g, id, images, dataDir);
   }
 
@@ -328,6 +356,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
       return sendError(res, 400, '非法的世界 ID');
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
     return handleExport(res, g, id);
   }
 
@@ -342,6 +371,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
       return sendError(res, 400, '非法的世界 ID');
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
     const state = await g.getWorld(id);
     return sendJson(res, 200, images.imageList(dataDir, state));
   }
@@ -383,9 +413,14 @@ async function route(req, res, cfg, g, images, dataDir, access, player) {
       return sendError(res, 400, '非法的世界 ID');
     }
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
     const sub = m[2];
     if (!sub && method === 'GET') return sendJson(res, 200, await g.getWorld(id));
-    if (!sub && method === 'DELETE') return sendJson(res, 200, await g.deleteWorld(id));
+    if (!sub && method === 'DELETE') {
+      const result = await g.deleteWorld(id);
+      accessMod.removeOwner(dataDir, id);
+      return sendJson(res, 200, result);
+    }
     if (sub === 'log' && method === 'GET') {
       let limit;
       if (searchParams && searchParams.has('limit')) limit = Number(searchParams.get('limit'));

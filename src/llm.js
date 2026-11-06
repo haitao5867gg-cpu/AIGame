@@ -10,6 +10,7 @@
 //   解析失败或非 JSON 对象时忽略并告警。
 
 const store = require('./store.js');
+const context = require('./context.js');
 
 const PURPOSES = Object.freeze({
   WORLD: 'world',     // 建世界
@@ -388,12 +389,19 @@ function dayKey(ts) {
   );
 }
 
-function sumUsage(rows, filterDay) {
+// 用量记录归属：没有 playerId 字段的老记录算 host 的。
+function rowPlayerId(r) {
+  return r && typeof r.playerId === 'string' && r.playerId ? r.playerId : 'host';
+}
+
+// playerId 为空时统计全部记录；传了就只统计该玩家（无 playerId 的记录归 host）。
+function sumUsage(rows, filterDay, playerId) {
   let pt = 0;
   let ct = 0;
   for (const r of rows) {
     if (!r || typeof r !== 'object') continue;
     if (filterDay && dayKey(r.ts) !== filterDay) continue;
+    if (playerId && rowPlayerId(r) !== playerId) continue;
     pt += Number(r.prompt_tokens) || 0;
     ct += Number(r.completion_tokens) || 0;
   }
@@ -401,14 +409,17 @@ function sumUsage(rows, filterDay) {
 }
 
 // /api/usage/today：今天的 token 汇总 + 出图按提供方的成功 / 失败张数（同一 dayKey 时区口径）。
-function summarizeToday(rows, now, limit) {
+// 可选 playerId：传了就只统计该玩家的 token 与出图（无 playerId 的记录算 host），
+// limit 由调用方按「全局 / 每人」选好传入；不传 playerId 则保持原行为（全局）。
+function summarizeToday(rows, now, limit, playerId) {
   const day = dayKey(now);
-  const t = sumUsage(rows, day);
+  const t = sumUsage(rows, day, playerId);
   const lim = Number(limit) || 0;
   const byProvider = {};
   const total = { ok: 0, fail: 0 };
   for (const r of rows) {
     if (!r || typeof r !== 'object' || r.kind !== 'image' || dayKey(r.ts) !== day) continue;
+    if (playerId && rowPlayerId(r) !== playerId) continue;
     const p = String(r.provider || 'unknown');
     if (!byProvider[p]) byProvider[p] = { ok: 0, fail: 0 };
     const k = r.ok ? 'ok' : 'fail';
@@ -425,10 +436,27 @@ function summarizeToday(rows, now, limit) {
   };
 }
 
+// 今日每个玩家的 token 用量（无 playerId 的记录算 host），按 total 降序，保证包含 host。
+// 纯函数，供 /api/usage/today 的 host 专属 players 字段使用。
+function summarizePlayers(rows, now) {
+  const day = dayKey(now);
+  const map = new Map();
+  map.set('host', 0);
+  for (const r of rows) {
+    if (!r || typeof r !== 'object' || dayKey(r.ts) !== day) continue;
+    const id = rowPlayerId(r);
+    const n = (Number(r.prompt_tokens) || 0) + (Number(r.completion_tokens) || 0);
+    map.set(id, (map.get(id) || 0) + n);
+  }
+  return Array.from(map, ([id, total]) => ({ id, total }))
+    .sort((a, b) => b.total - a.total || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 function createClient(cfg, dataDir) {
   const mock = !!cfg.LLM_MOCK;
   const timeout = cfg.LLM_TIMEOUT_MS > 0 ? cfg.LLM_TIMEOUT_MS : 90000;
   const dailyLimit = Number(cfg.LLM_DAILY_TOKEN_LIMIT) || 0;
+  const playerDailyLimit = Number(cfg.LLM_PLAYER_DAILY_TOKEN_LIMIT) || 0;
   const base = String(cfg.LLM_BASE || '').replace(/\/+$/, '');
   const apiKey = String(cfg.LLM_API_KEY || '');
   const extraBody = parseExtraBody(cfg.LLM_EXTRA_BODY);
@@ -441,9 +469,23 @@ function createClient(cfg, dataDir) {
     return sumUsage(rows(), dayKey(now)).total;
   }
 
+  // 某玩家今天的 token 用量（无 playerId 的老记录算 host）。
+  function playerTodayTokens(now, playerId) {
+    return sumUsage(rows(), dayKey(now), playerId).total;
+  }
+
   function assertLimit(now) {
+    // 全局上限：逻辑保持不变。
     if (dailyLimit > 0 && todayTokens(now) >= dailyLimit) {
       const err = new Error(`今日 token 用量已达上限 ${dailyLimit}，拒绝调用 LLM`);
+      err.status = 429;
+      err.expose = true;
+      throw err;
+    }
+    // 每人每日上限：只拦当前来客，别人不受影响（主人只受全局上限约束；无玩家身份时不启用）。
+    const playerId = context.currentPlayerId();
+    if (playerDailyLimit > 0 && playerId && playerId !== 'host' && playerTodayTokens(now, playerId) >= playerDailyLimit) {
+      const err = new Error(`你今天的 token 用量已达上限 ${playerDailyLimit}，明天再来吧`);
       err.status = 429;
       err.expose = true;
       throw err;
@@ -723,14 +765,17 @@ function createClient(cfg, dataDir) {
     };
   }
 
-  function usageToday(now) {
-    return summarizeToday(rows(), now == null ? Date.now() : now, dailyLimit);
+  // playerId 为空：保持原行为（全局今日、全局上限）。
+  // 传了 playerId：只统计该玩家，tokens.limit/remaining 用每人上限。
+  function usageToday(now, playerId) {
+    const lim = playerId ? playerDailyLimit : dailyLimit;
+    return summarizeToday(rows(), now == null ? Date.now() : now, lim, playerId);
   }
 
   return { complete, completeStream, summarizeUsage, usageToday, mock, PURPOSES };
 }
 
 module.exports = {
-  createClient, PURPOSES, parseExtraBody, summarizeToday,
+  createClient, PURPOSES, parseExtraBody, summarizeToday, summarizePlayers,
   createNarrationDecoder, decodeNarration, readSSE,
 };
