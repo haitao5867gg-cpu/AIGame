@@ -15,6 +15,8 @@ const DEFAULTS = Object.freeze({
   LLM_MODEL: DEFAULT_LLM_MODEL,
   LLM_MODEL_WORLD: DEFAULT_LLM_MODEL,
   LLM_MOCK: '0',
+  // 叙事写法：v1（默认，旧写法）/ v2（小说化写法，用于对比实验）。默认 v1，线上不受影响。
+  NARRATIVE_STYLE: 'v1',
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
   // 每位玩家（含主人）各自的每日 token 上限；0 表示不限。与全局上限相互独立。

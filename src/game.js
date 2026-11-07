@@ -518,7 +518,7 @@ function createGame(cfg, dataDir) {
       };
       const tp = await callTurnParsed(
         'turn', turnModel,
-        prompts.buildTurnMessages(state, plan, action, { adult: adultPrompt }),
+        prompts.buildTurnMessages(state, plan, action, { adult: adultPrompt, narrativeStyle: cfg.NARRATIVE_STYLE }),
         turnCtx, usages, onDelta,
       );
       const out = tp.parsed;

@@ -1,5 +1,7 @@
 'use strict';
 
+const env = require('./env.js');
+
 // 第 5 节：所有 prompt 模板 + JSON 解析。
 // 只组装字符串 / 消息数组，是纯函数：不联网、不读写文件、不调用引擎。
 // 回合 prompt 恒定由「宪法 + 锁定 bible + 当前状态 + 最近 2 章 + 最近 6 回合 + 条件片段」组成，
@@ -102,6 +104,28 @@ const TURN_RULES = [
   '  （拉拢、交易、设局、借某人的立场），不要三条都只是「继续打听」的不同说法。',
 ].join('\n');
 
+// ---- 叙事写法 v2（对比实验用）----
+// 由 v1 文本派生：只替换/新增下列规则行，其余行原样保留；v1 常量本身绝不改动，
+// 因此默认（v1）输出与改动前完全一致。NL 用字符码表示换行，避免在此写转义序列。
+const NL = String.fromCharCode(10);
+const V2_DECISION_LINES = [
+  '- 整回合的结尾要留一个钩子：停在一个悬念、一句没说完的话、一个刚露出的异常上，让人想知道下一步；',
+  '  不必每回合都给玩家出选择题，中间的段落按故事需要自然推进，不要用总结、抒情或「你陷入沉思」收尾。',
+];
+const V2_SEGMENT_LINES = [
+  '- 篇幅随场景：关键场景（初见、冲突、亲密、揭秘、事件开始或结算）600~1200 字，过场与日常 150~300 字；段落按内容自然划分、长短交错，对白单独成段。',
+  '- 写作手法：用具体的感官细节（声音、气味、触感、光线）和动作代替概括与形容词堆叠；',
+  '  人物通过言行和潜台词表现，不直接说破情绪；适度写主角此刻的身体感受和念头（第二人称）；',
+  '  NPC 有自己的欲望、秘密和行动，会主动推动局面，不只是报信或提条件；',
+  '  张弛有度——紧张处短句、铺垫处放慢；回扣之前出现过的细节，让世界前后呼应。',
+];
+const V2_TURN_RULES = TURN_RULES.split(NL).flatMap((line) => {
+  if (line.startsWith('- 每段叙事结尾必须停在一个需要玩家决断的具体局面')) return V2_DECISION_LINES;
+  if (line.startsWith('  要不要当场相信某个人')) return [];
+  if (line.startsWith('- 叙事分段：')) return V2_SEGMENT_LINES;
+  return [line];
+}).join(NL);
+
 // 亲密关系规则：两档共用硬规则 + 按本回合成人模式选一档写法。
 const INTIMACY_COMMON = [
   '成年角色之间你情我愿的亲密关系可以发生并完成，不要用外部事件逃避或打断；NPC 按自己的性格和意愿回应，可以在角色内拒绝或提条件。',
@@ -179,6 +203,15 @@ const TURN_OUTPUT_FORMAT = [
   '- continuing 是布尔：玩家本回合是不是在继续上一回合的同一件事；非法或缺省按 false。',
   '- adult 是布尔：本回合是否包含性或亲密的露骨内容；仅在规则允许且对象是明确成年人时填 true，否则 false。',
 ].join('\n');
+
+// v2 的输出格式：narration 仍为 JSON 第一个字段，正文优先；只改这两行，其余说明原样保留。
+const V2_NARRATION_EXAMPLE = '{"narration":"第二人称叙事：篇幅随场景（关键场景 600~1200 字、过场与日常 150~300 字），段落自然划分、长短交错，段间用空行分隔",';
+const V2_NARRATION_NOTES = '- narration 是输出的第一个字段，先把 narration 写完整，再写其他字段：篇幅随场景，关键场景 600~1200 字、过场与日常 150~300 字；段落按内容自然划分、长短交错，对白单独成段。';
+const V2_TURN_OUTPUT_FORMAT = TURN_OUTPUT_FORMAT.split(NL).flatMap((line) => {
+  if (line.startsWith('{"narration":')) return [V2_NARRATION_EXAMPLE];
+  if (line.startsWith('- narration 必须分成 2~4 个短段落')) return [V2_NARRATION_NOTES];
+  return [line];
+}).join(NL);
 
 const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
@@ -264,11 +297,15 @@ function buildTurnMessages(state, plan, action, opts) {
   const p = plan || {};
   const adult = !!(opts && opts.adult);
   const nextTurn = p.nextTurn || (state.turn || 0) + 1;
+  // 叙事写法：默认读配置（编排层把 cfg.NARRATIVE_STYLE 经 opts.narrativeStyle 传入，
+  // 未传时取 DEFAULTS 的 v1）；opts.style 优先级最高，供对比脚本逐次覆盖。
+  const cfgStyle = (opts && opts.style) || (opts && opts.narrativeStyle) || env.DEFAULTS.NARRATIVE_STYLE;
+  const isV2 = cfgStyle === 'v2';
 
   const sys = [];
   sys.push(CONSTITUTION);
   sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
-  sys.push(section('叙事与状态规则', TURN_RULES));
+  sys.push(section('叙事与状态规则', isV2 ? V2_TURN_RULES : TURN_RULES));
   sys.push(section('亲密关系', INTIMACY_COMMON + '\n' + (adult ? INTIMACY_ADULT_ON : INTIMACY_ADULT_OFF)));
   // 安静模式：玩家的私人时间，禁止任何外部事件 / 来电 / 来人 / 公告插入。
   if (p.quiet) {
@@ -418,7 +455,7 @@ function buildTurnMessages(state, plan, action, opts) {
     '叙事里交出、丢失、用掉、被收走的物品，必须同时写进 items_remove；只有真正得到新物品才写 items_add。' +
     '物品栏必须与叙事一致：已交出/失去的物品不能再出现在角色身上，也不能在后续叙述里被重新使用。'));
 
-  sys.push(section('输出格式', TURN_OUTPUT_FORMAT));
+  sys.push(section('输出格式', isV2 ? V2_TURN_OUTPUT_FORMAT : TURN_OUTPUT_FORMAT));
 
   const user = [
     section('当前状态', characterText(state)),
