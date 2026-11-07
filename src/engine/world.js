@@ -1,6 +1,7 @@
 'use strict';
 
 const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS } = require('./constants.js');
+const { normalizeGenre } = require('../genres.js');
 const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue, cleanItemInfo } = require('./util.js');
 
 // ---- 建世界 / 分配属性点 ----
@@ -49,6 +50,7 @@ function createWorld(spec, opts) {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
     seed: s.seed || '',
+    genre: normalizeGenre(s.genre),
     bible,
     apex: Object.assign({ achievedAt: null, generation: 1 }, cloneState(s.apex || {})),
     life: 1,

@@ -1,6 +1,7 @@
 'use strict';
 
 const env = require('./env.js');
+const { GENRE_STYLES, normalizeGenre } = require('./genres.js');
 
 // 第 5 节：所有 prompt 模板 + JSON 解析。
 // 只组装字符串 / 消息数组，是纯函数：不联网、不读写文件、不调用引擎。
@@ -223,11 +224,13 @@ const V2_TURN_OUTPUT_FORMAT = TURN_OUTPUT_FORMAT.split(NL).flatMap((line) => {
 
 const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
-  '{"bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
+  '{"genre":"xuanhuan|urban|game|horror|cozy|general",',
+  ' "bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
   ' "start":{"place","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
+  'genre 按玩家那句话世界观和 bible 的题材判断，只取 xuanhuan / urban / game / horror / cozy / general 之一；',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
   'bible.prologue 是给玩家看的「序章」，四段都要用通俗的话、不堆专有名词；首次提到的地名、人名顺带一句交代（是谁、什么地方）：',
   '  world = 这个世界是什么样的（3~4 句：时代、势力格局、力量体系、氛围）；',
@@ -316,6 +319,11 @@ function buildTurnMessages(state, plan, action, opts) {
   sys.push(CONSTITUTION);
   sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
   sys.push(section('叙事与状态规则', isV2 ? V2_TURN_RULES : TURN_RULES));
+  // 题材文风：v2 / v2-3p 在「写作手法」段之后追加选中文风段；v1 与 general 不追加。
+  if (isV2) {
+    const genreStyle = GENRE_STYLES[normalizeGenre(state && state.genre)] || '';
+    if (genreStyle) sys.push(genreStyle);
+  }
   sys.push(section('亲密关系', INTIMACY_COMMON + '\n' + (adult ? INTIMACY_ADULT_ON : INTIMACY_ADULT_OFF)));
   // 安静模式：玩家的私人时间，禁止任何外部事件 / 来电 / 来人 / 公告插入。
   if (p.quiet) {

@@ -244,7 +244,7 @@ test('回合 prompt：输出格式含 threads_add / threads_resolve 及 ≤20 �
 });
 
 test('回合 prompt：反重复意象/NPC 小动作、叙事结尾停在玩家决断、suggestions 三条不同方向', () => {
-  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  const [system] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查', { style: 'v1' });
   assert.match(system.content, /不要重复最近回合已用过的意象/);
   assert.match(system.content, /NPC 小动作/);
   assert.match(system.content, /擦杯|停手|推牌/);
@@ -409,7 +409,7 @@ test('新一世开场：buildRebirthOpeningMessages 结合世界设定/墓志铭
 });
 
 test('回合 prompt：要求叙事分成 2~4 个短段落、对话单独成段、段落间用 \\n\\n 分隔', () => {
-  const [system, user] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查');
+  const [system, user] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查', { style: 'v1' });
   const all = system.content + '\n' + user.content;
   assert.match(all, /2~4 个短段落/, '应要求 2~4 段');
   assert.match(all, /1~3 句/, '每段 1~3 句');

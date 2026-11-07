@@ -21,6 +21,7 @@ const PURPOSES = Object.freeze({
   REBIRTH: 'rebirth', // 新一世开场（重生时额外调用）
   PROLOGUE: 'prologue', // 老世界补序章（GET /prologue 时额外调用）
   ITEMS_INFO: 'items-info', // 老物品补介绍（GET /items 时批量生成）
+  GENRE: 'genre',       // 老世界补判题材（ensureGenre 的短调用）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -223,6 +224,7 @@ function mockWorld(m) {
   const n = hash(seed) % 7;
   const title = clip(seed, 10) + '·' + ['纪元', '残卷', '秘史', '长夜', '边境', '旧约', '回响'][n];
   return {
+    genre: 'xuanhuan',
     bible: {
       title,
       tone: '苍茫而诡谲，暗流涌动',
@@ -270,6 +272,19 @@ function mockWorld(m) {
       achievedAt: null,
     },
   };
+}
+
+// 老世界补判题材：按 bible 的标题 / 基调 / 前几条规则，离线给一个合法 genre。
+function mockGenre(m) {
+  const text = [m && m.title, m && m.tone]
+    .concat(Array.isArray(m && m.rules) ? m.rules : [])
+    .join(' ');
+  if (/恐怖|悬疑|诡|鬼|惊悚|阴森/.test(text)) return { genre: 'horror' };
+  if (/系统|等级|游戏|副本|掉落|玩家/.test(text)) return { genre: 'game' };
+  if (/都市|现代|公司|外卖|地铁|职场/.test(text)) return { genre: 'urban' };
+  if (/日常|种田|经营|田园|温馨|小店/.test(text)) return { genre: 'cozy' };
+  if (/修仙|仙|玄|境界|法宝|灵力|宗门/.test(text)) return { genre: 'xuanhuan' };
+  return { genre: 'general' };
 }
 
 function mockTurn(m) {
@@ -440,6 +455,7 @@ function mockFor(purpose, m) {
     case PURPOSES.REBIRTH: return mockRebirthOpening(m);
     case PURPOSES.PROLOGUE: return mockPrologue();
     case PURPOSES.ITEMS_INFO: return mockItemsInfo(m);
+    case PURPOSES.GENRE: return mockGenre(m);
     default: return mockTurn(m);
   }
 }

@@ -11,6 +11,7 @@ const llm = require('./llm.js');
 const prompts = require('./prompts.js');
 const prefs = require('./prefs.js');
 const context = require('./context.js');
+const genres = require('./genres.js');
 
 // 带状态码的可暴露错误；server.js 统一转成 {error:"中文说明"}。
 class HttpError extends Error {
@@ -358,10 +359,13 @@ function createGame(cfg, dataDir) {
       if (!bible || typeof bible !== 'object' || !apex || typeof apex !== 'object') {
         throw httpError(502, '建世界模型输出缺少 bible 或 apex，请重试');
       }
+      // 题材：玩家手选（body.genre 非 'auto'）优先于模型判断；最终由 engine.createWorld 归一。
+      const picked = typeof data.genre === 'string' ? data.genre : '';
+      const rawGenre = (picked && picked !== 'auto') ? picked : wp.parsed.genre;
       let state;
       try {
         state = engine.createWorld(
-          { id, seed, name, appearance, bible, apex, alloc: data.alloc },
+          { id, seed, name, appearance, bible, apex, alloc: data.alloc, genre: rawGenre },
           { rng: Math.random, now: Date.now() },
         );
       } catch (err) {
@@ -373,10 +377,65 @@ function createGame(cfg, dataDir) {
   }
 
   // ---- 读 ----
+  // 已排队后台补判题材的世界，避免重复触发（ensureGenre 完成后自动移除）。
+  const pendingGenre = new Set();
+
+  // 老世界补题材：世界锁内读状态，已有合法 genre 直接返回；
+  // 否则用一次很短的 LLM 调用（只给 bible.title / tone / rules 前 3 条）判断并保存，
+  // 失败按 general 保存；任何异常都不抛错影响游戏。
+  async function ensureGenre(worldId) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) return null;
+      if (genres.GENRES.includes(state.genre)) return state.genre;
+      const bible = state.bible || {};
+      const rules = Array.isArray(bible.rules) ? bible.rules.slice(0, 3) : [];
+      const messages = [
+        { role: 'system', content: '根据下面这点世界观信息判断题材，只输出一个 JSON 对象：' +
+          '{"genre":"xuanhuan|urban|game|horror|cozy|general"}。不要解释，不要输出其他字段。' },
+        { role: 'user', content: [
+          `标题：${bible.title || ''}`,
+          `基调：${bible.tone || ''}`,
+          `规则：${rules.join('；')}`,
+        ].join('\n') },
+      ];
+      let judged = 'general';
+      try {
+        const gp = await callParsed('genre', turnModel, messages,
+          { title: bible.title, tone: bible.tone, rules }, []);
+        judged = genres.normalizeGenre(gp.parsed && gp.parsed.genre);
+      } catch (_) { judged = 'general'; }
+      state.genre = judged;
+      try { store.saveWorld(dataDir, state); } catch (_) { /* 落库失败也不抛错 */ }
+      return judged;
+    });
+  }
+
+  // 手选题材：世界锁内改并保存，返回归一后的 genre。
+  async function setGenre(worldId, genre) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+      state.genre = genres.normalizeGenre(genre);
+      store.saveWorld(dataDir, state);
+      return state.genre;
+    });
+  }
+
   async function getWorld(worldId) {
     store.assertWorldId(worldId);
     const state = loadState(worldId);
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+    // 老世界没有 genre：后台触发一次补判并保存，不阻塞本次返回。
+    if (!genres.GENRES.includes(state.genre) && !pendingGenre.has(worldId)) {
+      pendingGenre.add(worldId);
+      Promise.resolve()
+        .then(() => ensureGenre(worldId))
+        .catch(() => {})
+        .finally(() => pendingGenre.delete(worldId));
+    }
     return withUndoFlag(publicWorld(state), state, worldId);
   }
 
@@ -743,7 +802,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, ensurePrologue, ensureItemInfo, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, ensurePrologue, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn, listScenes,
   };
 }

@@ -24,12 +24,12 @@ function systemText(opts) {
   return sys.content;
 }
 
-test('配置默认 NARRATIVE_STYLE 为 v1', () => {
-  assert.equal(env.DEFAULTS.NARRATIVE_STYLE, 'v1');
+test('配置默认 NARRATIVE_STYLE 为 v2', () => {
+  assert.equal(env.DEFAULTS.NARRATIVE_STYLE, 'v2');
 });
 
 test('默认 / v1：messages 与改动前一致（含旧写法句子）', () => {
-  const s = systemText();
+  const s = systemText({ style: 'v1' });
   assert.ok(s.includes('每段 1~3 句、不超过 90 字'), '默认应含旧的分段硬限');
   assert.ok(s.includes('需要玩家决断'), '默认应含旧的决断局面规则');
   assert.ok(s.includes('玩家意图优先'));
