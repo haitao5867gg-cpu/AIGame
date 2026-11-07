@@ -338,6 +338,7 @@
     if (me.prefs && me.prefs.tts && typeof me.prefs.tts === 'object') myPrefs.tts = me.prefs.tts;
     if (me.prefs && typeof me.prefs.adult === 'boolean') myPrefs.adult = me.prefs.adult;
     if (me.prefs && typeof me.prefs.adultAllowed === 'boolean') myPrefs.adultAllowed = me.prefs.adultAllowed;
+    if (typeof Tts !== 'undefined' && Tts.syncVisibility) Tts.syncVisibility(); // 朗读总开关随偏好刷新
     var label = me.host ? '主人' : ('玩家：' + me.name);
     $('home-player-name').textContent = label;
     $('g-player-name').textContent = label;

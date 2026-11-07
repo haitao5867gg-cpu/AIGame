@@ -1,5 +1,5 @@
 'use strict';
-  // 当前正在渲染回合的朗读提示（voice_hints），供 appendNarration 给每段叙事挂喇叭。
+  // 当前正在渲染回合的朗读提示（voice_hints），供整回合朗读按段落取音色 / 情绪 / 节奏。
   var currentVoiceHints = [];
   // 导出世界：GET 附件接口，用临时 <a download> 触发下载，不跳转页面。
   function exportWorld(id) {
@@ -69,6 +69,7 @@
   }
 
   function scrollBottom() {
+    if (typeof Tts !== 'undefined' && Tts.noteProgrammaticScroll) Tts.noteProgrammaticScroll();
     if (window.innerWidth <= 600) {
       // 手机：叙事区不再内嵌滚动、整页自然滚动 → 滚到文档底部（输入区固定在底部仍可见）
       window.scrollTo(0, document.documentElement.scrollHeight);
@@ -87,6 +88,7 @@
   // 电脑在 #stream 内滚动，让 el 顶部对齐 #stream 可视区顶部。
   function scrollToTurnStart(node) {
     if (!node) return;
+    if (typeof Tts !== 'undefined' && Tts.noteProgrammaticScroll) Tts.noteProgrammaticScroll();
     if (window.innerWidth <= 600) {
       node.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
@@ -338,22 +340,21 @@
       wrap.appendChild(bd);
     }
     $('stream').appendChild(wrap);
-    var buttons = attachReadButtons(wrap, paras, currentVoiceHints);
-    return { paras: paras, buttons: buttons, hints: currentVoiceHints, wrap: wrap };
+    var turn = attachTurnButton(wrap, paras, currentVoiceHints);
+    return { paras: paras, hints: currentVoiceHints, wrap: wrap, turn: turn };
   }
 
-  // 给叙事块里每个 <p class="narration"> 挂朗读按钮（放进 p 右侧留白槽，由 app.css 定位）。
-  function attachReadButtons(wrap, paras, hints) {
-    var buttons = [];
-    if (typeof Tts === 'undefined') return buttons;
-    var ps = wrap.querySelectorAll('p.narration');
-    for (var i = 0; i < ps.length && i < paras.length; i++) {
-      ps[i].className += ' has-tts-btn';
-      var b = Tts.makeReadButton(paras[i], i, hints);
-      ps[i].appendChild(b);
-      buttons.push(b);
-    }
-    return buttons;
+  // 整回合朗读：叙事块顶部右侧只放一个「▶ 朗读」按钮，历史回合同样有。
+  // 返回的 turn 交给 Tts.autoRead / 播放队列，按段落顺序读完整回合。
+  function attachTurnButton(wrap, paras, hints) {
+    if (typeof Tts === 'undefined') return null;
+    var turn = { wrap: wrap, paras: paras, hints: hints || [], btn: null };
+    var b = Tts.makeTurnButton(turn);
+    var head = el('div', 'tts-turn-head');
+    head.appendChild(b);
+    wrap.insertBefore(head, wrap.firstChild);
+    turn.btn = b;
+    return turn;
   }
 
   function appendEventCard(ev) {
@@ -792,7 +793,7 @@
     setUndoVisible(!!res.state.undoAvailable);
     if (res.death) showDeath(res.state, res.death);
     requestImages();
-    if (typeof Tts !== 'undefined' && myPrefs.tts && myPrefs.tts.auto) Tts.autoRead(narr);
+    if (typeof Tts !== 'undefined' && Tts.enabled() && myPrefs.tts && myPrefs.tts.auto) Tts.autoRead(narr);
     // 最终结果渲染完成：停在回合开头（行动行；无行动行则插图框/首段叙事），自动朗读时同样如此。
     var start = turnStartOr(narr.wrap);
     if (start) {

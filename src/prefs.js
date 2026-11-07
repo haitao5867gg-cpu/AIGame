@@ -19,6 +19,7 @@ const DEFAULT_TTS = Object.freeze({
   npcVoices: Object.freeze({}),
   speed: 1,
   auto: false,
+  enabled: true,
 });
 
 function prefsPath(dataDir) {
@@ -77,6 +78,7 @@ function normalizeTts(raw) {
     npcVoices,
     speed: clampSpeed(t.speed),
     auto: t.auto === true,
+    enabled: typeof t.enabled === 'boolean' ? t.enabled : true,
   };
 }
 
@@ -90,6 +92,7 @@ function mergeTts(cur, patch) {
     npcVoices: Object.assign({}, base.npcVoices, p.npcVoices && typeof p.npcVoices === 'object' ? p.npcVoices : {}),
     speed: p.speed !== undefined ? p.speed : base.speed,
     auto: p.auto !== undefined ? p.auto : base.auto,
+    enabled: p.enabled !== undefined ? p.enabled : base.enabled,
   });
 }
 

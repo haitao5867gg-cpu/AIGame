@@ -128,7 +128,7 @@
   myPrefs.tts = {
     narrator: 'zh-CN-YunxiNeural',
     npcDefault: { m: 'zh-CN-YunjianNeural', f: 'zh-CN-XiaoxiaoNeural', old: 'zh-CN-YunyeNeural', young: 'zh-CN-YunxiNeural' },
-    npcVoices: {}, speed: 1, auto: false,
+    npcVoices: {}, speed: 1, auto: false, enabled: true,
   };
   // 图片：/images 状态、当前世界、轮询
   var imageState = { items: {}, npcs: {}, scenes: {}, hero: {} };

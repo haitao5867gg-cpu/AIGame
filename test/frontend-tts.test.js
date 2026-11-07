@@ -24,7 +24,7 @@ test('index.html 引入 /js/tts.js 且在 game.js 之前', () => {
 
 test('tts.js：朗读按钮、speechSynthesis 兜底、试听', () => {
   assert.ok(ttsJs.includes('▶'), '有 ▶ 朗读按钮');
-  assert.ok(ttsJs.includes('makeReadButton'), '每段叙事挂按钮');
+  assert.ok(ttsJs.includes('makeTurnButton') && !ttsJs.includes('makeReadButton'), '每回合一个朗读按钮（不再每段挂）');
   assert.ok(/new Audio/.test(ttsJs), '用 Audio 播放 audio/mpeg');
   assert.ok(ttsJs.includes('speechSynthesis') && ttsJs.includes('SpeechSynthesisUtterance'), '浏览器语音兜底');
   assert.ok(ttsJs.includes("u.lang = 'zh-CN'"), '兜底语音 zh-CN');
@@ -41,8 +41,8 @@ test('tts.js：自动朗读开关、语速 0.5~2 滑块、本月已用', () => {
   assert.ok(ttsJs.includes('autoRead') && ttsJs.includes('hashchange'), '自动朗读 + 切换世界停止');
 });
 
-test('game.js：段落挂喇叭、renderResult 自动朗读、发送新行动停止', () => {
-  assert.ok(gameJs.includes('makeReadButton'));
+test('game.js：整回合朗读按钮、renderResult 自动朗读、发送新行动停止', () => {
+  assert.ok(gameJs.includes('makeTurnButton'));
   assert.ok(gameJs.includes('autoRead'));
   assert.ok(/Tts\.stop\(\)/.test(gameJs), '发送新行动停止');
   assert.ok(gameJs.includes('currentVoiceHints'), 'voice_hints 传给每段');
@@ -51,7 +51,8 @@ test('game.js：段落挂喇叭、renderResult 自动朗读、发送新行动停
 test('panels.js 用量面板挂朗读设置；core.js 预置 myPrefs.tts；app.css 有样式', () => {
   assert.ok(panelsJs.includes('renderSettings'), '用量面板挂朗读设置');
   assert.ok(coreJs.includes('myPrefs.tts'), 'core 共享变量 myPrefs.tts');
-  assert.ok(css.includes('.tts-read-btn') && css.includes('has-tts-btn'), '朗读按钮样式');
+  assert.ok(css.includes('.tts-read-btn') && css.includes('.tts-turn-head')
+    && css.includes('.tts-player-bar') && css.includes('tts-speaking'), '整回合按钮 / 播放条 / 段落高亮样式');
 });
 
 test('public/js 无新增 innerHTML 赋值', () => {

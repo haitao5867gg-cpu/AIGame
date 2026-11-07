@@ -344,12 +344,24 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   .item-card-desc{font-size:15px}
 }
 
-/* 朗读：每段叙事右侧小喇叭（放在 p 的右侧留白槽里，文字列宽稳定、不被挤压） */
-p.has-tts-btn{position:relative;padding-right:42px}
-.tts-read-btn{position:absolute;right:0;top:2px;width:30px;height:30px;line-height:1;
-  border:1px solid var(--line,#bbb);border-radius:50%;background:transparent;color:inherit;
-  font-size:13px;cursor:pointer;padding:0}
-.tts-read-btn.tts-playing{background:var(--ink,#333);color:#fff}
+/* 朗读：每回合一个「▶ 朗读」按钮，放在叙事块顶部右侧 */
+.tts-turn-head{display:flex;justify-content:flex-end;margin:0 0 6px}
+.tts-read-btn{min-height:40px;min-width:40px;line-height:1;padding:0 14px;
+  border:1px solid var(--line,#bbb);border-radius:20px;background:transparent;color:inherit;
+  font-size:14px;font-family:var(--sans);cursor:pointer}
+.tts-read-btn.tts-playing{background:var(--ink,#333);color:#fff;border-color:var(--ink,#333)}
+/* 正在朗读的段落：淡底色 + 左侧细竖线 */
+p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid var(--accent-2);
+  padding-left:10px;margin-left:-13px}
+/* 底部播放条：暂停/继续、停止、下一段、第 x/y 段 */
+.tts-player-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;margin-bottom:8px;
+  border:1px solid var(--line);border-radius:8px;background:var(--bg-2);
+  font-family:var(--sans);font-size:13px}
+.tts-bar-btn{min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:6px;
+  background:transparent;color:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.tts-bar-count{margin-left:auto;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 朗读功能总开关关闭：隐藏所有朗读按钮 / 播放条 */
+.tts-disabled .tts-read-btn,.tts-disabled .tts-player-bar{display:none}
 .tts-select{max-width:62%;font-size:14px}
 .tts-slider{flex:1;min-width:90px}
 .tts-speed-val{min-width:2.4em;text-align:right;font-variant-numeric:tabular-nums}
@@ -406,13 +418,10 @@ p.has-tts-btn{position:relative;padding-right:42px}
   #action-input,input,textarea,select{font-size:16px;max-width:100%}
   #action-input{resize:none;max-height:7em;overflow-y:auto;min-height:44px}
 
-  /* 朗读按钮：28px 行内放在段末，透明外扩保证 ≥ 36px 点击区域 */
-  p.has-tts-btn{padding-right:0}
-  .tts-read-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;
-    vertical-align:middle;top:auto;right:auto;bottom:auto;left:auto;width:28px;height:28px;
-    margin-left:6px;padding:0;font-size:12px;line-height:1;border:1px solid var(--line,#bbb);
-    border-radius:50%;background:transparent;color:inherit;cursor:pointer}
-  .tts-read-btn::after{content:'';position:absolute;top:-4px;left:-4px;right:-4px;bottom:-4px}
+  /* 整回合朗读按钮 + 播放条按钮：手机点击区域 ≥ 40px */
+  .tts-turn-head{justify-content:flex-end}
+  .tts-read-btn{min-height:40px;min-width:40px;padding:0 16px;font-size:14px}
+  .tts-bar-btn{min-height:40px;padding:0 12px}
 
   /* 所有可点元素留够点击区域；按钮之间留间距 */
   .btn{min-height:40px}

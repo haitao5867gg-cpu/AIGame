@@ -58,12 +58,12 @@ test('手机端：#action-input 及 input/textarea/select 为 16px，建议按�
   assert.match(mb, /\.suggestions\s*\{[^}]*overflow-x\s*:\s*auto/, '.suggestions 横向滑动');
 });
 
-test('手机端：顶栏 sticky 紧凑单行、⋯ 菜单元素齐全、细条横滑、朗读按钮 28px', () => {
+test('手机端：顶栏 sticky 紧凑单行、⋯ 菜单元素齐全、细条横滑、朗读按钮 ≥40px', () => {
   assert.match(mb, /\.game-head\s*\{[^}]*position\s*:\s*sticky/, '顶栏 sticky');
   assert.match(mb, /\.game-head\s*\{[^}]*flex-wrap\s*:\s*nowrap/, '顶栏单行不换行');
   assert.match(mb, /\.game-head-title\s*\{[^}]*text-overflow\s*:\s*ellipsis/, '标题单行省略号');
   assert.match(mb, /\.g-strip\s*\{[^}]*overflow-x\s*:\s*auto/, '地点/属性细条横向滑动');
-  assert.match(mb, /\.tts-read-btn\s*\{[^}]*width\s*:\s*28px/, '朗读按钮缩到 28px');
+  assert.match(mb, /\.tts-read-btn[^{]*\{[^}]*min-height\s*:\s*40px/, '朗读按钮点击区域 ≥ 40px');
   assert.match(html, /id="btn-more"/, '应有 ⋯ 按钮');
   assert.match(html, /⋯/, '按钮文案为 ⋯');
   assert.match(html, /id="more-menu"/, '应有 ⋯ 菜单元素');
