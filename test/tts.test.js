@@ -57,7 +57,7 @@ test('buildSsml：XML 转义 <>&；不再强插句末 / 省略号停顿', () => 
 
 test('buildSsml：非法音色回退默认，mood=sad 用 sad 风格且 rate 为负', () => {
   const bad = tts.buildSsml({ text: '他走了。', voice: 'bogus' });
-  assert.ok(bad.includes('name="zh-CN-YunxiNeural"'));
+  assert.ok(bad.includes('name="zh-CN-Xiaoxiao:DragonHDFlashLatestNeural"'));
   const s = tts.buildSsml({ text: '他走了。', voice: 'zh-CN-YunxiNeural', mood: 'sad' });
   assert.ok(s.includes('mstts:express-as'), 'Yunxi 支持 sad');
   assert.ok(s.includes('style="sad"'));
@@ -98,6 +98,37 @@ test('VOICES / MOODS 导出结构正确', () => {
     assert.ok(Array.isArray(v.styles));
   }
   assert.deepEqual(Object.keys(tts.MOODS), ['calm', 'tense', 'sad', 'joyful', 'angry', 'mysterious']);
+});
+
+test('VOICES 含晓晓 HD 且为默认旁白（显示名「晓晓 HD（女·青年）」）', () => {
+  const HD = 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural';
+  assert.equal(tts.VOICES[0].id, HD, '晓晓 HD 在旁白可选列表第一位');
+  const hd = tts.VOICES.find((v) => v.id === HD);
+  assert.ok(hd, 'VOICES 含晓晓 HD');
+  assert.deepEqual(hd.styles, []);
+  assert.equal(tts.DEFAULT_VOICE, HD, '服务端默认旁白为晓晓 HD');
+  // 前端显示名沿用 voiceLabel 规则：name（性别·年龄）。
+  const GENDER = { m: '男', f: '女' };
+  const AGE = { child: '童声', young: '青年', adult: '成年', old: '老年' };
+  const label = hd.name + '（' + [GENDER[hd.gender], AGE[hd.age]].join('·') + '）';
+  assert.equal(label, '晓晓 HD（女·青年）');
+});
+
+test('晓晓 HD：styles 为空不加 express-as、去掉 pitch，只保留 rate', () => {
+  const HD = 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural';
+  for (const mood of ['calm', 'tense', 'sad', 'joyful', 'angry', 'mysterious']) {
+    const s = tts.buildSsml({ text: '一段旁白。', voice: HD, mood });
+    assert.ok(!s.includes('express-as'), mood + ' 不加 express-as');
+    assert.ok(!s.includes('pitch='), mood + ' 不含 pitch');
+    assert.ok(s.includes('<prosody') && s.includes('rate='), mood + ' 保留 rate');
+  }
+  const seg = tts.buildSsml({ segments: [
+    { text: '第一段。', voice: HD, mood: 'mysterious' },
+    { text: '第二段。', voice: HD, mood: 'sad' },
+  ] });
+  assert.ok(!seg.includes('express-as'), '分组 SSML 也不加 express-as');
+  assert.ok(!seg.includes('pitch='), '分组 SSML 也不含 pitch');
+  assert.ok(seg.includes('<voice name="' + HD + '">'), '分组 SSML 用晓晓 HD');
 });
 
 // ---------- synth ----------

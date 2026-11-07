@@ -214,7 +214,7 @@ test('接口：POST /api/prefs 接受并校验 tts（voice 在 VOICES 里、spee
       tts: { narrator: 'BOGUS', npcVoices: { '小林': 'zh-CN-XiaoxiaoNeural', '坏人': 'BOGUS' }, speed: 9, auto: true },
     });
     assert.equal(r.status, 200);
-    assert.equal(r.json.prefs.tts.narrator, 'zh-CN-YunxiNeural', '非法音色回退默认');
+    assert.equal(r.json.prefs.tts.narrator, 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural', '非法音色回退默认');
     assert.equal(r.json.prefs.tts.npcVoices['小林'], 'zh-CN-XiaoxiaoNeural');
     assert.equal(r.json.prefs.tts.npcVoices['坏人'], undefined, '非法 NPC 音色丢弃');
     assert.equal(r.json.prefs.tts.speed, 2, 'speed 夹到 2');
@@ -229,7 +229,7 @@ test('接口：POST /api/prefs 接受并校验 tts（voice 在 VOICES 里、spee
 test('prefs.tts：默认值、音色校验、speed 夹取、部分更新互不覆盖', (t) => {
   const dir = tmpDir(); cleanup(t, dir);
   const d = prefs.getPrefs(dir, 'p1');
-  assert.equal(d.tts.narrator, 'zh-CN-YunxiNeural');
+  assert.equal(d.tts.narrator, 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural');
   assert.equal(d.tts.speed, 1);
   assert.equal(d.tts.auto, false);
   assert.deepEqual(Object.keys(d.tts.npcDefault).sort(), ['f', 'm', 'old', 'young']);
@@ -244,7 +244,7 @@ test('prefs.tts：默认值、音色校验、speed 夹取、部分更新互不�
       auto: true,
     },
   });
-  assert.equal(saved.tts.narrator, 'zh-CN-YunxiNeural');
+  assert.equal(saved.tts.narrator, 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural');
   assert.equal(saved.tts.npcDefault.m, 'zh-CN-YunyangNeural', '合法 m 生效');
   assert.equal(saved.tts.npcDefault.f, d.tts.npcDefault.f, '非法 f 保持默认');
   assert.equal(saved.tts.speed, 0.5, 'speed 夹到下限 0.5');
@@ -253,9 +253,24 @@ test('prefs.tts：默认值、音色校验、speed 夹取、部分更新互不�
   const partial = prefs.setPrefs(dir, 'p1', { tts: { speed: 9 } });
   assert.equal(partial.tts.speed, 2, 'speed 夹到上限 2');
   assert.equal(partial.tts.auto, true, 'auto 保留');
-  assert.equal(partial.tts.narrator, 'zh-CN-YunxiNeural', '旁白保留');
+  assert.equal(partial.tts.narrator, 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural', '旁白保留');
 
   // 仅改 scenes 时返回形状保持 { scenes }（不影响既有接口断言）。
   const onlyScenes = prefs.setPrefs(dir, 'p1', { scenes: false });
   assert.deepEqual(onlyScenes, { scenes: false });
+});
+
+test('prefs.tts 迁移：src/prefs 默认旁白为晓晓 HD；旧默认未主动选择读为新默认，主动选过云希则保持', (t) => {
+  const dir = tmpDir(); cleanup(t, dir);
+  const HD = 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural';
+  assert.equal(prefs.DEFAULT_TTS.narrator, HD, 'src/prefs.js 默认旁白为晓晓 HD');
+  fs.writeFileSync(prefs.prefsPath(dir), JSON.stringify({
+    old: { tts: { narrator: 'zh-CN-YunxiNeural' } },
+    chosen: { tts: { narrator: 'zh-CN-YunxiNeural', narratorChosen: true } },
+  }));
+  assert.equal(prefs.getPrefs(dir, 'old').tts.narrator, HD, '旧默认且未主动选择 → 读为晓晓 HD');
+  assert.equal(prefs.getPrefs(dir, 'chosen').tts.narrator, 'zh-CN-YunxiNeural', '主动选过云希 → 保持云希');
+  // 玩家在设置里主动把旁白改回云希（前端写入 narratorChosen:true）后长期尊重该选择。
+  prefs.setPrefs(dir, 'old', { tts: { narrator: 'zh-CN-YunxiNeural', narratorChosen: true } });
+  assert.equal(prefs.getPrefs(dir, 'old').tts.narrator, 'zh-CN-YunxiNeural', '主动选择后保持云希');
 });

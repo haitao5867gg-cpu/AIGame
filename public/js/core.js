@@ -126,7 +126,7 @@
   var myPrefs = { scenes: true };
   // 朗读偏好（缺省值，/api/me 返回后由 renderPlayerInfo 覆盖）。
   myPrefs.tts = {
-    narrator: 'zh-CN-YunxiNeural',
+    narrator: 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural',
     npcDefault: { m: 'zh-CN-YunjianNeural', f: 'zh-CN-XiaoxiaoNeural', old: 'zh-CN-YunyeNeural', young: 'zh-CN-YunxiNeural' },
     npcVoices: {}, speed: 1, auto: false, enabled: true,
   };

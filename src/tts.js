@@ -8,7 +8,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const store = require('./store.js');
 
-const DEFAULT_VOICE = 'zh-CN-YunxiNeural';
+const DEFAULT_VOICE = 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural';
 const CACHE_DIR_NAME = 'tts';
 const MB = 1024 * 1024;
 const TEXT_MAX_CHARS = 600; // 合成文本（或 segments 总字数）去空白后最多 600 字
@@ -17,6 +17,7 @@ const MAX_SEGMENTS = 6;     // 一次 /api/tts 最多合并的段数
 // 音色表：旁白与 NPC 都从这里选。styles 只列确定 Azure 支持的情感风格；
 // 拿不准的少填，合成时若所选风格不在列表里会自动回退到纯 prosody。
 const VOICES = Object.freeze([
+  { id: 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural', name: '晓晓 HD', gender: 'f', age: 'young', styles: [] },
   { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'm', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful', 'serious', 'whispering', 'narration-relaxed'] },
   { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'f', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful', 'gentle', 'affectionate'] },
   { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'm', age: 'adult', styles: ['cheerful', 'sad', 'angry', 'serious', 'narration-relaxed'] },
@@ -65,12 +66,15 @@ function normalizeParams(p) {
 // 结果换算成百分比并夹在 -50%~+100%。风格音色不支持时置 null（只用 prosody）。
 function prosodyFor(np) {
   const m = MOODS[np.mood];
+  const v = VOICE_MAP[np.voice];
   const paceExtra = np.pace === 'slow' ? -10 : np.pace === 'fast' ? 10 : 0;
   const basePct = m.rate + paceExtra;
   const factor = (1 + basePct / 100) * np.speed;
   const ratePct = Math.round(clamp((factor - 1) * 100, -50, 100));
-  const style = (m.style && VOICE_MAP[np.voice].styles.includes(m.style)) ? m.style : null;
-  return { ratePct, pitchPct: m.pitch, style };
+  const style = (m.style && v.styles.includes(m.style)) ? m.style : null;
+  // styles 为空的高清音色（晓晓 HD）只用 rate 表达情绪，去掉 pitch 调整以免失真。
+  const pitchPct = v.styles.length === 0 ? 0 : m.pitch;
+  return { ratePct, pitchPct, style };
 }
 
 function fmtPct(n) {

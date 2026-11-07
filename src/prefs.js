@@ -10,8 +10,10 @@ const ttsMod = require('./tts.js');
 
 const VOICE_IDS = Object.freeze(Object.fromEntries(ttsMod.VOICES.map((v) => [v.id, true])));
 
+const OLD_DEFAULT_NARRATOR = 'zh-CN-YunxiNeural';
+
 const DEFAULT_TTS = Object.freeze({
-  narrator: 'zh-CN-YunxiNeural',
+  narrator: 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural',
   npcDefault: Object.freeze({
     m: 'zh-CN-YunjianNeural', f: 'zh-CN-XiaoxiaoNeural',
     old: 'zh-CN-YunyeNeural', young: 'zh-CN-YunxiNeural',
@@ -20,6 +22,7 @@ const DEFAULT_TTS = Object.freeze({
   speed: 1,
   auto: false,
   enabled: true,
+  narratorChosen: false,
 });
 
 function prefsPath(dataDir) {
@@ -72,13 +75,18 @@ function normalizeTts(raw) {
       if (typeof name === 'string' && name && VOICE_IDS[v]) npcVoices[name] = v;
     }
   }
+  const narratorChosen = t.narratorChosen === true;
+  let narrator = VOICE_IDS[t.narrator] ? t.narrator : DEFAULT_TTS.narrator;
+  // 迁移：旧默认（云希）且玩家从未主动选过旁白 → 视为新默认（晓晓 HD）。
+  if (narrator === OLD_DEFAULT_NARRATOR && !narratorChosen) narrator = DEFAULT_TTS.narrator;
   return {
-    narrator: VOICE_IDS[t.narrator] ? t.narrator : DEFAULT_TTS.narrator,
+    narrator,
     npcDefault,
     npcVoices,
     speed: clampSpeed(t.speed),
     auto: t.auto === true,
     enabled: typeof t.enabled === 'boolean' ? t.enabled : true,
+    narratorChosen,
   };
 }
 
@@ -93,6 +101,7 @@ function mergeTts(cur, patch) {
     speed: p.speed !== undefined ? p.speed : base.speed,
     auto: p.auto !== undefined ? p.auto : base.auto,
     enabled: p.enabled !== undefined ? p.enabled : base.enabled,
+    narratorChosen: p.narratorChosen !== undefined ? p.narratorChosen : base.narratorChosen,
   });
 }
 

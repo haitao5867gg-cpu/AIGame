@@ -5,7 +5,7 @@
 // 只用 createElement + textContent 构建 DOM，绝不拼接 HTML 字符串。
 
 var FRONT_TTS_DEFAULT = {
-  narrator: 'zh-CN-YunxiNeural',
+  narrator: 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural',
   npcDefault: { m: 'zh-CN-YunjianNeural', f: 'zh-CN-XiaoxiaoNeural', old: 'zh-CN-YunyeNeural', young: 'zh-CN-YunxiNeural' },
   npcVoices: {}, speed: 1, auto: false, enabled: true,
 };
@@ -620,7 +620,7 @@ var Tts = (function () {
     narSel.addEventListener('change', function () {
       var old = t.narrator, wanted = narSel.value;
       t.narrator = wanted;
-      saveTts({ narrator: wanted }, function () { t.narrator = old; narSel.value = old; });
+      saveTts({ narrator: wanted, narratorChosen: true }, function () { t.narrator = old; narSel.value = old; });
     });
     body.appendChild(narRow);
 

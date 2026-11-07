@@ -48,3 +48,10 @@ test('public/js 无新增 innerHTML', () => {
     assert.ok(!/\.innerHTML/.test(read('js/' + f)), f + ' 不得出现 .innerHTML');
   }
 });
+
+test('前端默认旁白为晓晓 HD；主动改旁白音色写入 narratorChosen:true', () => {
+  const HD = 'zh-CN-Xiaoxiao:DragonHDFlashLatestNeural';
+  assert.ok(ttsJs.includes("narrator: '" + HD + "'"), 'tts.js 默认旁白为晓晓 HD');
+  assert.ok(read('js/core.js').includes("narrator: '" + HD + "'"), 'core.js 默认旁白为晓晓 HD');
+  assert.ok(ttsJs.includes('narrator: wanted, narratorChosen: true'), '设置里改旁白时写入 narratorChosen');
+});
