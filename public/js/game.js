@@ -51,6 +51,7 @@
       });
       // 成功后重新加载该世界的叙事与状态（/log 会跳过被撤回的那一回合）。
       await showGame(currentWorldId);
+      scrollBottom(); // 撤回后的定位保持现状：仍滚到页面底部
       // 把被撤回的行动文字放回输入框。
       $('action-input').value = res.undoneAction || '';
       $('action-input').focus();
@@ -77,6 +78,71 @@
     }
   }
 
+  // 当前回合的起点元素（行动行 / 插图框 / 首段叙事），用于把阅读位置停在本回合开头。
+  var turnStartEl = null;
+  var turnAlignObs = null;
+
+  // 把 el 滚到可视区顶部、sticky 顶栏正下方：
+  // 手机整页滚动，靠 app.css 的 scroll-margin-top 抵掉顶栏高度并留 8px；
+  // 电脑在 #stream 内滚动，让 el 顶部对齐 #stream 可视区顶部。
+  function scrollToTurnStart(node) {
+    if (!node) return;
+    if (window.innerWidth <= 600) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      var s = $('stream');
+      s.scrollTo({
+        top: node.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop,
+        behavior: 'smooth',
+      });
+    }
+  }
+
+  // 本回合起点：优先行动行；无行动行（如重生开场）时用插图框或首段叙事兜底。
+  function turnStartOr(fallbackWrap) {
+    if (turnStartEl && turnStartEl.isConnected) return turnStartEl;
+    if (!fallbackWrap) return null;
+    return fallbackWrap.querySelector('.scene-frame') ||
+           fallbackWrap.querySelector('p.narration') || fallbackWrap;
+  }
+
+  // 进入世界时定位到最新一回合开头：最后一条行动行，没有则最后一段叙事的开头。
+  function lastTurnStart() {
+    var s = $('stream');
+    var lines = s.querySelectorAll('.action-line');
+    if (lines.length) return lines[lines.length - 1];
+    var blocks = s.querySelectorAll('.narration-block, .opening');
+    return blocks.length ? blocks[blocks.length - 1] : null;
+  }
+
+  // 回合结束后 2 秒内，若上方有异步插入（插图/物品卡/徽章）把起点推离，重新对齐一次；
+  // 窗口过后（或已重对齐过）不再干预玩家滚动。
+  function armTurnAlign(start) {
+    if (turnAlignObs) turnAlignObs.disconnect();
+    turnAlignObs = null;
+    if (typeof MutationObserver === 'undefined' || !start) return;
+    var until = Date.now() + 2000;
+    var base = start.offsetTop;   // 布局坐标，不受滚动影响
+    var done = false;
+    var obs = new MutationObserver(function () {
+      var stop = done || Date.now() > until || !start.isConnected;
+      if (!stop && Math.abs(start.offsetTop - base) > 4) {
+        done = true;                // 只重新对齐一次
+        scrollToTurnStart(start);
+      }
+      if (stop || done) {
+        obs.disconnect();
+        if (turnAlignObs === obs) turnAlignObs = null;
+      }
+    });
+    turnAlignObs = obs;
+    obs.observe($('stream'), { childList: true, subtree: true });
+    setTimeout(function () {
+      obs.disconnect();
+      if (turnAlignObs === obs) turnAlignObs = null;
+    }, 2100);
+  }
+
   async function showGame(id) {
     currentWorldId = id;
     $('view-game').hidden = false;
@@ -99,7 +165,7 @@
       setUndoVisible(!!state.undoAvailable);
       if (state.awaitingRebirth || !state.character.alive) showDeath(state, null);
       else hideDeath();
-      scrollBottom();
+      scrollToTurnStart(lastTurnStart());
       requestImages();
 
       // 序章：首次进入（turn 0、未看过、四段齐全）弹出；缺失则后台补生成，
@@ -186,8 +252,10 @@
   }
 
   function appendActionLine(action) {
-    $('stream').appendChild(el('p', 'action-line', '› 你：' + action));
-    scrollBottom();
+    var line = el('p', 'action-line', '› 你：' + action);
+    $('stream').appendChild(line);
+    turnStartEl = line;             // 记住本回合起点
+    scrollToTurnStart(line);        // 停在这条行动行，露出下面的「世界在回应…」
   }
 
   function appendDivider(text) {
@@ -246,7 +314,7 @@
     block.text += text;
     var paras = splitByBlankLines(block.text);
     renderParagraphs(block.wrap, paras.length ? paras : ['']);
-    scrollBottom();
+    // 流式期间不自动滚动：读者已从行动行开头往下读，跟随到底只会把旧内容顶上去。
   }
 
   // 一次性渲染完整叙事（历史回放 / result 最终补齐）：按 \n\n 拆成多个 <p>，
@@ -271,7 +339,6 @@
     }
     $('stream').appendChild(wrap);
     var buttons = attachReadButtons(wrap, paras, currentVoiceHints);
-    scrollBottom();
     return { paras: paras, buttons: buttons, hints: currentVoiceHints, wrap: wrap };
   }
 
@@ -726,6 +793,13 @@
     if (res.death) showDeath(res.state, res.death);
     requestImages();
     if (typeof Tts !== 'undefined' && myPrefs.tts && myPrefs.tts.auto) Tts.autoRead(narr);
+    // 最终结果渲染完成：停在回合开头（行动行；无行动行则插图框/首段叙事），自动朗读时同样如此。
+    var start = turnStartOr(narr.wrap);
+    if (start) {
+      turnStartEl = start;
+      scrollToTurnStart(start);
+      armTurnAlign(start);
+    }
   }
 
   async function sendAction() {

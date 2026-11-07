@@ -79,11 +79,10 @@
       }
     });
 
-    // 软键盘弹出 / 收起（visualViewport 尺寸变化）：保持输入框可见并把叙事滚到底。
+    // 软键盘弹出 / 收起（visualViewport 尺寸变化）：只保证输入框可见，不把叙事滚到底。
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', function () {
         if (window.innerWidth > 600) return;
-        scrollBottom();
         var ai = $('action-input');
         if (ai && document.activeElement === ai) ai.scrollIntoView({ block: 'end' });
       });
