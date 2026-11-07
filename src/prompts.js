@@ -113,11 +113,19 @@ const V2_DECISION_LINES = [
   '  不必每回合都给玩家出选择题，中间的段落按故事需要自然推进，不要用总结、抒情或「你陷入沉思」收尾。',
 ];
 const V2_SEGMENT_LINES = [
-  '- 篇幅随场景：关键场景（初见、冲突、亲密、揭秘、事件开始或结算）600~1200 字，过场与日常 150~300 字；段落按内容自然划分、长短交错，对白单独成段。',
-  '- 写作手法：用具体的感官细节（声音、气味、触感、光线）和动作代替概括与形容词堆叠；',
-  '  人物通过言行和潜台词表现，不直接说破情绪；适度写主角此刻的身体感受和念头（第二人称）；',
-  '  NPC 有自己的欲望、秘密和行动，会主动推动局面，不只是报信或提条件；',
-  '  张弛有度——紧张处短句、铺垫处放慢；回扣之前出现过的细节，让世界前后呼应。',
+  '- 段落短、段数多：一段只写一个动作、一个念头或一句对白，通常 20~70 字；关键场景（初见、冲突、亲密、揭秘、事件开始或结算）8~20 段、600~1200 字，过场 3~6 段、150~300 字。',
+  '【写作手法】',
+  '- 每回合写成一场完整的小戏：玩家想做的事 → 遇到的阻碍或意外 → 主角的尝试与应对 → 有分量的结果；结果常常先挫后扬或先扬后挫，不要平铺直叙地交代发生了什么。',
+  '- 用具体、有生活气的细节立住人和情感（递过来的半块饼、用袖子擦干净的凳子），少用「五味杂陈」「气氛凝重」这类概括。',
+  '- 写主角的身体感受和五感：疼、冷、饿、气味、心跳、手心出汗。',
+  '- 主角会观察、推算、试探：世界里有能摸清的规律（多久出现一次、谁在什么时候来、哪里不对劲），玩家动脑就能占到便宜。',
+  '- 信息一点点放：先看到异常，再猜错，再发现真相的一角，不要一次说清谜底。',
+  '- 情绪有起伏：受挫、被轻视、被逼到墙角之后，给一次靠自己挣来的小胜；势利的人前倨后恭、看不起主角的人终会被打脸，但要合情合理、来得不轻易。',
+  '- 配角有自己的心思和反差：嘴上刻薄的人暗中帮一把，热情的人别有所图；用一句话、一个小动作露出来，不说破。',
+  '- 偶尔一两句主角的心里话或自言自语，短，带情绪。',
+  '- 语言朴素有劲：动词为主，少堆形容词，不卖弄辞藻；对白口语化、符合身份；不同世界观用各自的腔调。',
+  '- 成长看得见：本事、修为、名声、关系的变化要有具体体现。',
+  '- 结尾留钩子：旁人察觉了不该察觉的事、一句带敌意或暗示的话、刚到手的东西显出异样、远处传来的动静。钩子是悬念，不是选择题；不能抵消玩家这一回合想做成的事；私下、亲密场景里钩子只用内心念头或一个细节，不用外部打断。不要用总结或抒情收尾。',
 ];
 const V2_TURN_RULES = TURN_RULES.split(NL).flatMap((line) => {
   if (line.startsWith('- 每段叙事结尾必须停在一个需要玩家决断的具体局面')) return V2_DECISION_LINES;
@@ -205,8 +213,8 @@ const TURN_OUTPUT_FORMAT = [
 ].join('\n');
 
 // v2 的输出格式：narration 仍为 JSON 第一个字段，正文优先；只改这两行，其余说明原样保留。
-const V2_NARRATION_EXAMPLE = '{"narration":"第二人称叙事：篇幅随场景（关键场景 600~1200 字、过场与日常 150~300 字），段落自然划分、长短交错，段间用空行分隔",';
-const V2_NARRATION_NOTES = '- narration 是输出的第一个字段，先把 narration 写完整，再写其他字段：篇幅随场景，关键场景 600~1200 字、过场与日常 150~300 字；段落按内容自然划分、长短交错，对白单独成段。';
+const V2_NARRATION_EXAMPLE = '{"narration":"第二人称叙事：段落短、段数多，一段只写一个动作、一个念头或一句对白，通常 20~70 字；关键场景 8~20 段、600~1200 字，过场 3~6 段、150~300 字，段间用空行分隔",';
+const V2_NARRATION_NOTES = '- narration 是输出的第一个字段，先把 narration 写完整，再写其他字段：段落短、段数多，一段只写一个动作、一个念头或一句对白，通常 20~70 字；关键场景 8~20 段、600~1200 字，过场 3~6 段、150~300 字，对白单独成段。';
 const V2_TURN_OUTPUT_FORMAT = TURN_OUTPUT_FORMAT.split(NL).flatMap((line) => {
   if (line.startsWith('{"narration":')) return [V2_NARRATION_EXAMPLE];
   if (line.startsWith('- narration 必须分成 2~4 个短段落')) return [V2_NARRATION_NOTES];
@@ -299,8 +307,10 @@ function buildTurnMessages(state, plan, action, opts) {
   const nextTurn = p.nextTurn || (state.turn || 0) + 1;
   // 叙事写法：默认读配置（编排层把 cfg.NARRATIVE_STYLE 经 opts.narrativeStyle 传入，
   // 未传时取 DEFAULTS 的 v1）；opts.style 优先级最高，供对比脚本逐次覆盖。
+  // 允许 v1 / v2 / v2-3p：v2 与 v2-3p 共用小说化规则，后者改用第三人称（用主角名字）。
   const cfgStyle = (opts && opts.style) || (opts && opts.narrativeStyle) || env.DEFAULTS.NARRATIVE_STYLE;
-  const isV2 = cfgStyle === 'v2';
+  const isV2 = cfgStyle === 'v2' || cfgStyle === 'v2-3p';
+  const is3p = cfgStyle === 'v2-3p';
 
   const sys = [];
   sys.push(CONSTITUTION);
@@ -470,8 +480,18 @@ function buildTurnMessages(state, plan, action, opts) {
     '请据此写出本回合叙事与提议，只输出 JSON。',
   ].join('\n\n');
 
+  let systemContent = sys.join('\n\n');
+  if (is3p) {
+    // 与 v2 同一套规则，只把叙事人称从第二人称改成第三人称：用主角名字，而非「你」。
+    const c3 = (state && state.character) || {};
+    const hero = (c3.name && String(c3.name).trim()) ||
+      (c3.gender === '女' ? '她' : c3.gender === '男' ? '他' : '少年');
+    systemContent = systemContent
+      .split('第二人称').join('第三人称（用主角名字）')
+      .split('「你').join(`「${hero}`);
+  }
   return [
-    { role: 'system', content: sys.join('\n\n') },
+    { role: 'system', content: systemContent },
     { role: 'user', content: user },
   ];
 }
