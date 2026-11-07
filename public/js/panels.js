@@ -78,6 +78,26 @@
         linkRow.appendChild(el('span', 'usage-sub', '隧道未启动'));
       }
       friend.appendChild(linkRow);
+
+      // 主人口令：等宽、默认 •••• 遮住、点「显示」才露出，带复制按钮；仅主人可见。
+      var hp = (d.access && d.access.hostPassword) || '';
+      var HP_MASK = '••••••••';
+      var hpRow = el('div', 'usage-friend-row');
+      hpRow.appendChild(el('span', 'usage-friend-label', '主人口令'));
+      var hpVal = el('span', 'usage-mono', HP_MASK);
+      hpRow.appendChild(hpVal);
+      var hpShown = false;
+      var hpToggle = el('button', 'btn tiny', '显示');
+      hpToggle.addEventListener('click', function () {
+        hpShown = !hpShown;
+        hpVal.textContent = hpShown ? hp : HP_MASK;
+        hpToggle.textContent = hpShown ? '隐藏' : '显示';
+      });
+      hpRow.appendChild(hpToggle);
+      hpRow.appendChild(usageCopyButton(function () { return hp; }, hpVal));
+      friend.appendChild(hpRow);
+      friend.appendChild(el('div', 'usage-note', '用于在手机等设备通过朋友链接以主人身份登录，不要发给朋友'));
+
       friend.appendChild(el('div', 'usage-note', '把链接和访问密码发给朋友；链接每次重启服务都会变'));
       box.appendChild(friend);
     }
@@ -238,6 +258,41 @@
       } else {
         plSec.appendChild(el('div', 'usage-sub', '（暂无）'));
       }
+
+      // 把某个玩家的世界并到主人名下（下拉来自主人专属字段 playerNames）。
+      var claimRow = el('div', 'usage-friend-row');
+      var claimSel = el('select');
+      claimSel.style.cssText = 'font-size:12px;flex:1 1 120px;min-width:110px;padding:4px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px';
+      var pnames = d.playerNames || {};
+      Object.keys(pnames).forEach(function (id) {
+        if (id === 'host') return;
+        var opt = el('option', null, pnames[id]);
+        opt.value = id;
+        claimSel.appendChild(opt);
+      });
+      claimRow.appendChild(claimSel);
+      var claimBtn = el('button', 'btn tiny', '把某个玩家的世界并到我名下');
+      claimBtn.addEventListener('click', async function () {
+        var playerId = claimSel.value;
+        if (!playerId) { toast('没有可收回的玩家'); return; }
+        if (!window.confirm('确定把「' + (pnames[playerId] || playerId) + '」的世界并到你名下吗？')) return;
+        claimBtn.disabled = true;
+        try {
+          var r = await api('/api/admin/claim-worlds', {
+            method: 'POST',
+            body: JSON.stringify({ playerId: playerId }),
+          });
+          toast('已收回 ' + ((r.moved || []).length) + ' 个世界');
+          refreshUsage();
+        } catch (e) {
+          toast((e && e.message) || '收回失败');
+        } finally {
+          claimBtn.disabled = false;
+        }
+      });
+      claimRow.appendChild(claimBtn);
+      plSec.appendChild(claimRow);
+      plSec.appendChild(el('div', 'usage-note', '选择来客，确认后把他创建的世界全部并到主人名下'));
       box.appendChild(plSec);
 
       var g = d.global || {};

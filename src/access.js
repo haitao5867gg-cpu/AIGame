@@ -26,7 +26,15 @@ function genPassword() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 }
 
-// 读或初始化 data/access.json：{ password, secret, players: { <id>: { name, createdAt } } }
+// 主人口令字母表：字母数字，去掉易混字符 0 O 1 l I。
+const HOST_PASSWORD_ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genHostPassword() {
+  let s = '';
+  for (let i = 0; i < 16; i++) s += HOST_PASSWORD_ALPHABET[crypto.randomInt(0, HOST_PASSWORD_ALPHABET.length)];
+  return s;
+}
+
+// 读或初始化 data/access.json：{ password, hostPassword, secret, players }
 function loadAccessFile(dataDir) {
   const p = accessPath(dataDir);
   let v = store.readJson(p, null);
@@ -34,6 +42,7 @@ function loadAccessFile(dataDir) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) { v = {}; changed = true; }
   if (typeof v.secret !== 'string' || v.secret.length < 32) { v.secret = crypto.randomBytes(32).toString('hex'); changed = true; }
   if (typeof v.password !== 'string' || !v.password) { v.password = genPassword(); changed = true; }
+  if (typeof v.hostPassword !== 'string' || !v.hostPassword) { v.hostPassword = genHostPassword(); changed = true; }
   if (!v.players || typeof v.players !== 'object' || Array.isArray(v.players)) { v.players = {}; changed = true; }
   if (changed) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -96,6 +105,7 @@ function createAccess(cfg, dataDir, opts) {
   const nowFn = o.now || (() => Date.now());
   const file = loadAccessFile(dataDir);
   const password = String((cfg && cfg.ACCESS_PASSWORD) || '').trim() || file.password;
+  const hostPassword = String((cfg && cfg.HOST_PASSWORD) || '').trim() || file.hostPassword;
   const secret = file.secret;
   const fails = new Map(); // ip → [失败时间戳]
 
@@ -117,8 +127,10 @@ function createAccess(cfg, dataDir, opts) {
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
     let p;
     try { p = JSON.parse(fromB64url(body).toString('utf8')); } catch (_) { return null; }
-    if (!p || typeof p.pid !== 'string' || !/^p[0-9a-f]{12}$/.test(p.pid)) return null;
+    if (!p || typeof p.pid !== 'string') return null;
     if (typeof p.iat !== 'number' || nowFn() - p.iat > COOKIE_MAX_AGE_S * 1000) return null;
+    if (p.pid === HOST_PLAYER.id) return HOST_PLAYER;
+    if (!/^p[0-9a-f]{12}$/.test(p.pid)) return null;
     return { id: p.pid, name: cleanName(p.name) || '旅人', host: false };
   }
 
@@ -143,14 +155,22 @@ function createAccess(cfg, dataDir, opts) {
       return { status: 429, body: { error: '尝试次数过多，请 10 分钟后再试' } };
     }
     const b = body && typeof body === 'object' ? body : {};
+    const hostMode = b.mode === 'host';
     const given = Buffer.from(String(b.password == null ? '' : b.password).trim());
-    const want = Buffer.from(password);
+    const want = Buffer.from(hostMode ? hostPassword : password);
     const ok = given.length === want.length && crypto.timingSafeEqual(given, want);
     if (!ok) {
       const list = recentFails(ip);
       list.push(nowFn());
       fails.set(ip, list);
-      return { status: 401, body: { error: '访问密码不对' } };
+      return { status: 401, body: { error: hostMode ? '主人口令不对' : '访问密码不对' } };
+    }
+    const secure = viaTunnel(req) ? '; Secure' : '';
+    const makeCookie = (payload) => `${COOKIE_NAME}=${sign(payload)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure}`;
+    if (hostMode) {
+      fails.delete(ip);
+      const payload = { pid: HOST_PLAYER.id, name: HOST_PLAYER.name, iat: nowFn() };
+      return { status: 200, body: { ok: true, player: { id: HOST_PLAYER.id, name: HOST_PLAYER.name, host: true } }, cookie: makeCookie(payload) };
     }
     const name = cleanName(b.name);
     if (!name) return { status: 400, body: { error: '请填一个名字' } };
@@ -159,10 +179,7 @@ function createAccess(cfg, dataDir, opts) {
     const f = loadAccessFile(dataDir);
     f.players[pid] = { name, createdAt: nowFn() };
     store.atomicWriteJson(accessPath(dataDir), f);
-    const token = sign({ pid, name, iat: nowFn() });
-    const secure = viaTunnel(req) ? '; Secure' : '';
-    const cookie = `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure}`;
-    return { status: 200, body: { ok: true, player: { id: pid, name, host: false } }, cookie };
+    return { status: 200, body: { ok: true, player: { id: pid, name, host: false } }, cookie: makeCookie({ pid, name, iat: nowFn() }) };
   }
 
   function logoutCookie(req) {
@@ -177,7 +194,7 @@ function createAccess(cfg, dataDir, opts) {
     return out;
   }
 
-  return { playerOf, login, logoutCookie, playerNames, password: () => password, hasPassword: () => !!password };
+  return { playerOf, login, logoutCookie, playerNames, password: () => password, hostPassword: () => hostPassword, hasPassword: () => !!password };
 }
 
 // ---- 世界归属：data/owners.json { <worldId>: <playerId> }；没有记录的世界归 host ----
@@ -203,8 +220,22 @@ function removeOwner(dataDir, worldId) {
   store.atomicWriteJson(ownersPath(dataDir), all);
 }
 
+// 把某来客名下的全部世界改归 host；返回被移动的世界 id 列表。
+function claimWorlds(dataDir, playerId) {
+  const all = readOwners(dataDir);
+  const moved = [];
+  for (const [worldId, owner] of Object.entries(all)) {
+    if (owner === playerId) { all[worldId] = HOST_PLAYER.id; moved.push(worldId); }
+  }
+  if (moved.length) {
+    fs.mkdirSync(dataDir, { recursive: true });
+    store.atomicWriteJson(ownersPath(dataDir), all);
+  }
+  return moved;
+}
+
 module.exports = {
-  createAccess, isHostAddress, viaTunnel, parseCookies, cleanName, genPassword,
-  ownerOf, setOwner, removeOwner, readOwners,
+  createAccess, isHostAddress, viaTunnel, parseCookies, cleanName, genPassword, genHostPassword,
+  ownerOf, setOwner, removeOwner, readOwners, claimWorlds,
   COOKIE_NAME, HOST_PLAYER, FAIL_MAX,
 };

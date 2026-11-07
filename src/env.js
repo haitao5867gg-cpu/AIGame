@@ -26,6 +26,8 @@ const DEFAULTS = Object.freeze({
   DATA_DIR: './data',
   // 公网来客访问密码；留空则首次启动自动生成 6 位数字，与 HMAC 密钥一起存入 data/access.json。
   ACCESS_PASSWORD: '',
+  // 主人口令：主人在手机等设备通过朋友链接「主人登录」时用；留空则首次启动自动生成 16 位，存 data/access.json 后复用。
+  HOST_PASSWORD: '',
   // ---- 朋友访问：自动启动 Cloudflare 临时隧道（见 src/tunnel.js）----
   // TUNNEL=off 表示不启动；CLOUDFLARED_PATH 留空则自动查找 cloudflared。
   TUNNEL: 'on',

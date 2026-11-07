@@ -30,20 +30,26 @@ button:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent
 button:disabled{opacity:.5;cursor:not-allowed}
 .error{color:var(--accent-2);font-family:var(--sans);font-size:13px;margin-top:12px;
   min-height:1.2em;text-align:center}
+.switch{display:block;text-align:center;margin-top:14px;font-family:var(--sans);
+  font-size:13px;color:var(--muted);text-decoration:none;cursor:pointer}
+.switch:hover{color:var(--accent-2)}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>无限世界</h1>
-  <p class="sub">输入访问密码，开始你的旅程</p>
+  <p class="sub" id="sub">输入访问密码，开始你的旅程</p>
   <form id="form" autocomplete="off">
-    <label for="password">访问密码</label>
-    <input id="password" type="password" inputmode="numeric" autocomplete="off" placeholder="6 位数字">
-    <label for="name">你的名字</label>
-    <input id="name" type="text" maxlength="12" autocomplete="off" placeholder="旅人">
+    <label for="password" id="pwdLabel">访问密码</label>
+    <input id="password" type="password" inputmode="numeric" autocomplete="off" placeholder="6 位数字" style="font-size:16px">
+    <div id="nameWrap">
+      <label for="name">你的名字</label>
+      <input id="name" type="text" maxlength="12" autocomplete="off" placeholder="旅人">
+    </div>
     <button id="btn" type="submit">进入</button>
     <div id="error" class="error"></div>
   </form>
+  <a href="#" id="hostToggle" class="switch">主人登录</a>
 </div>
 <script>
 (function () {
@@ -51,17 +57,39 @@ button:disabled{opacity:.5;cursor:not-allowed}
   var form = document.getElementById('form');
   var pwd = document.getElementById('password');
   var nameInput = document.getElementById('name');
+  var nameWrap = document.getElementById('nameWrap');
+  var pwdLabel = document.getElementById('pwdLabel');
+  var sub = document.getElementById('sub');
+  var hostToggle = document.getElementById('hostToggle');
   var btn = document.getElementById('btn');
   var err = document.getElementById('error');
+  var hostMode = false;
+
+  hostToggle.addEventListener('click', function (e) {
+    e.preventDefault();
+    hostMode = !hostMode;
+    nameWrap.style.display = hostMode ? 'none' : '';
+    pwdLabel.textContent = hostMode ? '主人口令' : '访问密码';
+    pwd.placeholder = hostMode ? '主人口令' : '6 位数字';
+    pwd.setAttribute('inputmode', hostMode ? 'text' : 'numeric');
+    sub.textContent = hostMode ? '以主人身份登录' : '输入访问密码，开始你的旅程';
+    hostToggle.textContent = hostMode ? '返回来客登录' : '主人登录';
+    err.textContent = '';
+    pwd.value = '';
+  });
+
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     err.textContent = '';
     btn.disabled = true;
+    var payload = hostMode
+      ? { mode: 'host', password: pwd.value }
+      : { password: pwd.value, name: nameInput.value };
     try {
       var res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pwd.value, name: nameInput.value }),
+        body: JSON.stringify(payload),
       });
       var text = await res.text();
       var data = null;

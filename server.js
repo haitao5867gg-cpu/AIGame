@@ -388,10 +388,24 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
       const names = access.playerNames();
       u.players = llmMod.summarizePlayers(store.readJsonl(store.usagePath(dataDir)), now)
         .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total }));
-      u.access = { password: access.password() };
+      u.access = { password: access.password(), hostPassword: access.hostPassword() };
+      u.playerNames = names;
       u.tunnel = { url: runtime && runtime.tunnel ? runtime.tunnel.url() : null };
     }
     return sendJson(res, 200, u);
+  }
+  if (pathname === '/api/admin/claim-worlds' && method === 'POST') {
+    // 只有主人能把来客名下的世界收回自己名下；来客一律 403。
+    if (!(player && player.host)) {
+      return sendJson(res, 403, { error: '只有主人能收回世界' });
+    }
+    const body = await readJsonBody(req);
+    const playerId = body && typeof body.playerId === 'string' ? body.playerId : '';
+    if (!playerId || playerId === 'host') {
+      return sendJson(res, 400, { error: '请选择要收回的玩家' });
+    }
+    const moved = accessMod.claimWorlds(dataDir, playerId);
+    return sendJson(res, 200, { moved });
   }
   if (pathname === '/api/worlds' && method === 'GET') {
     const list = g.listWorlds().filter((w) => accessMod.ownerOf(dataDir, w.id) === player.id);
