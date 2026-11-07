@@ -30,6 +30,9 @@
       <textarea id="seed" rows="3" placeholder="例如：蒸汽朋克长安，机关兽与占星术并存，皇城地下埋着永不停歇的锅炉……"></textarea>
       <div id="presets" class="presets"></div>
 
+      <label>文风</label>
+      <div id="genre-row" class="genre-row"></div>
+
       <label for="char-name">角色名</label>
       <input id="char-name" type="text" placeholder="无名旅人">
       <label for="char-appearance">形象描述</label>
@@ -64,9 +67,11 @@
         <button type="button" class="more-menu-item" data-menu="usage">用量</button>
         <button type="button" class="more-menu-item" data-menu="panel">角色面板</button>
         <button type="button" class="more-menu-item" data-menu="export">导出</button>
+        <button type="button" id="menu-genre" class="more-menu-item" data-menu="genre">文风：<span id="menu-genre-name">识别中</span></button>
         <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
       </div>
       <div id="usage-pop" class="usage-pop" hidden></div>
+      <div id="genre-pop" class="genre-pop" hidden></div>
     </header>
     <div id="g-subtitle" class="g-subtitle"></div>
     <div class="g-strip">
@@ -74,6 +79,7 @@
         <span id="g-place" class="g-place"></span>
         <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
         <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
+        <button type="button" id="g-genre" class="genre-tag">文风·识别中</button>
       </div>
       <div id="top-attrs" class="top-attrs"></div>
     </div>

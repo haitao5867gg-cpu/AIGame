@@ -80,6 +80,7 @@
   function showNew() {
     $('view-new').hidden = false;
     if (!$('presets').childElementCount) renderPresets();
+    if (!$('genre-row').childElementCount) renderGenres();
     if (!$('alloc').childElementCount) initAlloc();
     updatePoints();
   }
@@ -89,6 +90,24 @@
     PRESETS.forEach(function (p) {
       var b = el('button', 'preset', p);
       b.addEventListener('click', function () { $('seed').value = p; $('seed').focus(); });
+      box.appendChild(b);
+    });
+  }
+
+  // 文风单选胶囊：默认 'auto'（交给模型判断），点击重绘以更新选中态。
+  var selectedGenre = 'auto';
+
+  function renderGenres() {
+    var box = $('genre-row');
+    box.textContent = '';
+    GENRE_OPTIONS.forEach(function (g) {
+      var b = el('button', 'genre-pill' + (g.value === selectedGenre ? ' selected' : ''), g.label);
+      b.type = 'button';
+      b.setAttribute('data-genre', g.value);
+      b.addEventListener('click', function () {
+        selectedGenre = g.value;
+        renderGenres();
+      });
       box.appendChild(b);
     });
   }
@@ -161,7 +180,7 @@
     try {
       var w = await api('/api/worlds', {
         method: 'POST',
-        body: JSON.stringify({ seed: seed, name: name, appearance: appearance, alloc: alloc }),
+        body: JSON.stringify({ seed: seed, name: name, appearance: appearance, alloc: alloc, genre: selectedGenre }),
       });
       location.hash = '#/w/' + w.id;
     } catch (err) {

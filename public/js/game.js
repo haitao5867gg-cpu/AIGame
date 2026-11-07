@@ -138,6 +138,47 @@
     $('g-place').textContent = loc + ' · 第' + (c.day || 1) + '日 ' + (c.period || '清晨');
     $('g-omen').hidden = !s.omen;
     $('g-danger').hidden = !s.danger; // 体魄 ≤ 2：顶部提示「伤势沉重」
+    renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
+  }
+
+  // ---- 文风切换：⋯ 菜单项与桌面地点行标签共用一个选择列表 ----
+  // 菜单文字 / 桌面标签统一由 currentState.genre 渲染；缺 genre 时显示「识别中」。
+  function renderGenreLabels() {
+    var name = (currentState && genreName(currentState.genre)) || '识别中';
+    $('menu-genre-name').textContent = name;
+    $('g-genre').textContent = '文风·' + name;
+  }
+
+  function openGenrePop() {
+    var pop = $('genre-pop');
+    if (!pop.hidden) { pop.hidden = true; return; }
+    pop.textContent = '';
+    pop.appendChild(el('div', 'genre-pop-title', '选择文风'));
+    var cur = currentState && currentState.genre;
+    GENRE_OPTIONS.slice(1).forEach(function (g) {
+      var on = g.value === cur; // 当前项打勾
+      var b = el('button', 'genre-option' + (on ? ' selected' : ''), (on ? '✓ ' : '') + g.label);
+      b.type = 'button';
+      b.addEventListener('click', function () { setGenre(g.value); });
+      pop.appendChild(b);
+    });
+    pop.hidden = false;
+  }
+
+  async function setGenre(value) {
+    if (!currentWorldId) return;
+    try {
+      var r = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/genre', {
+        method: 'POST', body: JSON.stringify({ genre: value }),
+      });
+      currentState = currentState || {};
+      currentState.genre = r.genre;
+      renderGenreLabels();
+      $('genre-pop').hidden = true;
+      toast('文风已切换为' + (genreName(r.genre) || r.genre) + '，下一回合生效');
+    } catch (err) {
+      toast(err.message);
+    }
   }
 
   function appendOpening(text) {

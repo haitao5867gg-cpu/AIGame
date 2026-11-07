@@ -67,6 +67,12 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .preset{font-family:var(--sans);font-size:12px;color:var(--muted);background:var(--bg-2);
   border:1px solid var(--line);border-radius:14px;padding:5px 11px}
 .preset:hover{border-color:var(--accent-2);color:var(--ink)}
+/* 文风单选胶囊（新世界页）：沿用 .preset 观感，选中态加高亮边框 */
+.genre-row{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px}
+.genre-pill{font-family:var(--sans);font-size:12px;color:var(--muted);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:14px;padding:5px 11px;white-space:nowrap}
+.genre-pill:hover{border-color:var(--accent-2);color:var(--ink)}
+.genre-pill.selected{border-color:var(--accent-2);color:var(--ink);font-weight:600}
 .alloc-head{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
 .alloc-head label{flex:1;min-width:150px;margin:0}
 #points-left{font-family:var(--sans);font-size:13px;color:var(--muted)}
@@ -116,6 +122,19 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .danger-tag{font-family:var(--sans);font-size:11px;color:#ffd7cf;background:rgba(192,57,43,.3);
   border:1px solid rgba(224,57,43,.8);border-radius:10px;padding:2px 9px;letter-spacing:2px;
   animation:dangerFlash .85s ease-in-out infinite alternate}
+/* 桌面地点行末尾的文风标签（点击弹出选择列表），手机端隐藏、改走 ⋯ 菜单 */
+.genre-tag{font-family:var(--sans);font-size:11px;color:var(--accent-2);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:10px;padding:2px 9px;letter-spacing:1px;white-space:nowrap}
+.genre-tag:hover{border-color:var(--accent-2)}
+/* 文风选择列表：与用量面板同为顶栏绝对定位弹层 */
+.genre-pop{position:absolute;right:0;top:100%;margin-top:6px;z-index:46;min-width:150px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.genre-pop-title{font-family:var(--sans);font-size:12px;color:var(--muted);padding:4px 12px;letter-spacing:1px}
+.genre-option{display:block;width:100%;text-align:left;min-height:40px;font-family:var(--sans);
+  font-size:14px;color:var(--ink);background:transparent;border:0;border-radius:6px;padding:8px 12px}
+.genre-option:hover,.genre-option:active{background:var(--bg-2)}
+.genre-option.selected{color:var(--accent-2);font-weight:600}
 @keyframes dangerFlash{from{opacity:.42}to{opacity:1}}
 #btn-panel{display:none}
 .event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);
@@ -396,6 +415,10 @@ p.has-tts-btn{position:relative;padding-right:42px}
   .btn.tiny{min-height:40px;min-width:40px;padding:8px 12px}
   .link{min-height:40px;display:inline-flex;align-items:center}
   .preset{min-height:40px;display:inline-flex;align-items:center}
+  .genre-row{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
+  .genre-row::-webkit-scrollbar{display:none}
+  .genre-pill{flex:none;min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+  .genre-tag{display:none}
   .alloc-row{min-height:44px}
   .alloc-row .btn.tiny{min-width:40px;min-height:40px}
   .world-card{min-height:64px}

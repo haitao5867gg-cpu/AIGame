@@ -10,6 +10,24 @@
     '被诅咒的中世纪王国：每当钟敲十三下，就有一个人忘记自己的名字',
   ];
   var DEFAULT_SUGGESTIONS = ['环顾四周', '向人打听消息', '查看随身物品'];
+  // 文风预设：与后端 src/genres.js 的 GENRES / GENRE_NAMES 对应。首项 'auto' 交给模型判断，
+  // 新世界页默认选中；其余 6 项为游戏页可切换的文风。全站共用这一份数据，避免两处文案漂移。
+  var GENRE_OPTIONS = [
+    { value: 'auto', label: '自动' },
+    { value: 'xuanhuan', label: '玄幻修仙' },
+    { value: 'urban', label: '都市' },
+    { value: 'game', label: '游戏系统' },
+    { value: 'horror', label: '恐怖悬疑' },
+    { value: 'cozy', label: '休闲日常' },
+    { value: 'general', label: '通用' },
+  ];
+  // 值 → 中文名；未识别 / 缺失返回 null，调用方回退显示「识别中」。
+  function genreName(v) {
+    for (var i = 0; i < GENRE_OPTIONS.length; i++) {
+      if (GENRE_OPTIONS[i].value === v) return GENRE_OPTIONS[i].label;
+    }
+    return null;
+  }
   // 属性说明卡文案：点击（或手机上轻点）顶部属性条 / 侧面板任一属性弹出。
   var ATTR_INFO = {
     '体魄': '身体与伤势，归零即本世终结',

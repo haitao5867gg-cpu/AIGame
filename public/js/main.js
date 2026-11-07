@@ -61,8 +61,22 @@
         if (act === 'usage') setUsageOpen(true);
         else if (act === 'panel') { $('panel').dataset.open = 'true'; syncBodyScrollLock(); }
         else if (act === 'export') { if (currentWorldId) exportWorld(currentWorldId); }
+        else if (act === 'genre') openGenrePop();
         else if (act === 'logout') doLogout();
       });
+    });
+
+    // ---- 文风：桌面地点行标签点击弹出选择列表；点列表 / 标签 / 菜单项之外收起 ----
+    $('g-genre').addEventListener('click', function (e) {
+      e.stopPropagation();
+      openGenrePop();
+    });
+    document.addEventListener('click', function (e) {
+      var pop = $('genre-pop');
+      if (!pop.hidden && !pop.contains(e.target)
+          && e.target !== $('g-genre') && !$('menu-genre').contains(e.target)) {
+        pop.hidden = true;
+      }
     });
 
     // 软键盘弹出 / 收起（visualViewport 尺寸变化）：保持输入框可见并把叙事滚到底。
