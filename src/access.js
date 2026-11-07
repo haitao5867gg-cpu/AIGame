@@ -100,6 +100,12 @@ function cleanName(name) {
   return Array.from(t).slice(0, NAME_MAX).join('');
 }
 
+// 主人口令指纹：HMAC-SHA256(secret, 'host-pw:' + 当前主人口令) 的前 16 位十六进制字符。
+// 单向、不可反推出口令；secret 只存在服务端。cookie 里带它，改口令后旧 cookie 即失效。
+function hostPwTag(secret, hostPassword) {
+  return crypto.createHmac('sha256', secret).update('host-pw:' + hostPassword).digest('hex').slice(0, 16);
+}
+
 function createAccess(cfg, dataDir, opts) {
   const o = opts || {};
   const nowFn = o.now || (() => Date.now());
@@ -129,7 +135,13 @@ function createAccess(cfg, dataDir, opts) {
     try { p = JSON.parse(fromB64url(body).toString('utf8')); } catch (_) { return null; }
     if (!p || typeof p.pid !== 'string') return null;
     if (typeof p.iat !== 'number' || nowFn() - p.iat > COOKIE_MAX_AGE_S * 1000) return null;
-    if (p.pid === HOST_PLAYER.id) return HOST_PLAYER;
+    if (p.pid === HOST_PLAYER.id) {
+      // 主人 cookie 绑定口令指纹：改口令（重新 createAccess）后旧 cookie 的 hv 不再匹配，按未登录来客处理。
+      const wantTag = Buffer.from(hostPwTag(secret, hostPassword));
+      const gotTag = Buffer.from(typeof p.hv === 'string' ? p.hv : '');
+      if (gotTag.length !== wantTag.length || !crypto.timingSafeEqual(gotTag, wantTag)) return null;
+      return HOST_PLAYER;
+    }
     if (!/^p[0-9a-f]{12}$/.test(p.pid)) return null;
     return { id: p.pid, name: cleanName(p.name) || '旅人', host: false };
   }
@@ -169,7 +181,7 @@ function createAccess(cfg, dataDir, opts) {
     const makeCookie = (payload) => `${COOKIE_NAME}=${sign(payload)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure}`;
     if (hostMode) {
       fails.delete(ip);
-      const payload = { pid: HOST_PLAYER.id, name: HOST_PLAYER.name, iat: nowFn() };
+      const payload = { pid: HOST_PLAYER.id, name: HOST_PLAYER.name, iat: nowFn(), hv: hostPwTag(secret, hostPassword) };
       return { status: 200, body: { ok: true, player: { id: HOST_PLAYER.id, name: HOST_PLAYER.name, host: true } }, cookie: makeCookie(payload) };
     }
     const name = cleanName(b.name);

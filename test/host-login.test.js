@@ -203,3 +203,65 @@ test('登录过程的 console.log/warn 输出里不含主人口令', async () =>
     assert.equal(logs.join('\n').includes(hp), false, '日志不得出现主人口令');
   });
 });
+
+// ---- 主人 cookie 绑定口令指纹：改口令后旧 cookie 立即失效 ----
+
+test('口令指纹：改口令后旧主人 cookie 失效、新口令可登录，payload 不含明文口令', async () => {
+  await withServer(async ({ dataDir }) => {
+    const A = 'HostOldPass9aaa';
+    const B = 'HostNewPass9bbb';
+    // 两次 createAccess 共用 dataDir/access.json 里的同一个 secret，模拟「改口令前后重启」。
+    const aA = accessMod.createAccess({ HOST_PASSWORD: A }, dataDir);
+    const aB = accessMod.createAccess({ HOST_PASSWORD: B }, dataDir);
+    const guest = (cookie) => ({
+      headers: cookie ? { 'cf-ray': 'x', cookie } : { 'cf-ray': 'x' },
+      socket: { remoteAddress: '8.8.8.8' },
+    });
+
+    const old = aA.login(guest(), { mode: 'host', password: A });
+    assert.equal(old.status, 200, '用口令 A 应能登录');
+    const cookie = old.cookie.split(';')[0];
+
+    // base64url 解码 payload：不含明文口令，含 16 位十六进制指纹 hv。
+    const token = cookie.slice(cookie.indexOf('=') + 1);
+    const payload = JSON.parse(Buffer.from(token.slice(0, token.lastIndexOf('.')), 'base64url').toString('utf8'));
+    assert.equal(JSON.stringify(payload).includes(A), false, 'payload 不得含明文旧口令');
+    assert.equal(JSON.stringify(payload).includes(B), false, 'payload 不得含明文新口令');
+    assert.match(payload.hv, /^[0-9a-f]{16}$/, 'payload 应含 16 位十六进制 hv');
+
+    // 改口令前：aA 认它是主人。
+    assert.equal(aA.playerOf(guest(cookie)).host, true);
+    // 换成口令 B（重新 createAccess）后：签名仍有效，但 hv 不匹配，按未登录来客处理。
+    assert.equal(aB.playerOf(guest(cookie)), null, '改口令后旧 cookie 应视为未登录来客');
+    // 用 B 重新登录可以。
+    const fresh = aB.login(guest(), { mode: 'host', password: B });
+    assert.equal(fresh.status, 200, '用口令 B 应能登录');
+    assert.equal(aB.playerOf(guest(fresh.cookie.split(';')[0])).host, true);
+  });
+});
+
+test('改口令后：旧主人 cookie 在 /api/me 不再是主人、来客被要求登录；新口令可重新登录', async () => {
+  const A = 'HostOldPass9aaa';
+  const B = 'HostNewPass9bbb';
+  await withServer(async ({ base, dataDir }) => {
+    // 改口令前（口令 A）的 createAccess 签出旧主人 cookie，与当前服务共用 secret。
+    const aA = accessMod.createAccess({ HOST_PASSWORD: A }, dataDir);
+    const old = aA.login({ headers: { 'cf-ray': 'x' }, socket: { remoteAddress: '8.8.8.8' } }, { mode: 'host', password: A });
+    assert.equal(old.status, 200);
+    const oldCookie = old.cookie.split(';')[0];
+
+    // 当前服务已换成口令 B（等价于改口令后重启）：旧 cookie 在 /api/me 不再是主人。
+    const stale = await req(base, 'GET', '/api/me', undefined, asGuest(oldCookie));
+    assert.equal(stale.status, 401, stale.text);
+    assert.ok(!(stale.json && stale.json.host === true), '/api/me 不得 host:true');
+    assert.equal(stale.json && stale.json.login, true, '来客头下应被要求登录');
+
+    // 用 B 重新登录可以，/api/me host:true。
+    const fresh = await req(base, 'POST', '/api/login', { mode: 'host', password: B }, asGuest());
+    assert.equal(fresh.status, 200, fresh.text);
+    const newCookie = fresh.headers.get('set-cookie').split(';')[0];
+    const me = await req(base, 'GET', '/api/me', undefined, asGuest(newCookie));
+    assert.equal(me.status, 200, me.text);
+    assert.equal(me.json.host, true);
+  }, { HOST_PASSWORD: B });
+});
