@@ -504,3 +504,53 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .stream{max-height:none;overflow:visible;min-height:50vh}
   #usage-pop,.prologue-card,.item-card-modal-card{max-height:90vh;overflow-y:auto}
 }
+
+/* ===== 内嵌滚动区：预留滚动条槽位 + 细滚动条 + 右侧内边距，避免压住正文/朗读按钮 ===== */
+.stream,.panel,.usage-pop,.prologue-card,.item-card-modal-card{
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(154,146,124,.4) transparent;
+}
+/* 右侧固定留 16px（≥12px），滚动条与段落末尾朗读按钮都不压文字 */
+.stream,.panel,.usage-pop,.prologue-card,.item-card-modal-card{padding-right:16px}
+.stream::-webkit-scrollbar,.panel::-webkit-scrollbar,.usage-pop::-webkit-scrollbar,
+.prologue-card::-webkit-scrollbar,.item-card-modal-card::-webkit-scrollbar{width:8px}
+.stream::-webkit-scrollbar-track,.panel::-webkit-scrollbar-track,.usage-pop::-webkit-scrollbar-track,
+.prologue-card::-webkit-scrollbar-track,.item-card-modal-card::-webkit-scrollbar-track{background:transparent}
+.stream::-webkit-scrollbar-thumb,.panel::-webkit-scrollbar-thumb,.usage-pop::-webkit-scrollbar-thumb,
+.prologue-card::-webkit-scrollbar-thumb,.item-card-modal-card::-webkit-scrollbar-thumb{
+  background:rgba(154,146,124,.4);border-radius:4px}
+
+/* 宽屏「当前回合」插图容器：默认隐藏，≥1200px 才在右侧栏最上方显示 */
+#scene-rail{display:none}
+
+/* ===== 电脑端（≥860px）：整屏阅读布局，叙事填满视口、正文收紧 ===== */
+@media(min-width:860px){
+  #app{max-width:1440px;margin:0 auto;padding:14px 24px}
+  /* 顶栏以下到输入区以上全部给叙事：.stage 填满视口，输入区固定在 .stage 底部 */
+  #view-game{height:calc(100vh - 28px);display:flex;flex-direction:column;min-height:0}
+  .game-body{flex:1;min-height:0;display:flex;gap:20px;align-items:stretch}
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+  .stream{flex:1;min-height:0;max-height:none;overflow-y:auto}
+  .panel{width:320px;flex:0 0 320px;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto}
+  .top-attrs{display:none}
+  /* 正文排版：行高约 1.7、段距约 0.6em、正文列约 44 个汉字并居中 */
+  .narration,.opening{line-height:1.7;margin:0 auto 0.6em;max-width:44em}
+  /* 回合内元素间距一并收紧，配合「插图移出正文」把整回合压进一屏 */
+  .narration-block{margin:8px 0}
+  .action-line{margin:8px 0 2px}
+  .badges{margin-top:4px}
+  .divider{margin:12px 0}
+}
+
+/* ===== 宽屏（≥1200px）：当前回合插图移到右侧栏顶部，历史回合留小缩略图 ===== */
+@media(min-width:1200px){
+  /* 当前回合插图：右侧栏最上方 sticky，点击放大看原图（沿用 .scene-img 监听） */
+  #scene-rail{display:block;position:sticky;top:0;z-index:2;margin:0 0 12px}
+  #scene-rail:empty{display:none}
+  #scene-rail .scene-frame{width:100%;max-height:220px}
+  /* 正文列保持整宽：当前回合不再在叙事块上方插图 */
+  #stream .scene-frame.scene-current{display:none}
+  /* 历史回合：各回合开头留高 80px 小缩略图，点开放大 */
+  #stream .scene-frame.scene-history{width:142px;height:80px;aspect-ratio:auto;max-height:none;margin:4px 0 10px}
+}

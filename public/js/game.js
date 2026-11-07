@@ -620,6 +620,7 @@
 
     renderTopAttrs(s);
     renderImages(); // 用当前 /images 状态填充物品卡片与 NPC 头像
+    syncSceneRail(); // 宽屏：把当前回合插图镜像到右侧栏顶部（见 app.css ≥1200px）
   }
 
   function showDeath(state, death) {
@@ -838,4 +839,55 @@
       refreshUsage();
     }
   }
+
+  // ---- 宽屏插图镜像：当前回合插图放到右侧栏最上方，历史回合在正文里留小缩略图 ----
+  // DOM 归类在 JS 完成，视觉（sticky / 80px 缩略图 / 隐藏当前框）由 app.css ≥1200px 控制。
+  // 镜像复用 data-scene，renderScenes 会一并填图并挂「点击放大」监听。
+  function syncSceneRail() {
+    var panel = $('panel');
+    var rail = $('scene-rail');
+    if (!rail) {
+      rail = el('div', 'scene-rail');
+      rail.id = 'scene-rail';
+      panel.insertBefore(rail, panel.firstChild);   // 右侧栏最上方
+    }
+    var frames = $('stream').querySelectorAll('.scene-frame');
+    for (var i = 0; i < frames.length; i++) {
+      var last = (i === frames.length - 1);
+      frames[i].classList.toggle('scene-current', last);
+      frames[i].classList.toggle('scene-history', !last);
+    }
+    if (!frames.length) { rail.textContent = ''; return; }
+    var key = frames[frames.length - 1].getAttribute('data-scene');
+    rail.textContent = '';
+    var mirror = el('div', 'scene-frame img-pending');
+    mirror.setAttribute('data-scene', key);
+    rail.appendChild(mirror);
+    if (typeof renderScenes === 'function') renderScenes();
+  }
+
+  // ---- 电脑端翻页：输入框未聚焦时，空格 / PageDown 翻一屏（留 2 行重叠），Shift+空格 / PageUp 上翻 ----
+  document.addEventListener('keydown', function (e) {
+    if (window.innerWidth < 860) return;
+    var ai = $('action-input');
+    if (ai && document.activeElement === ai) return;              // 输入框聚焦时不触发
+    var t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName))) return;
+    var isSpace = (e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space');
+    var dir = 0;
+    if (e.key === 'PageDown' || (isSpace && !e.shiftKey)) dir = 1;
+    else if (e.key === 'PageUp' || (isSpace && e.shiftKey)) dir = -1;
+    else return;
+    var s = $('stream');
+    if (!s) return;
+    var para = s.querySelector('.narration');
+    var line = 28;
+    if (para) {
+      var lh = parseFloat(window.getComputedStyle(para).lineHeight);
+      if (lh > 0) line = lh;
+    }
+    var delta = (s.clientHeight - line * 2) * dir;               // 留 2 行重叠
+    e.preventDefault();
+    s.scrollTop += delta;
+  });
 
