@@ -187,6 +187,49 @@ var Tts = (function () {
 
   function refreshUI() { updateTurnButtons(); updateBar(); }
 
+  // ---- 整回合分组：把连续段落打包成若干组（每组 ≤ 3 段且 ≤ 300 字）----
+  var GROUP_MAX_SEGS = 3;
+  var GROUP_MAX_CHARS = 300;
+
+  function paramsFor(i, turn) {
+    return turn.previewParams || paramsForParagraph(turn.hints, i);
+  }
+
+  function isAdultPara(turn) {
+    var adult = turn.adult;
+    return adult === undefined ? adultTurnActive() : adult === true;
+  }
+
+  // 成人回合整段只走浏览器（逐段朗读、绝不发 /api/tts）；其余按段数/字数上限切 Azure 组。
+  function buildGroups(turn) {
+    var groups = [];
+    if (isAdultPara(turn)) {
+      var idxs = [], segs = [], cs = [], tot = 0;
+      for (var j = 0; j < turn.paras.length; j++) {
+        var pp = paramsFor(j, turn);
+        var nn = String(turn.paras[j] == null ? '' : turn.paras[j]).length;
+        idxs.push(j); cs.push(nn); tot += nn;
+        segs.push({ text: turn.paras[j], voice: pp.voice, mood: pp.mood, pace: pp.pace, speed: pp.speed });
+      }
+      groups.push({ kind: 'browser', indices: idxs, segs: segs, chars: cs, total: tot });
+      return groups;
+    }
+    var cur = null;
+    for (var i = 0; i < turn.paras.length; i++) {
+      var text = turn.paras[i];
+      var n = String(text == null ? '' : text).length;
+      var p = paramsFor(i, turn);
+      var seg = { text: text, voice: p.voice, mood: p.mood, pace: p.pace, speed: p.speed };
+      if (!cur || cur.segs.length >= GROUP_MAX_SEGS || cur.total + n > GROUP_MAX_CHARS) {
+        if (cur) groups.push(cur);
+        cur = { kind: 'azure', indices: [], segs: [], chars: [], total: 0 };
+      }
+      cur.indices.push(i); cur.chars.push(n); cur.total += n; cur.segs.push(seg);
+    }
+    if (cur) groups.push(cur);
+    return groups;
+  }
+
   // 播放一段：成人（18+）回合只走浏览器 speechSynthesis，绝不把成人内容发到 /api/tts；
   // 其余走 Azure（命中预取或请求 /api/tts）。成人判定分支在服务端朗读请求之前。
   function speak(sess, text, params) {
@@ -195,20 +238,19 @@ var Tts = (function () {
       browserSpeak(sess, text, params, null);
       return;
     }
-    azurePlay(sess, text, params, sess.index);
+    browserSpeak(sess, text, params, null);
   }
 
-  // 取一段 Azure 音频：成功返回 blob URL；失败返回 null（调用方改走浏览器兜底）；
-  // gen 已变返回 'ABORT'（作废旧回合的异步请求，关闭总开关后不请求音频）。
-  async function fetchAudioBlob(text, params, myGen, silent) {
+  // 取一组 Azure 音频：整回合按组一次请求 /api/tts（body 带 segments）；
+  // 成功返回 blob URL；失败返回 null（调用方改走浏览器逐段兜底）；
+  // gen 已变返回 'ABORT'（作废旧回合的异步请求）。
+  async function fetchGroupBlob(group, myGen, silent) {
     var res;
     try {
       res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: text, voice: params.voice, mood: params.mood, pace: params.pace, speed: params.speed,
-        }),
+        body: JSON.stringify({ segments: group.segs }),
       });
     } catch (_) { return null; }
     if (myGen !== gen) return 'ABORT';
@@ -229,11 +271,11 @@ var Tts = (function () {
     if (typeof url === 'string' && url !== 'ABORT') { try { URL.revokeObjectURL(url); } catch (_) {} }
   }
 
-  // 浏览器兜底 / 成人回合：逐段 speak，onend 接下一段（onParagraphEnd → playCurrent）。
-  function browserSpeak(sess, text, params, reason) {
+  // 浏览器兜底 / 成人回合：逐段 speak，onend 接下一段（onParagraphEnd → nextGroup）。
+  function browserSpeak(sess, text, params, reason, done) {
     if (reason !== undefined && reason !== null) notifyFallback(reason);
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
-      if (sess && S === sess) onParagraphEnd(sess);
+      if (sess && S === sess) { if (done) done(); else onParagraphEnd(sess); }
       return;
     }
     try {
@@ -243,108 +285,158 @@ var Tts = (function () {
       var fired = false;
       function fin() {
         if (fired) return; fired = true;
-        if (sess && S === sess) onParagraphEnd(sess);
+        if (sess && S === sess) { if (done) done(); else onParagraphEnd(sess); }
       }
       u.onend = fin;
       u.onerror = fin;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch (_) {
-      if (sess && S === sess) onParagraphEnd(sess);
+      if (sess && S === sess) { if (done) done(); else onParagraphEnd(sess); }
     }
   }
 
-  function startAudio(sess, url, text, params) {
+  // 播放一组的音频；组内用各段字数比例估算时间点，推进高亮 / 播放条「第 x/y 段」。
+  function startAudio(sess, url, group) {
     var audio;
     try { audio = new Audio(url); } catch (_) {
-      revoke(url); browserSpeak(sess, text, params, ''); return;
+      revoke(url); browserSpeakGroup(sess, group); return;
     }
     currentAudio = audio;
     var ended = false;
-    function cleanup() { if (ended) return; ended = true; revoke(url); }
+    function cleanup() { if (ended) return; ended = true; revoke(url); audio.ontimeupdate = null; }
+    audio.ontimeupdate = function () {
+      if (ended || S !== sess) return;
+      var dur = audio.duration;
+      if (!isFinite(dur) || dur <= 0) return;
+      var ratio = audio.currentTime / dur;
+      var acc = 0, total = group.total || 1, target = group.indices[0];
+      for (var k = 0; k < group.chars.length; k++) {
+        acc += group.chars[k];
+        target = group.indices[k];
+        if (ratio <= acc / total) break;
+      }
+      if (target !== sess.index) {
+        sess.index = target;
+        setHighlight(sess);
+        followTo(paraEls(sess.turn)[sess.index]);
+        refreshUI();
+      }
+    };
     audio.onended = function () {
       cleanup();
-      if (S === sess) { currentAudio = null; onParagraphEnd(sess); }
+      if (S === sess) { currentAudio = null; nextGroup(sess); }
     };
     audio.onerror = function () {
       cleanup();
-      if (S === sess) { currentAudio = null; browserSpeak(sess, text, params, ''); }
+      if (S === sess) { currentAudio = null; browserSpeakGroup(sess, group); }
     };
     if (!sess.paused) {
       try {
         var p = audio.play();
         if (p && p.catch) p.catch(function () {
-          if (!ended && S === sess) { cleanup(); currentAudio = null; browserSpeak(sess, text, params, ''); }
+          if (!ended && S === sess) { cleanup(); currentAudio = null; browserSpeakGroup(sess, group); }
         });
       } catch (_) {
-        if (!ended && S === sess) { cleanup(); currentAudio = null; browserSpeak(sess, text, params, ''); }
+        if (!ended && S === sess) { cleanup(); currentAudio = null; browserSpeakGroup(sess, group); }
       }
     }
   }
 
-  // 播放当前段：命中预取则直接用，否则请求 /api/tts；失败退回浏览器。
-  function azurePlay(sess, text, params, i) {
-    if (sess.prefetch && sess.prefetch.index === i && sess.prefetch.url) {
+  // Azure 不可用时的浏览器逐段兜底：一组内各段按顺序 speak。
+  function browserSpeakGroup(sess, group) {
+    var k = 0;
+    function step() {
+      if (S !== sess) return;
+      if (k >= group.segs.length) { nextGroup(sess); return; }
+      var seg = group.segs[k];
+      var idx = group.indices[k];
+      k += 1;
+      sess.index = idx;
+      setHighlight(sess);
+      followTo(paraEls(sess.turn)[idx]);
+      refreshUI();
+      browserSpeak(sess, seg.text, { voice: seg.voice, mood: seg.mood, pace: seg.pace, speed: seg.speed }, '', step);
+    }
+    step();
+  }
+
+  function nextGroup(sess) {
+    if (S !== sess) return;
+    sess.gi += 1;
+    if (sess.gi < sess.groups.length) playCurrent(sess);
+    else stop();
+  }
+
+  // 播放当前组：命中预取则直接用，否则一次请求 /api/tts（segments）；失败退回逐段浏览器。
+  function azurePlay(sess, group) {
+    if (sess.prefetch && sess.prefetch.gi === sess.gi && sess.prefetch.url) {
       var u = sess.prefetch.url;
       sess.prefetch = null;
-      startAudio(sess, u, text, params);
+      startAudio(sess, u, group);
       return;
     }
     var myGen = gen;
-    fetchAudioBlob(text, params, myGen, false).then(function (url) {
+    fetchGroupBlob(group, myGen, false).then(function (url) {
       if (S !== sess || myGen !== gen) { revoke(url); return; }
       if (!url || url === 'ABORT') {
-        if (url === null) browserSpeak(sess, text, params, '');
+        if (url === null) browserSpeakGroup(sess, group);
         return;
       }
-      startAudio(sess, url, text, params);
+      startAudio(sess, url, group);
     });
   }
 
-  // 播放当前段的同时预取下一段音频（仅 Azure、非成人、总开关开启）。
+  // 播放当前组的同时预取下一组音频（仅 Azure、非成人、总开关开启）。
   function prefetchNext(sess) {
     if (!ttsEnabled() || sess.turn.adult) return;
-    var next = sess.index + 1;
-    if (next >= sess.turn.paras.length) return;
-    if (sess.prefetch && sess.prefetch.index === next) return;
+    var nextGi = sess.gi + 1;
+    if (nextGi >= sess.groups.length) return;
+    var nextSegs = sess.groups[nextGi];
+    if (nextSegs.kind !== 'azure') return;
+    if (sess.prefetch && sess.prefetch.gi === nextGi) return;
     var myGen = gen;
-    fetchAudioBlob(sess.turn.paras[next], paramsForParagraph(sess.turn.hints, next), myGen, true)
-      .then(function (url) {
-        if (S !== sess || myGen !== gen || !url || url === 'ABORT') { revoke(url); return; }
-        sess.prefetch = { index: next, url: url };
-      });
+    fetchGroupBlob(nextSegs, myGen, true).then(function (url) {
+      if (S !== sess || myGen !== gen || !url || url === 'ABORT') { revoke(url); return; }
+      sess.prefetch = { gi: nextGi, url: url };
+    });
   }
 
+  // 播放当前组：定位到组首段、高亮、刷新播放条；Azure 组一次请求，browser 组逐段朗读。
   function playCurrent(sess) {
     if (S !== sess || sess.paused) return;
-    var i = sess.index;
-    var text = sess.turn.paras[i];
+    var group = sess.groups[sess.gi];
+    if (!group) { stop(); return; }
+    sess.index = group.indices[0];
     setHighlight(sess);
-    followTo(paraEls(sess.turn)[i]);
+    followTo(paraEls(sess.turn)[sess.index]);
     refreshUI();
-    if (text == null) { onParagraphEnd(sess); return; }
-    var params = sess.turn.previewParams || paramsForParagraph(sess.turn.hints, i);
-    speak(sess, text, params);
-    prefetchNext(sess); // 预取下一段，减少段间停顿
+    if (group.kind === 'browser') speak(sess, sess.turn.paras[sess.index], paramsFor(sess.index, sess.turn));
+    else azurePlay(sess, group);
+    prefetchNext(sess); // 预取下一组，减少组间停顿
   }
 
   function onParagraphEnd(sess) {
     if (S !== sess) return;
-    if (sess.index + 1 < sess.turn.paras.length) {
+    var group = sess.groups[sess.gi];
+    if (group && group.kind === 'browser' && sess.index + 1 <= group.indices[group.indices.length - 1]) {
       sess.index += 1;
-      playCurrent(sess);
-    } else {
-      stop(); // 播完自动收起播放条
+      setHighlight(sess);
+      followTo(paraEls(sess.turn)[sess.index]);
+      refreshUI();
+      speak(sess, sess.turn.paras[sess.index], paramsFor(sess.index, sess.turn));
+      return;
     }
+    nextGroup(sess);
   }
 
-  // 整回合开始：从第一段读到最后一段，按段落顺序排队；再点变暂停 / 继续。
+  // 整回合开始：先把段落打包成组，再从第一组读到最后一组；再点变暂停 / 继续。
   function startTurn(turn) {
     if (!ttsEnabled()) return;             // 总开关关闭：不播放、不预取、不请求音频
     if (!turn || !turn.paras || !turn.paras.length) return;
     stop();
     gen++;
-    S = { turn: turn, index: 0, paused: false, prefetch: null, follow: true, preview: !!turn.preview };
+    S = { turn: turn, index: 0, gi: 0, groups: buildGroups(turn), paused: false, prefetch: null, follow: true, preview: !!turn.preview };
     ensureBar();
     playCurrent(S);
   }
@@ -365,17 +457,12 @@ var Tts = (function () {
 
   function playNext() {
     if (!S) return;
-    gen++;                                  // 作废当前段 / 旧预取的异步回调
+    gen++;                                  // 作废当前组 / 旧预取的异步回调
     if (currentAudio) { try { currentAudio.pause(); } catch (_) {} currentAudio = null; }
     try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_) {}
     if (S.prefetch) { revoke(S.prefetch.url); S.prefetch = null; }
     S.paused = false;
-    if (S.index + 1 < S.turn.paras.length) {
-      S.index += 1;
-      playCurrent(S);
-    } else {
-      stop();
-    }
+    nextGroup(S);
   }
 
   // 整体停止：点「停止」、发送新行动、切换世界、离开页面、关闭总开关时调用。

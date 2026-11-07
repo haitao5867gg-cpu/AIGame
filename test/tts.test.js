@@ -46,12 +46,12 @@ function mkTts(dir, overrides, opts) {
 
 // ---------- buildSsml ----------
 
-test('buildSsml：XML 转义 <>&、句末插 250ms、省略号插 400ms', () => {
+test('buildSsml：XML 转义 <>&；不再强插句末 / 省略号停顿', () => {
   const s = tts.buildSsml({ text: 'A<B&C>"D"。……真的？', voice: 'zh-CN-YunxiNeural' });
   assert.ok(s.includes('A&lt;B&amp;C&gt;&quot;D&quot;。'), '文本需 XML 转义');
   assert.ok(!s.includes('<B'), '原始 < 不能残留');
-  assert.ok(s.includes('<break time="250ms"/>'), '。？！ 后插 250ms');
-  assert.ok(s.includes('<break time="400ms"/>'), '…… 处插 400ms');
+  assert.ok(!s.includes('<break time="250ms"/>'), '不再在句末强插 250ms');
+  assert.ok(!s.includes('<break time="400ms"/>'), '不再在省略号处插 400ms');
   assert.ok(s.includes('<voice name="zh-CN-YunxiNeural">'));
 });
 

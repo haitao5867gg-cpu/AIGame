@@ -11,14 +11,15 @@ const store = require('./store.js');
 const DEFAULT_VOICE = 'zh-CN-YunxiNeural';
 const CACHE_DIR_NAME = 'tts';
 const MB = 1024 * 1024;
-const TEXT_MAX_CHARS = 600; // 合成文本去空白后最多 600 字
+const TEXT_MAX_CHARS = 600; // 合成文本（或 segments 总字数）去空白后最多 600 字
+const MAX_SEGMENTS = 6;     // 一次 /api/tts 最多合并的段数
 
 // 音色表：旁白与 NPC 都从这里选。styles 只列确定 Azure 支持的情感风格；
 // 拿不准的少填，合成时若所选风格不在列表里会自动回退到纯 prosody。
 const VOICES = Object.freeze([
-  { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'm', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful', 'serious', 'whispering'] },
+  { id: 'zh-CN-YunxiNeural', name: '云希', gender: 'm', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful', 'serious', 'whispering', 'narration-relaxed'] },
   { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', gender: 'f', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful', 'gentle', 'affectionate'] },
-  { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'm', age: 'adult', styles: ['cheerful', 'sad', 'angry', 'serious'] },
+  { id: 'zh-CN-YunjianNeural', name: '云健', gender: 'm', age: 'adult', styles: ['cheerful', 'sad', 'angry', 'serious', 'narration-relaxed'] },
   { id: 'zh-CN-XiaoyiNeural', name: '晓伊', gender: 'f', age: 'young', styles: ['cheerful', 'sad', 'angry', 'fearful'] },
   { id: 'zh-CN-YunyangNeural', name: '云扬', gender: 'm', age: 'adult', styles: ['serious'] },
   { id: 'zh-CN-XiaochenNeural', name: '晓辰', gender: 'f', age: 'young', styles: ['cheerful', 'sad'] },
@@ -29,9 +30,10 @@ const VOICES = Object.freeze([
 const VOICE_MAP = Object.freeze(Object.fromEntries(VOICES.map((v) => [v.id, v])));
 
 // mood → 情感风格 + 语速增量（rate%，百分比）+ 音高增量（pitch%）。
-// calm 不用风格；mysterious 的 whispering 不支持时回退 prosody（rate -8% / pitch -3%）。
+// calm 用 narration-relaxed（音色支持时）避免云希的播报腔；不支持的音色自动回退纯 prosody。
+// mysterious 的 whispering 不支持时回退 prosody（rate -8% / pitch -3%）。
 const MOODS = Object.freeze({
-  calm: { style: null, rate: 0, pitch: 0 },
+  calm: { style: 'narration-relaxed', rate: 0, pitch: 0 },
   tense: { style: 'fearful', rate: 5, pitch: 0 },
   sad: { style: 'sad', rate: -10, pitch: 0 },
   joyful: { style: 'cheerful', rate: 5, pitch: 0 },
@@ -84,28 +86,53 @@ function escapeXml(s) {
     .replace(/'/g, '&apos;');
 }
 
-// 句末（。？！ / ? !）插 250ms；省略号「……」处插 400ms。
-function insertBreaks(escaped) {
-  let out = escaped.replace(/…+/g, '<break time="400ms"/>');
-  out = out.replace(/([。？！?!])/g, '$1<break time="250ms"/>');
-  return out;
-}
+const SPEAK_OPEN = '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="zh-CN">';
+const SEGMENT_BREAK = '<break time="350ms"/>';
 
-function ssmlFromNormalized(np, text) {
+// 单个段落的 SSML 内层：prosody [+ express-as]。不再往句末 / 省略号强插停顿，
+// 让音色自己断句；段与段之间的停顿由 buildSegmentsSsml 统一插入。
+function segmentInner(np, text) {
   const { ratePct, pitchPct, style } = prosodyFor(np);
-  const body = insertBreaks(escapeXml(text));
+  const body = escapeXml(text);
   let attrs = ` rate="${fmtPct(ratePct)}"`;
   if (pitchPct) attrs += ` pitch="${fmtPct(pitchPct)}"`;
   let inner = `<prosody${attrs}>${body}</prosody>`;
   if (style) inner = `<mstts:express-as style="${style}" styledegree="1.5">${inner}</mstts:express-as>`;
-  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="zh-CN"><voice name="${np.voice}">${inner}</voice></speak>`;
+  return inner;
 }
 
-// 纯函数：把参数 + 文本拼成 Azure 可接受的 SSML。
+// 把若干段拼成一个 SSML：连续同一 voice 的段放进同一个 <voice>，换说话人时另起
+// <voice>；每段各有自己的 express-as / prosody，段与段之间统一插一个 350ms 停顿。
+function buildSegmentsSsml(segs) {
+  const groups = [];
+  for (const seg of segs) {
+    const last = groups[groups.length - 1];
+    const inner = segmentInner(seg.np, seg.text);
+    if (last && last.voice === seg.np.voice) last.parts.push(inner);
+    else groups.push({ voice: seg.np.voice, parts: [inner] });
+  }
+  let body = '';
+  for (let g = 0; g < groups.length; g++) {
+    let voiceBody = '';
+    for (let k = 0; k < groups[g].parts.length; k++) {
+      if (g > 0 || k > 0) voiceBody += SEGMENT_BREAK;
+      voiceBody += groups[g].parts[k];
+    }
+    body += `<voice name="${groups[g].voice}">${voiceBody}</voice>`;
+  }
+  return `${SPEAK_OPEN}${body}</speak>`;
+}
+
+function normalizedSegments(p) {
+  if (Array.isArray(p.segments) && p.segments.length) {
+    return p.segments.map((s) => ({ np: normalizeParams(s), text: cleanText(s && s.text) }));
+  }
+  return [{ np: normalizeParams(p), text: cleanText(p.text) }];
+}
+
+// 纯函数：把参数 + 文本（或 segments 组）拼成 Azure 可接受的 SSML。
 function buildSsml(params) {
-  const p = params || {};
-  const np = normalizeParams(p);
-  return ssmlFromNormalized(np, cleanText(p.text));
+  return buildSegmentsSsml(normalizedSegments(params || {}));
 }
 
 // UTC+8 自然日键：把时间平移 +8h 后取 UTC 日期。
@@ -147,6 +174,12 @@ function createTts(cfg, dataDir, opts) {
 
   function hashFor(np, text) {
     const raw = `${np.voice}|${np.mood}|${np.pace}|${np.speed}|${text}`;
+    return crypto.createHash('sha1').update(raw, 'utf8').digest('hex');
+  }
+
+  // segments 组的缓存键：把整组每段的参数 + 文本都纳入，任一段变化即视为不同音频。
+  function hashForSegments(segs) {
+    const raw = 'segments|' + segs.map((s) => `${s.np.voice}|${s.np.mood}|${s.np.pace}|${s.np.speed}|${s.text}`).join('||');
     return crypto.createHash('sha1').update(raw, 'utf8').digest('hex');
   }
 
@@ -216,19 +249,14 @@ function createTts(cfg, dataDir, opts) {
     }
   }
 
-  async function synth(params) {
-    const p = params || {};
-    const np = normalizeParams(p);
-    const text = cleanText(p.text);
-    if (!text) throw { status: 400, expose: true, message: '文本为空' };
-    const playerId = p.playerId == null ? '' : String(p.playerId);
-    const hash = hashFor(np, text);
+  // 真正的合成：segs 为归一化后的段组，chars 为总字数，hash 为整组缓存键。
+  async function performSynth(segs, chars, hash, playerId) {
     const file = cachePath(hash);
 
     // 命中缓存：直接返回音频，记一条 cached 用量，不再请求 Azure、也不计字数。
     if (fs.existsSync(file)) {
       const audio = fs.readFileSync(file);
-      recordUsage({ ts: now(), kind: 'tts', voice: np.voice, chars: 0, cached: true, ms: 0, ok: true });
+      recordUsage({ ts: now(), kind: 'tts', voice: segs[0].np.voice, chars: 0, cached: true, ms: 0, ok: true });
       return audio;
     }
 
@@ -238,7 +266,6 @@ function createTts(cfg, dataDir, opts) {
     }
     if (!isConfigured()) throw { status: 503, expose: true, message: '朗读服务未配置' };
 
-    const chars = text.length;
     // 月度额度（F0 免费 50 万/月）：按 UTC 月统计，达到 stopAt 即停用 Azure，下月自动恢复。
     if (usedCharsThisMonth(now()) >= monthlyStopAt) {
       throw { status: 503, expose: true, fallback: true, message: '本月朗读额度已用完，已改用浏览器朗读' };
@@ -248,7 +275,7 @@ function createTts(cfg, dataDir, opts) {
       throw { status: 429, expose: true, message: '今日朗读字数已达上限' };
     }
 
-    const ssml = ssmlFromNormalized(np, text);
+    const ssml = buildSegmentsSsml(segs);
     const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
     const t0 = now();
     let resp;
@@ -278,8 +305,25 @@ function createTts(cfg, dataDir, opts) {
       fs.writeFileSync(file, audio);
     } catch (_) { /* 写缓存失败仍返回本次音频 */ }
     pruneCache(`${hash}.mp3`);
-    recordUsage({ ts: now(), kind: 'tts', voice: np.voice, chars, cached: false, ms: now() - t0, ok: true });
+    recordUsage({ ts: now(), kind: 'tts', voice: segs[0].np.voice, chars, cached: false, ms: now() - t0, ok: true });
     return audio;
+  }
+
+  async function synth(params) {
+    const p = params || {};
+    const playerId = p.playerId == null ? '' : String(p.playerId);
+    const isGroup = Array.isArray(p.segments) && p.segments.length > 0;
+    if (isGroup && p.segments.length > MAX_SEGMENTS) {
+      throw { status: 400, expose: true, message: `段落过多（最多 ${MAX_SEGMENTS} 段）` };
+    }
+    const segs = normalizedSegments(p);
+    const chars = segs.reduce((n, s) => n + s.text.length, 0); // 字数按整组总字数算
+    if (!chars) throw { status: 400, expose: true, message: '文本为空' };
+    if (isGroup && chars > TEXT_MAX_CHARS) {
+      throw { status: 400, expose: true, message: `总字数超过 ${TEXT_MAX_CHARS}` };
+    }
+    const hash = isGroup ? hashForSegments(segs) : hashFor(segs[0].np, segs[0].text);
+    return performSynth(segs, chars, hash, playerId);
   }
 
   return { synth, buildSsml, isConfigured, pruneCache, monthUsage, todayChars, VOICES, MOODS, DEFAULT_VOICE };
