@@ -9,9 +9,30 @@ const env = require('../src/env.js');
 const store = require('../src/store.js');
 const engine = require('../src/engine.js');
 const prompts = require('../src/prompts.js');
+const llm = require('../src/llm.js');
 const game = require('../src/game.js');
 
 const SECRET = 'sk-GAME-MOCK-SECRET';
+
+// 拦截 llm.createClient，记录每次调用实际传入的 messages（不改返回值），
+// 用于断言「实际回合 prompt」里是否拿到恢复后的正文尾部。测试结束自动还原。
+function spyOnLlmMessages(t) {
+  const captured = [];
+  const orig = llm.createClient;
+  llm.createClient = function (...args) {
+    const client = orig.apply(this, args);
+    for (const name of ['complete', 'completeStream']) {
+      const fn = client[name];
+      client[name] = function (opts, ...rest) {
+        if (opts && Array.isArray(opts.messages)) captured.push(opts.messages);
+        return fn.call(this, opts, ...rest);
+      };
+    }
+    return client;
+  };
+  t.after(() => { llm.createClient = orig; });
+  return captured;
+}
 
 // 每个测试用独立临时 DATA_DIR；显式设置 LLM_MOCK=1 / DATA_DIR，
 // 再经 env.getConfig() 读取（process.env 优先级高于任何 .env 文件）。
@@ -466,7 +487,8 @@ test('新一世开场：重生写入 recent / events.jsonl / 公开 log，响应
   const internal = store.loadWorld(dataDir, id);
   const last = internal.recent[internal.recent.length - 1];
   assert.equal(last.rebirthOpening, true);
-  assert.equal(last.narration, rb.rebirthOpening.slice(0, 300));
+  // recent 与正常回合共用 NARRATION_MAX 边界，开场正文完整保留（开场本身 ≤300 字）。
+  assert.equal(last.narration, rb.rebirthOpening.slice(0, engine.NARRATION_MAX));
   assert.equal(internal.rebirthOpening, rb.rebirthOpening);
 
   // events.jsonl：一条带 rebirthOpening 标记的公开记录
@@ -794,4 +816,218 @@ test('撤回日志过滤：undo 标记及其前一条同回合记录被跳过，
   assert.ok(vis.every((e) => e.type !== 'undo'), 'undo 标记本身不应出现');
   // 撤回发生时尚无重来回合：取最近一条同回合记录
   assert.equal(game.lastTurnAction(events.slice(0, 3), 2), 'a2');
+});
+
+// ---------- 旧存档 recent 正文恢复（纯函数 restoreRecentNarration + 编排层） ----------
+
+test('恢复：300 字 recent 从完整可见事件补回尾部，只改 narration、不带内部字段、纯函数', () => {
+  const full = '甲'.repeat(300) + '，阶前人影压低声音报出暗号ZQ7。';
+  const truncated = full.slice(0, 300);
+  const state = { turn: 1, recent: [{ turn: 1, action: '入外门', narration: truncated }], other: 42 };
+  const before = JSON.stringify(state);
+  const events = [
+    {
+      turn: 1, action: '入外门', narration: full,
+      raw: 'x', proposal: { narration: full }, applied: {}, rejected: [],
+      apex: {}, twist: 't', usage: { prompt_tokens: 1, completion_tokens: 1 },
+    },
+  ];
+  const out = game.restoreRecentNarration(state, events);
+  assert.equal(out.recent[0].narration, full);
+  assert.ok(out.recent[0].narration.includes('暗号ZQ7'), '尾部独特人影/对话已补回');
+  // 只替换现有条目的 narration：不增删条目、不引入 raw/proposal/apex/用量等内部字段。
+  assert.equal(out.recent.length, 1);
+  assert.deepEqual(Object.keys(out.recent[0]).sort(), ['action', 'narration', 'turn']);
+  assert.equal(out.other, 42);
+  assert.equal(JSON.stringify(state), before, '纯函数，不改入参');
+});
+
+test('恢复：同回合号撤回又重写、原行动相同，只认当前可见记录，不复活撤回正文', () => {
+  const mk = (tail) => '甲'.repeat(300) + tail;
+  const oldFull = mk('【撤回旧版收尾OLD】');
+  const newFull = mk('【可见新版收尾NEW】');
+  const events = [
+    { turn: 1, action: '探查', narration: 'n1' },
+    { turn: 2, action: '同行动', narration: oldFull }, // 被撤回 → visibleEventRecords 隐藏
+    { type: 'undo', undoneTurn: 2, ts: 1 },
+    { turn: 2, action: '同行动', narration: newFull }, // 当前可见版本
+  ];
+  const state = {
+    turn: 2,
+    recent: [
+      { turn: 1, action: '探查', narration: 'n1' },
+      { turn: 2, action: '同行动', narration: newFull.slice(0, 300) },
+    ],
+  };
+  const out = game.restoreRecentNarration(state, events);
+  assert.equal(out.recent[1].narration, newFull, '只恢复当前可见版本');
+  assert.ok(out.recent[1].narration.includes('可见新版收尾NEW'));
+  assert.equal(out.recent[1].narration.includes('撤回旧版收尾OLD'), false, '不复活撤回正文');
+
+  // 撤回后未重走：被撤回记录不可见，截断正文不复活为完整撤回正文。
+  const noRewrite = game.restoreRecentNarration(
+    { turn: 2, recent: [{ turn: 2, action: 'X', narration: oldFull.slice(0, 300) }] },
+    [
+      { turn: 1, action: 'a', narration: 'n1' },
+      { turn: 2, action: 'X', narration: oldFull },
+      { type: 'undo', undoneTurn: 2, ts: 1 },
+    ],
+  );
+  assert.equal(noRewrite.recent[0].narration, oldFull.slice(0, 300), '无可见匹配则沿用原记录');
+  assert.equal(noRewrite.recent[0].narration.includes('撤回旧版收尾OLD'), false);
+});
+
+test('恢复：同回合号的重生开场与上一世尾回合不串文（turn+action+rebirthOpening 区分）', () => {
+  const prevFull = '尾'.repeat(300) + '【上一世尾标记T】';
+  const openFull = '开'.repeat(300) + '【开场标记K】';
+  const events = [
+    { turn: 5, action: '奋力一搏', narration: prevFull },                    // 上一世尾回合
+    { turn: 5, action: '', narration: openFull, rebirthOpening: true },     // 重生开场（同一 turn）
+  ];
+  const state = {
+    turn: 5,
+    recent: [
+      { turn: 5, action: '奋力一搏', narration: prevFull.slice(0, 300) },
+      { turn: 5, action: '', narration: openFull.slice(0, 300), rebirthOpening: true },
+    ],
+  };
+  const out = game.restoreRecentNarration(state, events);
+  assert.equal(out.recent[0].narration, prevFull);
+  assert.ok(out.recent[0].narration.includes('上一世尾标记T'));
+  assert.equal(out.recent[0].narration.includes('开场标记K'), false, '尾回合不串入开场正文');
+  assert.equal(out.recent[1].narration, openFull);
+  assert.ok(out.recent[1].narration.includes('开场标记K'));
+  assert.equal(out.recent[1].narration.includes('上一世尾标记T'), false, '开场不串入上一世尾正文');
+  assert.equal(out.recent[1].rebirthOpening, true);
+});
+
+test('恢复：前缀不匹配 / 缺日志 / 缺字段 / 无匹配均沿用原记录，不增删条目', () => {
+  const narration = '完全不相关的前缀'.repeat(20).slice(0, 300);
+  const mk = () => ({ turn: 1, recent: [{ turn: 1, action: 'X', narration }], other: 42 });
+
+  // 前缀不匹配：完整正文不以现有正文开头 → 不强行替换。
+  const mismatch = game.restoreRecentNarration(mk(), [
+    { turn: 1, action: 'X', narration: '甲'.repeat(300) + '新剧情' },
+  ]);
+  assert.equal(mismatch.recent[0].narration, narration);
+  assert.equal(mismatch.recent.length, 1);
+
+  // 缺日志：空数组 / null / undefined 都不报错、不改记录。
+  for (const ev of [[], null, undefined]) {
+    const out = game.restoreRecentNarration(mk(), ev);
+    assert.equal(out.recent[0].narration, narration);
+    assert.equal(out.recent.length, 1);
+    assert.equal(out.other, 42);
+  }
+
+  // 缺字段：事件缺 narration / 缺 turn / 缺 action → 不构成可见匹配。
+  const missing = game.restoreRecentNarration(mk(), [
+    { turn: 1, action: 'X' },
+    { action: 'X', narration: '甲'.repeat(300) + '尾' },
+    { turn: 1, narration: '甲'.repeat(300) + '尾' },
+  ]);
+  assert.equal(missing.recent[0].narration, narration);
+
+  // 无匹配：事件属于别的回合。
+  const nomatch = game.restoreRecentNarration(mk(), [
+    { turn: 9, action: 'X', narration: '甲'.repeat(300) + '尾' },
+  ]);
+  assert.equal(nomatch.recent[0].narration, narration);
+});
+
+test('恢复：结果维持 6×1200 硬上限，不凭空增加旧回合', () => {
+  // 事件正文本身超过 1200：恢复时截到 RECENT_NARRATION_MAX。
+  const tooLong = '甲'.repeat(1500) + '【超长尾】';
+  const one = game.restoreRecentNarration(
+    { turn: 1, recent: [{ turn: 1, action: 'X', narration: tooLong.slice(0, 300) }] },
+    [{ turn: 1, action: 'X', narration: tooLong }],
+  );
+  assert.equal(one.recent[0].narration.length, engine.RECENT_NARRATION_MAX);
+  assert.ok(one.recent[0].narration.startsWith(tooLong.slice(0, 300)));
+
+  // 8 条 recent → 裁到最近 6 条，不新增条目。
+  const many = {
+    turn: 8,
+    recent: Array.from({ length: 8 }, (_, i) => ({
+      turn: i + 1, action: `a${i}`, narration: '甲'.repeat(300),
+    })),
+  };
+  const events = many.recent.map((r) => ({
+    turn: r.turn, action: r.action, narration: r.narration + '【补回尾】',
+  }));
+  const capped = game.restoreRecentNarration(many, events);
+  assert.equal(capped.recent.length, engine.RECENT_MAX);
+  assert.equal(capped.recent[0].turn, 3);
+  assert.equal(capped.recent[5].turn, 8);
+  for (const r of capped.recent) {
+    assert.ok(r.narration.length <= engine.RECENT_NARRATION_MAX);
+    assert.ok(r.narration.includes('补回尾'), '被截条目已补回完整正文');
+  }
+});
+
+// ---------- 旧存档正文恢复：takeTurn 集成 ----------
+
+test('旧存档恢复：实际回合 prompt 拿到 300 字外的独特收尾，读状态不写盘、不带内部字段', async (t) => {
+  const captured = spyOnLlmMessages(t);
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '外门杂役录', name: '杂役', appearance: '布衣' });
+  const id = world.id;
+
+  // 旧存档：recent 被截成 300 字、尾部人影暗号丢失；events.jsonl 有完整正文及内部字段。
+  const full = '杂'.repeat(300) + '，只见阶前立着一道人影，压低声音报出暗号ZQ7才肯放行。';
+  const truncated = full.slice(0, 300);
+  const state = store.loadWorld(dataDir, id);
+  state.turn = 1;
+  state.nextEventTurn = 999;
+  state.recent = [{ turn: 1, action: '入外门', narration: truncated }];
+  store.saveWorld(dataDir, state);
+  store.appendEvent(dataDir, id, {
+    turn: 1, life: 1, action: '入外门', narration: full,
+    raw: '{"internal":"raw"}', proposal: { narration: full }, applied: { narration: full },
+    rejected: [], apex: { title: '内部' }, twist: '旧识出现',
+    usage: { prompt_tokens: 100, completion_tokens: 50 }, ts: 1,
+  });
+
+  // 普通读不改磁盘（恢复只在拼提示词前发生、且不写盘）。
+  const diskBefore = JSON.stringify(store.loadWorld(dataDir, id));
+  await g.getWorld(id);
+  assert.equal(JSON.stringify(store.loadWorld(dataDir, id)), diskBefore, '普通读不写回磁盘');
+
+  const res = await g.takeTurn(id, { action: '继续追问人影' });
+  assert.equal(res.state.turn, 2);
+  assertNoLeak(res);
+
+  // 实际发给模型的 messages 里出现「300 字之外」的独特收尾。
+  const promptText = captured.flat().map((m) => String((m && m.content) || '')).join('\n');
+  assert.ok(promptText.includes('暗号ZQ7'), '实际回合 prompt 应能拿到尾部独特人物/对话');
+  assert.ok(promptText.includes(truncated), '原有 300 字前缀仍在');
+
+  // 恢复后的完整 recent 随本回合正常落库自然沿用；不引入内部字段。
+  const after = store.loadWorld(dataDir, id);
+  const r1 = after.recent.find((r) => r.turn === 1);
+  assert.equal(r1.narration, full, '磁盘 recent 已恢复为完整正文');
+  for (const key of ['raw', 'proposal', 'applied', 'rejected', 'apex', 'twist', 'usage']) {
+    assert.equal(key in r1, false, `recent 条目不应带内部字段 ${key}`);
+  }
+  // 恢复只读不写盘：旧日志记录未被改写，events.jsonl 仅追加第 2 回合。
+  const events = store.readEvents(dataDir, id);
+  assert.equal(events[0].narration, full, '旧事件记录不被恢复流程改写');
+  assert.equal(events.length, 2);
+});
+
+test('旧存档恢复：缺 events.jsonl 时 takeTurn 正常继续，沿用原截断记录、不破坏流程', async (t) => {
+  const { g, dataDir } = makeGame(t);
+  const world = await g.buildWorld({ seed: '雾港', name: '甲', appearance: '乙' });
+  const id = world.id;
+  const state = store.loadWorld(dataDir, id);
+  state.turn = 1;
+  state.nextEventTurn = 999;
+  state.recent = [{ turn: 1, action: 'X', narration: '甲'.repeat(300) }];
+  store.saveWorld(dataDir, state);
+  // 故意不写 events.jsonl：恢复读到空日志，沿用原记录、绝不抛错。
+  const res = await g.takeTurn(id, { action: '继续' });
+  assert.equal(res.state.turn, 2);
+  assertNoLeak(res);
+  const after = store.loadWorld(dataDir, id);
+  assert.equal(after.recent[0].narration, '甲'.repeat(300), '无匹配则沿用原 300 字记录');
 });

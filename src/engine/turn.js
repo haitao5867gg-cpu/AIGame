@@ -130,7 +130,8 @@ function resolveTurn(state, input, opts) {
     death = d.death;
   }
 
-  // 最近 6 回合，narration 截 300 字
+  // 最近 6 回合，每条保留引擎已接纳的完整正文（上限 RECENT_NARRATION_MAX = NARRATION_MAX）。
+  // applied.narration 已由 validateProposal 截到 NARRATION_MAX，这里再切一次只作同边界兜底。
   s.recent.push({ turn: nextTurn, action, narration: applied.narration.slice(0, RECENT_NARRATION_MAX) });
   if (s.recent.length > RECENT_MAX) s.recent = s.recent.slice(-RECENT_MAX);
 

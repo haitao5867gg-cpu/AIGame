@@ -430,3 +430,66 @@ test('建世界 prompt：要求 start.facts 给 2~3 条关键时间/规则事实
   assert.match(system.content, /≤30 字/);
   assert.match(system.content, /不得改写/);
 });
+
+// ---------- 首次出场 / 续回合：通用叙事规则（覆盖所有回合，不只第一幕）----------
+
+test('首次出场与续回合：非首回合也注入通用规则，并保留玩家行动 / 原地点 / 未完收尾', () => {
+  const state = makeState();
+  state.turn = 3;
+  state.location = '灰烬港';
+  state.clock = { day: 2, period: '黄昏' };
+  // 上一回合停在一句没说完的话上（未完收尾），本回合玩家留在原地把话等完。
+  state.recent = [
+    { turn: 3, action: '等对方开口', narration: '那人停在两步外，像是在等你说下去，话还没问出口。' },
+  ];
+  const action = '先不急着动，等他把话说完';
+  const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 4 }, action, { style: 'v2' });
+  const c = system.content;
+  const all = c + '\n' + user.content;
+
+  // 非首回合：不出现第一幕段，规则来自通用条款（证明「不只第一幕」）。
+  assert.doesNotMatch(c, /这是第一幕/);
+  // 首次出场：后台设定 ≠ 玩家已被告知；重要新要素第一次进正文要顺带交代。
+  assert.match(c, /不等于玩家已经被告知/);
+  assert.match(c, /人物、地标、物件/);
+  assert.match(c, /第一次写进叙事/);
+  assert.match(c, /从玩家视角/);
+  assert.match(c, /悬念可以留住身份与动机/);
+  // 续回合：承接上一回合末尾，新细节不能写成旧事，不复读全部设定。
+  assert.match(c, /续回合/);
+  assert.match(c, /承接上一回合末尾/);
+  assert.match(c, /还没向玩家交代过/);
+  assert.match(c, /复述一遍/);
+  // 玩家意图优先：不因承接而改写玩家行动，既有护栏仍在。
+  assert.match(c, /以玩家为准/);
+  assert.match(c, /玩家意图优先/);
+  assert.match(c, /时与地/);
+  // 玩家行动、原地点、上一回合未完收尾都完整保留，未被新规则强行转场 / 改写。
+  assert.ok(user.content.includes(action), '玩家本回合行动应原样保留');
+  assert.match(all, /灰烬港/);
+  assert.match(all, /第2日 黄昏/);
+  assert.ok(user.content.includes('等你说下去') || user.content.includes('话还没问出口'),
+    '上一回合未完收尾应作为最近记录保留');
+  // 不把具体案例写进通用提示词。
+  assert.doesNotMatch(c, /铜铃|外门杂役录/);
+});
+
+test('首次出场与续回合：首回合仍给「这是第一幕」，但同义要求只注入一次', () => {
+  const state = makeState();
+  state.turn = 0; // 第一幕
+  const [system] = prompts.buildTurnMessages(state, { nextTurn: 1 }, '打量四周', { style: 'v1' });
+  const c = system.content;
+  // 第一幕段仍在（prologue 衔接），但只负责接住序章「此刻」。
+  assert.match(c, /这是第一幕/);
+  assert.match(c, /序章/);
+  // 通用条款在首回合同样生效。
+  assert.match(c, /不等于玩家已经被告知/);
+  assert.match(c, /第一次写进叙事/);
+  assert.match(c, /续回合/);
+  // 旧版只覆盖第一幕的同义指令已移除，避免开局两段雷同。
+  assert.doesNotMatch(c, /首次出现的人和地方要带一句交代/);
+  assert.doesNotMatch(c, /突兀地丢出陌生名词/);
+  // 核心锚点在整段 system 里各只出现一次（不与第一幕或其它段落重复注入）。
+  assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1);
+  assert.equal((c.match(/第一次写进叙事/g) || []).length, 1);
+});

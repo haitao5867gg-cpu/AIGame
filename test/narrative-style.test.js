@@ -79,3 +79,27 @@ test('opts.style 能覆盖配置', () => {
   assert.ok(sOverV2.includes('写作手法'));
   assert.ok(!sOverV2.includes('需要玩家决断的具体局面'));
 });
+
+test('首次出场 / 续回合通用规则：v1/v2/v2-3p 都注入且各只一份，不破坏各自写法', () => {
+  // systemText 用 turn=1 的状态：非首回合，规则必须仍来自通用条款而非第一幕段。
+  for (const style of ['v1', 'v2', 'v2-3p']) {
+    const c = systemText({ style });
+    assert.match(c, /不等于玩家已经被告知/, `${style} 应含「后台设定≠玩家已知」`);
+    assert.match(c, /第一次写进叙事/, `${style} 应含首次出场交代`);
+    assert.match(c, /承接上一回合末尾/, `${style} 应含续回合承接`);
+    assert.match(c, /以玩家为准/, `${style} 应保留玩家意图优先兜底`);
+    assert.doesNotMatch(c, /这是第一幕/, `${style} 非首回合不应有第一幕段`);
+    // 单份注入：核心锚点各出现一次（不与第一幕或其它段落重复）。
+    assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1, `${style} 不应重复注入同义要求`);
+    assert.equal((c.match(/续回合默认承接/g) || []).length, 1, `${style} 续写条款只出现一次`);
+    // 各风格原有写法没有被改动。
+    if (style === 'v1') {
+      assert.match(c, /需要玩家决断/);
+      assert.ok(!c.includes('写作手法'));
+    } else {
+      assert.match(c, /写作手法/);
+      assert.ok(!c.includes('需要玩家决断的具体局面'));
+    }
+    if (style === 'v2-3p') assert.match(c, /第三人称（用主角名字）/);
+  }
+});

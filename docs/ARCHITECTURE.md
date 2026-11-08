@@ -198,6 +198,8 @@ API 核心 / 流式
 8. **出图**：`server.js` 在写库后、锁外 `triggerImages` / `triggerScene` 异步排队。`images.js` 的 `listForState` 汇总主角 + 当前物品 + NPC，`imageKey` 生成共享缓存键，`createImages` 按 `IMAGE_PROVIDER` 回退链逐家尝试（失败冷却后排到最后）；提示词由 `gatewayPrompt` / `localPrompt` / `scenePromptZh` / `scenePromptEn` 生成并译英文，画风缓存 `styles.json`、结果缓存 `index.json`；场景图由 `collectRefs` 收集 ≤4 张已就绪参考图（主角、≤2 NPC、≤1 物品）走多参考图模型，失败落回文生图。Cloudflare 当日 Neurons 达 `CLOUDFLARE_RESERVE_FROM` 后，物品 / 头像 / 主角让给回退链下一家、把额度留给场景图；收到 `daily free allocation` 429 冷却到下一个 UTC 零点。
 9. **朗读**：前端 `public/js/tts.js` 按 `voice_hints` 把整回合分段排队；服务端 `tts.js` 的 `buildSsml` / `buildSegmentsSsml` / `segmentInner` 把参数与文本拼成 Azure SSML（`prosody` + `express-as` + `voice`），`/api/tts` 返回 mp3，音频缓存在 `tts/`。每人每日字符上限、Azure 月度额度达停用阈值后回退浏览器 `speechSynthesis`；成人段落只走浏览器朗读。
 
+**近期正文完整保留与旧存档兼容**：`state.recent` 恒为最近 6 条，每条保留引擎已接纳的完整正文，上限 `RECENT_NARRATION_MAX = NARRATION_MAX = 1200`（`engine/constants.js` 中两处上限绑定，避免漂移）；`engine/turn.js` 的 `resolveTurn` 与 `engine/life.js` 的 `applyRebirthOpening` 共用该边界。`events.jsonl` 一直记录完整正文，因此旧存档（正文被截成 300 字）可在编排层补回：`game.js` 的 `restoreRecentNarration(state, events)` 是纯函数，以 `turn + action + rebirthOpening` 匹配、复用 `visibleEventRecords` 的撤回语义（只认当前可见记录、不复活撤回正文）、仅当完整正文以现有前缀开头才替换，并维持 `6×1200` 硬上限、不引入 `raw / proposal / apex / usage` 等内部字段。文件 IO 放在 `maybeRestoreRecent`，仅在 `takeTurn` 拼提示词前、且检测到 300 字疑似截断条目时读一次本世界日志；恢复只读不写盘，完整 `recent` 随本回合正常落库自然沿用。普通读（`getWorld` / `/log` / `export`）不触发扫描；缺日志 / 无匹配 / 异常均沿用原记录、不阻断流程。
+
 ## 5. 「提示词在哪改」速查
 
 | 想改什么 | 文件 | 函数 / 常量 |

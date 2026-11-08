@@ -48,7 +48,9 @@ const ITEM_INFO_TYPE_MAX = 6;
 const NARRATION_MIN = 10;
 const NARRATION_MAX = 1200;
 const RECENT_MAX = 6;
-const RECENT_NARRATION_MAX = 300;
+// recent 每条保留引擎已接纳的完整正文，上限直接与 NARRATION_MAX 绑定，
+// 避免「叙事 1200 / recent 只留 300」两处上限各自漂移、再次截断尾部正文。
+const RECENT_NARRATION_MAX = NARRATION_MAX;
 const CHRONICLE_MAX = 300;
 const PERSONA_INIT = 50;
 const PERSONA_REGRESSION = 0.2;

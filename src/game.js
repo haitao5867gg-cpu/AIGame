@@ -209,6 +209,85 @@ function lastTurnAction(events, undoneTurn) {
   return '';
 }
 
+// 老存档把 recent 每条正文固定截到 300 字，这个长度是「可能被截断、需补回」的轻量判据。
+// 它是旧 RECENT_NARRATION_MAX 的历史值，已不再是当前上限；新引擎落库的是完整正文（≤1200），
+// 命中 300 的概率很低，因此恢复一轮、后续回合正常落库后基本不再需要读日志。
+const LEGACY_RECENT_NARRATION_MAX = 300;
+
+// 把 state.recent 里被旧版截短的正文，从本世界「可见」事件记录补回完整长度。
+// 纯函数：events 由调用方读入，不碰文件 IO、不改入参；无变化时返回原 state 引用。
+//  - 只改现有 recent 条目的 narration，绝不增删条目、不改其它字段、不凭空造剧情 / 数值。
+//  - 匹配签名 = turn + action + rebirthOpening：区分正常回合 / 重生开场，避免把同一回合号的
+//    重生开场与上一世尾回合串文；用 visibleEventRecords 复用现有撤回语义，同回合号被撤回
+//    又重写时只认「当前可见」的记录，绝不复活撤回正文。
+//  - 仅当完整正文以现有（截断）正文为前缀时才替换，不匹配则沿用原记录。
+//  - 结果与当前引擎边界一致：每条 ≤ RECENT_NARRATION_MAX、最多 RECENT_MAX 条（6×1200 硬上限）。
+function restoreRecentNarration(state, events) {
+  const s = state;
+  const recent = s && Array.isArray(s.recent) ? s.recent : null;
+  if (!recent || recent.length === 0) return s;
+
+  let visible;
+  try {
+    // visibleEventRecords 已隐藏 undo 标记及其前一条被撤回记录；这里再过滤出有正文的记录。
+    visible = visibleEventRecords(events).filter(
+      (e) => e && typeof e.narration === 'string' && e.narration.length > 0,
+    );
+  } catch (_) {
+    return s;
+  }
+
+  let changed = false;
+  const next = recent.map((r) => {
+    if (!r || typeof r !== 'object' || typeof r.narration !== 'string') return r;
+    let narration = r.narration;
+    // 仅对「看起来被截断」的条目尝试补回；已完整（或本就 ≥ 上限）的条目不动。
+    if (visible.length && narration && narration.length < engine.RECENT_NARRATION_MAX) {
+      const sigAction = typeof r.action === 'string' ? r.action : '';
+      const sigOpening = r.rebirthOpening === true;
+      let match = null;
+      for (const e of visible) {
+        if (e.turn !== r.turn) continue;
+        if ((typeof e.action === 'string' ? e.action : '') !== sigAction) continue;
+        if ((e.rebirthOpening === true) !== sigOpening) continue;
+        match = e; // 取最后一条可见匹配 = 当前版本（撤回重写后即新版本）
+      }
+      if (match && match.narration.length > narration.length
+          && match.narration.startsWith(narration)) {
+        narration = match.narration;
+      }
+    }
+    const capped = narration.slice(0, engine.RECENT_NARRATION_MAX);
+    if (capped === r.narration) return r;
+    changed = true;
+    return Object.assign({}, r, { narration: capped });
+  });
+
+  // 最多保留最近 RECENT_MAX 条（只裁掉超出的最旧条目，不新增）。
+  const cappedRecent = next.length > engine.RECENT_MAX ? next.slice(-engine.RECENT_MAX) : next;
+  if (cappedRecent !== next) changed = true;
+  if (!changed) return s;
+  return Object.assign({}, s, { recent: cappedRecent });
+}
+
+// 编排层：只在「执行一回合、拼提示词前」做一次轻量恢复；普通读（getWorld / log / export）
+// 不经过这里，不会为了恢复去扫整个世界日志。缺日志 / 读失败 / 无匹配都退回原 state，
+// 绝不写回磁盘（完整 recent 会在本回合正常落库时自然沿用）。
+function maybeRestoreRecent(dataDir, worldId, state) {
+  try {
+    const recent = state && Array.isArray(state.recent) ? state.recent : [];
+    const needs = recent.some(
+      (r) => r && typeof r.narration === 'string'
+        && r.narration.length === LEGACY_RECENT_NARRATION_MAX,
+    );
+    if (!needs) return state;
+    const events = store.readEvents(dataDir, worldId);
+    return restoreRecentNarration(state, events);
+  } catch (_) {
+    return state; // 恢复失败绝不破坏现有读存档 / 回合流程
+  }
+}
+
 function createGame(cfg, dataDir) {
   const client = llm.createClient(cfg, dataDir);
   const turnModel = cfg.LLM_MODEL;
@@ -546,11 +625,14 @@ function createGame(cfg, dataDir) {
   async function takeTurn(worldId, input, onDelta) {
     store.assertWorldId(worldId);
     return store.withWorldLock(worldId, async () => {
-      const state = loadState(worldId);
+      let state = loadState(worldId);
       if (!state) throw httpError(404, '世界不存在或已被移入回收站');
       if (!engine.canTakeTurn(state)) {
         throw httpError(409, '本世已终，请先提交重生（POST /rebirth）');
       }
+      // 老存档兼容：仅在本回合、拼提示词前把被截短的 recent 正文从本世界事件日志补回。
+      // 普通读不经过此处；恢复只读不写盘，本回合正常落库时自然沿用完整 recent。
+      state = maybeRestoreRecent(dataDir, worldId, state);
       const action = typeof (input && input.action) === 'string' ? input.action : '';
       const rng = Math.random;
       const now = Date.now();
@@ -811,6 +893,7 @@ module.exports = {
   createGame, HttpError, httpError,
   chapterEventWindow, badgesFromApplied, toPublicLogRecord,
   visibleEventRecords, lastTurnAction,
+  restoreRecentNarration, maybeRestoreRecent, LEGACY_RECENT_NARRATION_MAX,
   templateEpitaph, epitaphFromParsed,
   templateRebirthOpening, openingFromParsed, rebirthInfo,
   REBIRTH_OPENING_MIN, REBIRTH_OPENING_MAX,

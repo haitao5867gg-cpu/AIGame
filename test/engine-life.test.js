@@ -200,18 +200,41 @@ test('编年史：turn % 20 == 0 压一章，≤300 字', () => {
   assert.equal(without.state.chronicle.length, 0);
 });
 
-test('recent：只保留最近 6 条，narration 截 300 字', () => {
+test('recent：只保留最近 6 条，每条保留引擎已接纳的完整正文（含 572 / 1200 字独特收尾）', () => {
   const s = makeState();
   s.nextEventTurn = 999;
+  const lengths = [400, 400, 572, 1200, 400, 400, 400, 400];
+  const bodies = [];
   let cur = s;
   for (let i = 0; i < 8; i++) {
-    cur = run(cur, { action: `a${i}`, proposal: proposal({ narration: '长'.repeat(400) }) }, () => 0.5, i).state;
+    const tail = `#第${i}回合独尾#`;
+    const body = '叙'.repeat(lengths[i] - tail.length) + tail;
+    bodies.push(body);
+    cur = run(cur, { action: `a${i}`, proposal: proposal({ narration: body }) }, () => 0.5, i).state;
   }
   assert.equal(cur.turn, 8);
   assert.equal(cur.recent.length, 6);
   assert.equal(cur.recent[0].turn, 3);
   assert.equal(cur.recent[5].turn, 8);
-  assert.equal(cur.recent[5].narration.length, 300);
+  // 只留最近 6 条（turn 3~8）；每条正文与独特收尾都完整，不再被 300 字截断。
+  for (let k = 0; k < 6; k++) {
+    const i = k + 2;
+    assert.equal(cur.recent[k].turn, i + 1);
+    assert.equal(cur.recent[k].narration, bodies[i], `第 ${i + 1} 回合正文应完整保留`);
+    assert.ok(cur.recent[k].narration.endsWith(`#第${i}回合独尾#`));
+  }
+  assert.equal(cur.recent[0].narration.length, 572, '572 字正文独特收尾仍完整');
+  assert.equal(cur.recent[1].narration.length, 1200, '1200 字正文独特收尾仍完整');
+});
+
+test('recent：超过 NARRATION_MAX 的提议仍由引擎截到 1200，recent 不再二次截断', () => {
+  const s = makeState();
+  s.nextEventTurn = 999;
+  const over = '甲'.repeat(1400) + '#超长尾#';
+  const out = run(s, { action: '硬闯', proposal: proposal({ narration: over }) }, () => 0.5);
+  assert.equal(out.state.recent[0].narration.length, 1200);
+  assert.equal(out.state.recent[0].narration, over.slice(0, 1200));
+  assert.ok(out.result.rejected.some((r) => r.includes('已截断')));
 });
 
 // ---------- 前世墓志铭（pastLives / epitaph） ----------
@@ -295,21 +318,28 @@ test('新一世开场：createWorld / normalizeState 初始化与补默认 rebir
   assert.equal(kept.rebirthOpening, '旧开场'); // 合法值保留
 });
 
-test('新一世开场：applyRebirthOpening 写入该世第一条叙事，recent 截 300 字、最多 6 条、纯函数', () => {
+test('新一世开场：applyRebirthOpening 写入该世第一条叙事，recent 保留完整正文（上限 1200）、最多 6 条、纯函数', () => {
   const s = makeState();
   s.turn = 7;
   s.life = 2;
   s.recent = [{ turn: 6, action: '旧', narration: '上一世末尾' }];
   const before = JSON.stringify(s);
-  const text = '距上一世已过三年，世界因你改了规矩，有人隐约记得你。'.repeat(20);
+  const text = '距上一世已过三年，世界因你改了规矩，有人隐约记得你。'.repeat(20); // 540 字，> 旧 300 边界
   const ns = e.applyRebirthOpening(s, text);
   assert.equal(ns.rebirthOpening, text);
   assert.equal(ns.recent.length, 2);
   assert.equal(ns.recent[1].turn, 7);
   assert.equal(ns.recent[1].action, '');
   assert.equal(ns.recent[1].rebirthOpening, true);
-  assert.ok(ns.recent[1].narration.length <= 300, 'recent 里截 300 字');
+  assert.equal(ns.recent[1].narration, text, 'recent 与正常回合共用边界，保留完整开场正文');
+  assert.ok(ns.recent[1].narration.length > 300, '超过旧 300 字边界仍完整');
+  assert.ok(ns.recent[1].narration.length <= e.RECENT_NARRATION_MAX);
+  assert.equal(e.RECENT_NARRATION_MAX, e.NARRATION_MAX, '两处上限绑定，避免漂移');
   assert.equal(JSON.stringify(s), before, '纯函数，不改入参');
+
+  // 超过 NARRATION_MAX 的开场共用同一边界：recent 正文截到 1200。
+  const capped = e.applyRebirthOpening(s, '开'.repeat(1500));
+  assert.equal(capped.recent[1].narration.length, e.RECENT_NARRATION_MAX);
 
   // 空开场不动状态
   assert.deepEqual(e.applyRebirthOpening(s, ''), s);
@@ -317,8 +347,8 @@ test('新一世开场：applyRebirthOpening 写入该世第一条叙事，recent
   // recent 已有 6 条时，开场成为最新一条，仍只保留 6 条
   const full = makeState();
   full.recent = Array.from({ length: 6 }, (_, i) => ({ turn: i + 1, action: 'a', narration: 'n' }));
-  const capped = e.applyRebirthOpening(full, '开场内容');
-  assert.equal(capped.recent.length, 6);
-  assert.equal(capped.recent[5].rebirthOpening, true);
+  const capped6 = e.applyRebirthOpening(full, '开场内容');
+  assert.equal(capped6.recent.length, 6);
+  assert.equal(capped6.recent[5].rebirthOpening, true);
 });
 

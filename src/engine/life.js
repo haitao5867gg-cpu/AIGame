@@ -76,6 +76,7 @@ function rebirth(state, input) {
 // 新一世开场：重生时由编排层生成后写入状态。纯函数，不改入参。
 // 作为该世第一条叙事：存进 state.rebirthOpening（供前端进入新一世显示），并压入 recent
 // （供回合 prompt 的最近记录读取）；events.jsonl 由编排层另写一条公开记录。
+// recent 正文与正常回合共用同一边界 RECENT_NARRATION_MAX（= NARRATION_MAX），保持完整。
 function applyRebirthOpening(state, opening) {
   const s = cloneState(state);
   const text = typeof opening === 'string' ? opening.trim() : '';
