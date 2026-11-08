@@ -433,7 +433,7 @@ test('建世界 prompt：要求 start.facts 给 2~3 条关键时间/规则事实
 
 // ---------- 首次出场 / 续回合：通用叙事规则（覆盖所有回合，不只第一幕）----------
 
-test('首次出场与续回合：非首回合也注入通用规则，并保留玩家行动 / 原地点 / 未完收尾', () => {
+test('首次出场与续回合：完整规则为单一来源，短提醒临近当前行动 / 落笔处，非首回合仍生效', () => {
   const state = makeState();
   state.turn = 3;
   state.location = '灰烬港';
@@ -445,51 +445,172 @@ test('首次出场与续回合：非首回合也注入通用规则，并保留�
   const action = '先不急着动，等他把话说完';
   const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 4 }, action, { style: 'v2' });
   const c = system.content;
-  const all = c + '\n' + user.content;
+  const u = user.content;
+  const all = c + '\n' + u;
 
-  // 非首回合：不出现第一幕段，规则来自通用条款（证明「不只第一幕」）。
+  // 完整规则是【叙事与状态规则】里的单一来源：两个锚点各只出现一次，非首回合没有第一幕段。
+  assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1, '完整规则只注入一次');
+  assert.equal((c.match(/续回合默认承接/g) || []).length, 1, '续写条款只注入一次');
   assert.doesNotMatch(c, /这是第一幕/);
-  // 首次出场：后台设定 ≠ 玩家已被告知；重要新要素第一次进正文要顺带交代。
-  assert.match(c, /不等于玩家已经被告知/);
-  assert.match(c, /人物、地标、物件/);
-  assert.match(c, /第一次写进叙事/);
-  assert.match(c, /从玩家视角/);
-  assert.match(c, /悬念可以留住身份与动机/);
-  // 续回合：承接上一回合末尾，新细节不能写成旧事，不复读全部设定。
-  assert.match(c, /续回合/);
-  assert.match(c, /承接上一回合末尾/);
-  assert.match(c, /还没向玩家交代过/);
-  assert.match(c, /复述一遍/);
-  // 玩家意图优先：不因承接而改写玩家行动，既有护栏仍在。
-  assert.match(c, /以玩家为准/);
+
+  // 临近落笔的短提醒在 user 消息里，且夹在「玩家本回合的行动」与落笔指令之间。
+  assert.ok(u.includes('落笔前'));
+  const iAction = u.indexOf('玩家本回合的行动');
+  const iReminder = u.indexOf('落笔前');
+  const iOutput = u.indexOf('请据此写出本回合叙事');
+  assert.ok(iAction < iReminder && iReminder < iOutput,
+    '短提醒应位于当前行动之后、落笔指令之前');
+  // 短提醒明确复述核心约束（用少量稳健关键词，不堆逐字断言）。
+  assert.match(u, /不等于读者看过的正文/);   // 后台设定 ≠ 读者看过的正文
+  assert.match(u, /落位/);                    // 先从玩家视角在场景里落位
+  assert.match(u, /空间关系/);                // 基本空间关系不能缺
+  assert.match(u, /复合短语/);                // 把地标塞进「X 旁」复合短语不算交代
+  assert.match(u, /以玩家为准/);              // 续写以玩家新行动为准
+  // 短提醒是「引用」而非复制整段完整规则：不复述单一来源的整句锚点。
+  assert.doesNotMatch(u, /不等于玩家已经被告知/);
+
+  // 既有护栏仍在：玩家意图优先、时与地。
   assert.match(c, /玩家意图优先/);
   assert.match(c, /时与地/);
   // 玩家行动、原地点、上一回合未完收尾都完整保留，未被新规则强行转场 / 改写。
-  assert.ok(user.content.includes(action), '玩家本回合行动应原样保留');
+  assert.ok(u.includes(action), '玩家本回合行动应原样保留');
   assert.match(all, /灰烬港/);
   assert.match(all, /第2日 黄昏/);
-  assert.ok(user.content.includes('等你说下去') || user.content.includes('话还没问出口'),
+  assert.ok(u.includes('等你说下去') || u.includes('话还没问出口'),
     '上一回合未完收尾应作为最近记录保留');
-  // 不把具体案例写进通用提示词。
-  assert.doesNotMatch(c, /铜铃|外门杂役录/);
+  // 不把具体案例物件硬编码进通用提示词（system 与 user 都不含）。
+  assert.doesNotMatch(all, /铜铃|外门杂役录/);
 });
 
-test('首次出场与续回合：首回合仍给「这是第一幕」，但同义要求只注入一次', () => {
+test('首次出场与续回合：首回合仍给「这是第一幕」，完整规则单一来源、短提醒同样生效', () => {
   const state = makeState();
   state.turn = 0; // 第一幕
-  const [system] = prompts.buildTurnMessages(state, { nextTurn: 1 }, '打量四周', { style: 'v1' });
+  const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 1 }, '打量四周', { style: 'v1' });
   const c = system.content;
+  const u = user.content;
   // 第一幕段仍在（prologue 衔接），但只负责接住序章「此刻」。
   assert.match(c, /这是第一幕/);
   assert.match(c, /序章/);
-  // 通用条款在首回合同样生效。
-  assert.match(c, /不等于玩家已经被告知/);
-  assert.match(c, /第一次写进叙事/);
-  assert.match(c, /续回合/);
+  // 完整通用条款在首回合同样是单一来源（各一次），不被第一幕重复注入。
+  assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1);
+  assert.equal((c.match(/续回合默认承接/g) || []).length, 1);
   // 旧版只覆盖第一幕的同义指令已移除，避免开局两段雷同。
   assert.doesNotMatch(c, /首次出现的人和地方要带一句交代/);
   assert.doesNotMatch(c, /突兀地丢出陌生名词/);
-  // 核心锚点在整段 system 里各只出现一次（不与第一幕或其它段落重复注入）。
-  assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1);
-  assert.equal((c.match(/第一次写进叙事/g) || []).length, 1);
+  // 短提醒在首回合的 user 消息里也在（临近落笔处），与写法无关。
+  assert.ok(u.includes('落笔前'));
+  assert.match(u, /不等于读者看过的正文/);
+  assert.match(u, /以玩家为准/);
+});
+
+// ---------- 第一幕：当前地点的环境背景（玩家尚未读过）----------
+
+test('第一幕：仅携带当前匹配地点的环境背景与首幕落位指令，不取别的地点、不夹带内部字段', () => {
+  const state = makeState();
+  state.turn = 0;
+  state.location = '沟口';
+  state.clock = { day: 1, period: '清晨' };
+  state.bible.places = [
+    { name: '沟口', desc: '一块青石板卡在沟口，拨开挪三指就能改水道。' },
+    { name: '打谷场', desc: '场边立着一排竹架，摊着新晒的谷。' },
+  ];
+  state.recent = [
+    { turn: 0, action: '睁开眼', narration: '风从水田那头吹来，话还没说出口。' },
+  ];
+  const action = '先看看水往哪边流';
+  const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 1 }, action, { style: 'v1' });
+  const c = system.content;
+  const u = user.content;
+  const all = c + '\n' + u;
+
+  // 片段与配套指令在 user 消息里，且紧邻玩家行动 / 落笔输出之间。
+  assert.match(u, /【当前地点的环境背景（玩家尚未读过）】/);
+  assert.ok(u.includes('沟口：一块青石板卡在沟口，拨开挪三指就能改水道。'),
+    '应带上精确匹配地点的 name/desc');
+  const iAction = u.indexOf('玩家本回合的行动');
+  const iEnv = u.indexOf('当前地点的环境背景');
+  const iOutput = u.indexOf('请据此写出本回合叙事');
+  assert.ok(iAction < iEnv && iEnv < iOutput, '环境片段应位于当前行动之后、落笔输出之前');
+
+  // 首幕落位指令要点。
+  assert.match(u, /1~2 句/);
+  assert.match(u, /自然呈现眼前场景/);
+  assert.match(u, /然后立即回应玩家本回合的行动/);
+  assert.match(u, /X 旁 \/ X 下/);                    // 不能只埋进 NPC 动作修饰语
+  assert.match(u, /不要照抄整段设定/);
+  assert.match(u, /不替玩家增加观察、转场、作决定/);     // 不强制观察/转场/决定/新事件
+  assert.match(u, /不必重讲环境/);
+  assert.match(u, /合理可见 \/ 可听/);                // 按时间/人物视角选取可见可听内容
+  assert.match(u, /不得当作玩家已知直接写出来/);        // 秘密 / 看不见的不泄露
+
+  // 只取匹配地点：另一地点的 name/desc 不出现在片段，也不编造环境。
+  assert.doesNotMatch(u, /打谷场|竹架|新晒的谷/);
+  // 不把 apex / 内部隐藏目标字段塞进这段；提示词不硬编码具体案例物件。
+  const envStart = u.indexOf('【当前地点的环境背景');
+  const envEnd = u.indexOf('【', envStart + 1);
+  const envSection = u.slice(envStart, envEnd < 0 ? undefined : envEnd);
+  assert.doesNotMatch(envSection, /apex|隐藏目标|\bhint\b|北方的钟声/);
+  assert.doesNotMatch(all, /铜铃|外门杂役录/);
+
+  // 原玩家行动 / 时间地点 / 近期收尾都保留，第一幕段、通用规则、短提醒仍生效。
+  assert.ok(u.includes(action), '玩家本回合行动应原样保留');
+  assert.match(all, /第1日 清晨/);
+  assert.ok(u.includes('话还没说出口'), '上一回合未完收尾应作为最近记录保留');
+  assert.match(u, /落笔前/);
+  assert.match(c, /这是第一幕/);
+  assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1,
+    '完整通用规则仍是单一来源');
+});
+
+test('第一幕：缺资料安全省略，且 location 不匹配时不回退取别的地点', () => {
+  // 1) location 指向的地点不在 places（但 start.place 指向存在的地点）——不能回退取 start.place。
+  const s1 = makeState();
+  s1.turn = 0;
+  s1.location = '别处';
+  s1.bible.places = [{ name: '沟口', desc: '一块青石板卡在沟口。' }];
+  s1.bible.start.place = '沟口';
+  const [, m1] = prompts.buildTurnMessages(s1, { nextTurn: 1 }, '张望');
+  assert.doesNotMatch(m1.content, /当前地点的环境背景/);
+  assert.doesNotMatch(m1.content, /青石板/, '不应回退取 start.place 对应的另一个地点');
+
+  // 2) 匹配到地点但 desc 为空 / 纯空白 ——省略。
+  const s2 = makeState();
+  s2.turn = 0;
+  s2.location = '沟口';
+  s2.bible.places = [{ name: '沟口', desc: '   ' }];
+  const [, m2] = prompts.buildTurnMessages(s2, { nextTurn: 1 }, '张望');
+  assert.doesNotMatch(m2.content, /当前地点的环境背景/);
+
+  // 3) places 为空 ——省略。
+  const s3 = makeState();
+  s3.turn = 0;
+  s3.location = '灰烬港';
+  const [, m3] = prompts.buildTurnMessages(s3, { nextTurn: 1 }, '张望');
+  assert.doesNotMatch(m3.content, /当前地点的环境背景/);
+
+  // 4) location 缺失时，按 bible.start.place 回退匹配成功。
+  const s4 = makeState();
+  s4.turn = 0;
+  delete s4.location;
+  s4.bible.start.place = '沟口';
+  s4.bible.places = [{ name: '沟口', desc: '一块青石板卡在沟口，拨开就能改道。' }];
+  const [, m4] = prompts.buildTurnMessages(s4, { nextTurn: 1 }, '张望');
+  assert.match(m4.content, /当前地点的环境背景/);
+  assert.ok(m4.content.includes('青石板'));
+});
+
+test('第一幕环境片段：非首回合不重复插入，通用完整规则与短提醒仍生效', () => {
+  const state = makeState();
+  state.turn = 1;
+  state.location = '沟口';
+  state.bible.places = [{ name: '沟口', desc: '一块青石板卡在沟口，拨开就能改道。' }];
+  const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 2 }, '继续看水');
+  const c = system.content;
+  const u = user.content;
+  assert.doesNotMatch(u, /当前地点的环境背景/);
+  assert.doesNotMatch(u, /上面这段是写作背景/);
+  assert.doesNotMatch(u, /青石板/, '非首回合不重讲环境');
+  assert.match(c, /不等于玩家已经被告知/, '通用完整规则仍在');
+  assert.match(u, /落笔前/, '落笔前短提醒仍在');
+  assert.match(u, /不等于读者看过的正文/);
 });

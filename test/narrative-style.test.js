@@ -80,18 +80,23 @@ test('opts.style 能覆盖配置', () => {
   assert.ok(!sOverV2.includes('需要玩家决断的具体局面'));
 });
 
-test('首次出场 / 续回合通用规则：v1/v2/v2-3p 都注入且各只一份，不破坏各自写法', () => {
-  // systemText 用 turn=1 的状态：非首回合，规则必须仍来自通用条款而非第一幕段。
+test('首次出场 / 续回合：完整规则单一来源，短提醒在 v1/v2/v2-3p 都临近落笔处生效', () => {
+  // 用 turn=1 的状态：非首回合，完整规则来自通用条款而非第一幕段。
   for (const style of ['v1', 'v2', 'v2-3p']) {
-    const c = systemText({ style });
-    assert.match(c, /不等于玩家已经被告知/, `${style} 应含「后台设定≠玩家已知」`);
-    assert.match(c, /第一次写进叙事/, `${style} 应含首次出场交代`);
-    assert.match(c, /承接上一回合末尾/, `${style} 应含续回合承接`);
-    assert.match(c, /以玩家为准/, `${style} 应保留玩家意图优先兜底`);
+    const [system, user] = prompts.buildTurnMessages(makeState(), { nextTurn: 2 }, '探查', { style });
+    const c = system.content;
+    const u = user.content;
+    // 单一来源：完整规则的两个锚点在整段 system 里各只出现一次。
+    assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1, `${style} 完整规则只注入一次`);
+    assert.equal((c.match(/续回合默认承接/g) || []).length, 1, `${style} 续写条款只注入一次`);
     assert.doesNotMatch(c, /这是第一幕/, `${style} 非首回合不应有第一幕段`);
-    // 单份注入：核心锚点各出现一次（不与第一幕或其它段落重复）。
-    assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1, `${style} 不应重复注入同义要求`);
-    assert.equal((c.match(/续回合默认承接/g) || []).length, 1, `${style} 续写条款只出现一次`);
+    // 短提醒在 user 消息里、紧邻当前行动与落笔指令，三种写法都生效。
+    assert.ok(u.includes('落笔前'), `${style} 应含落笔前短提醒`);
+    assert.ok(u.indexOf('玩家本回合的行动') < u.indexOf('落笔前') &&
+      u.indexOf('落笔前') < u.indexOf('请据此写出本回合叙事'),
+      `${style} 短提醒应位于当前行动之后、落笔指令之前`);
+    assert.match(u, /不等于读者看过的正文/, `${style} 短提醒应复述核心约束`);
+    assert.match(u, /空间关系/, `${style} 短提醒应点明基本空间关系`);
     // 各风格原有写法没有被改动。
     if (style === 'v1') {
       assert.match(c, /需要玩家决断/);
@@ -101,5 +106,41 @@ test('首次出场 / 续回合通用规则：v1/v2/v2-3p 都注入且各只一�
       assert.ok(!c.includes('需要玩家决断的具体局面'));
     }
     if (style === 'v2-3p') assert.match(c, /第三人称（用主角名字）/);
+  }
+});
+
+test('第一幕环境落位：v1/v2/v2-3p 首回合都携带当前地点环境，原有写法不变', () => {
+  for (const style of ['v1', 'v2', 'v2-3p']) {
+    const state = makeState();
+    state.turn = 0;
+    state.location = '沟口';
+    state.bible.places = [{ name: '沟口', desc: '一块青石板卡在沟口，拨开挪三指就能改水道。' }];
+    const [system, user] = prompts.buildTurnMessages(state, { nextTurn: 1 }, '看看水', { style });
+    const c = system.content;
+    const u = user.content;
+    assert.match(u, /【当前地点的环境背景（玩家尚未读过）】/, `${style} 应带首幕环境片段`);
+    assert.ok(u.includes('青石板'), `${style} 应带匹配地点 desc`);
+    assert.match(u, /1~2 句/, `${style} 应带首幕落位指令`);
+    assert.ok(u.indexOf('玩家本回合的行动') < u.indexOf('当前地点的环境背景') &&
+      u.indexOf('当前地点的环境背景') < u.indexOf('请据此写出本回合叙事'),
+      `${style} 环境片段应临近行动 / 输出`);
+    // 通用完整规则单一来源、短提醒、第一幕段仍生效；各写法原有规则未受影响。
+    assert.equal((c.match(/不等于玩家已经被告知/g) || []).length, 1, `${style} 完整规则只注入一次`);
+    assert.match(u, /落笔前/, `${style} 短提醒仍在`);
+    assert.match(c, /这是第一幕/, `${style} 仍有第一幕段`);
+    if (style === 'v1') {
+      assert.match(c, /需要玩家决断/);
+      assert.ok(!c.includes('写作手法'));
+    } else {
+      assert.match(c, /写作手法/);
+      assert.ok(!c.includes('需要玩家决断的具体局面'));
+    }
+    if (style === 'v2-3p') {
+      assert.match(c, /第三人称（用主角名字）/);
+      // user 片段不含「你 / 第二人称」，与第三人称写法不冲突。
+      const iEnv = u.indexOf('【当前地点的环境背景');
+      const iEnd = u.indexOf('【', iEnv + 1);
+      assert.doesNotMatch(u.slice(iEnv, iEnd < 0 ? undefined : iEnd), /「你|第二人称/);
+    }
   }
 });
