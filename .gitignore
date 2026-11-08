@@ -33,6 +33,7 @@ yarn-error.log*
 
 # Game data (runtime)
 data/
+data-mock/
 backups/
 .logs/
 logs/
