@@ -5,6 +5,9 @@
 **接手请先读 [HANDOFF.md](HANDOFF.md)**（背景、规则、部署、进度）。
 
 - 架构与代码结构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 最新交接状态：[docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md)
+- 人物长期档案：[docs/NPC_MEMORY.md](docs/NPC_MEMORY.md)
+- 背景与配乐：[docs/ATMOSPHERE.md](docs/ATMOSPHERE.md)
 - 早期规格：[docs/SPEC.md](docs/SPEC.md)（早期规格，部分已过时，以代码为准）
 
 本地两条命令：
