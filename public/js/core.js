@@ -237,7 +237,8 @@
       || ($('usage-pop') && !$('usage-pop').hidden)
       || !!document.getElementById('prologue-mask')
       || !!document.getElementById('item-card-modal')
-      || !!document.getElementById('npc-card-modal');
+      || !!document.getElementById('npc-card-modal')
+      || !!document.getElementById('atmosphere-modal');
   }
   function syncBodyScrollLock() {
     var locked = window.innerWidth <= 600 && anyOverlayOpen();

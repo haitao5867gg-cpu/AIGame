@@ -32,7 +32,7 @@
 - `llm.js` — 对话模型客户端：OpenAI 兼容 `/chat/completions`、流式 SSE、narration 增量解码、用量统计、mock（mock 回合可带合法 `npc_updates`）。
 - `npcs.js` — 纯数据层（只依赖 `crypto` + `event-log.js`）：NPC 长期档案的初始化 / 归一化 / 只读回填 / 增量更新 / 公开投影 / 历史详情 / 有界提示词片段；详见 `docs/NPC_MEMORY.md`。
 - `npc-extraction.js` — 人物回合漏交公共资料增量时，用一次有界短调用从已接纳正文补档；专用摘录提示词也在本模块。逐字段沿用引擎验证，不改剧情；失败保留完整原文，不重试。用量正常计费与计入配额，读取人物卡不调用模型。
-- `prefs.js` — 每玩家偏好（`prefs.json`）：成人开关、朗读参数；主人总开关。
+- `prefs.js` — 每玩家偏好（`prefs.json`）：成人开关、朗读参数、世界氛围的开关/音量/模式；主人总开关。
 - `prompts.js` — 全部提示词组装：回合、建世界、序章、物品介绍、章节 / 顶点 / 墓志 / 重生开场，及 v1/v2 规则常量；`TURN_OUTPUT_FORMAT` 含可选 `npc_updates` 协议，`buildTurnMessages` 注入有界 `npcPromptContext`。
 - `store.js` — 持久化：原子写 `state.json`、追加 `events.jsonl` / `usage.jsonl`、撤回快照、世界列表与回收站；`worldRevision(dataDir, worldId)` 提供只读的 `state/events` 版本指纹（`mtimeMs:size:ino`，供回填缓存失效判定）。
 - `tts.js` — 朗读：Azure SSML 组装、音色 / 情绪、音频缓存与配额。
@@ -53,6 +53,7 @@
 - `login.html` — 公网来客登录页（访问密码 / 主人口令）。
 - `app.css` — 全部样式（手机 + 桌面响应式）。
 - `js/` — 前端原生 JS 模块，见下。
+- `assets/atmosphere/` — 随版本分发的背景图、器乐/环境声、固定目录 `catalog.json` 和素材署名；不含运行期生成数据。见 `docs/ATMOSPHERE.md`。
 
 ### public/js/
 - `core.js` — 公共常量（属性 / 性格 / 预设世界观）、DOM 与请求辅助。
@@ -64,6 +65,9 @@
 - `panels.js` — 侧栏面板：用量统计、设置（偏好 / 成人 / 题材）、成员与世界收回。
 - `prologue.js` — 序章卡片（首次进入 / 重看）。
 - `tts.js` — 朗读前端：整回合分段排队播放、播放条、段落高亮、Azure / 浏览器回退与开关。
+- `atmosphere-state.js` — 可在 Node 测试的只读场景选择器，只使用公开地点、时段、玩家意图、真实危险和已经展示的正文，不读隐藏事件。
+- `atmosphere-audio.js` — 浏览器音频控制器：一次手动解锁、单首音乐/最多两路环境音、柔和切歌、朗读让声、后台暂停及资源回收。
+- `atmosphere.js` — 场景/音频/背景协调、每玩家偏好串行保存、桌面与手机共用设置弹层及素材致谢。
 
 ### scripts/
 - `autoplay.js` — 零依赖「AI 玩家」自动试玩 + 跑后评审（只经 HTTP 调接口）。
@@ -130,6 +134,10 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 - `frontend-prologue.test.js` — 序章卡片 UI。
 - `frontend-scenes.test.js` — 场景图 UI。
 - `frontend-scroll.test.js` — 滚动行为。
+世界氛围（详见 `docs/ATMOSPHERE.md`）
+- `atmosphere-state.test.js` / `prefs-atmosphere.test.js` — 场景与每玩家偏好规则。
+- `frontend-atmosphere-audio.test.js` / `frontend-atmosphere.test.js` — 播放生命周期、让声、并发保存和路由隔离。
+- `atmosphere-media.test.js` — 真实 MP3 的 HTTP 字节范围、HEAD、认证、客户端中断及空文件回归。
 配置 / 存储 / 客户端 / 隧道 / 自动试玩
 - `env.test.js` — 配置解析。
 - `store.test.js` — 持久化与撤回。

@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "themes": {
+    "lingtian": {
+      "backgrounds": {
+        "field": {
+          "src": "/assets/atmosphere/lingtian-field-v1.jpg",
+          "creditId": "lingtian-art"
+        }
+      },
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/calm-v1.mp3",
+          "creditId": "calm",
+          "duration": 114.07675
+        },
+        "explore": {
+          "src": "/assets/atmosphere/explore-v1.mp3",
+          "creditId": "explore",
+          "duration": 261.87755
+        },
+        "tense": {
+          "src": "/assets/atmosphere/tense-v1.mp3",
+          "creditId": "tense",
+          "duration": 462.053878
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
+    }
+  },
+  "credits": [
+    {
+      "id": "calm",
+      "title": "Guzheng City",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN2100001",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "explore",
+      "title": "Eastern Thought",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100682",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "tense",
+      "title": "Long Note Two",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100420",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "wind",
+      "title": "wind1",
+      "author": "Luke.RUSTLTD",
+      "source": "https://opengameart.org/content/wind1",
+      "license": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "rain",
+      "title": "Rain on Window Loop",
+      "author": "alxl",
+      "source": "https://opengameart.org/content/rain-on-window-loop",
+      "license": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "insects",
+      "title": "cricket sounds",
+      "author": "syncopika",
+      "source": "https://opengameart.org/content/cricket-sounds",
+      "license": "CC0 1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "lingtian-art",
+      "title": "灵田晨雾",
+      "author": "无限世界项目制作",
+      "source": "",
+      "license": "本项目生成素材",
+      "licenseUrl": "",
+      "changes": "生成原图另存JPEG压缩版，画面内容不改。"
+    }
+  ]
+}

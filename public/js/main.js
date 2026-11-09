@@ -63,6 +63,7 @@
         else if (act === 'export') { if (currentWorldId) exportWorld(currentWorldId); }
         else if (act === 'genre') openGenrePop();
         else if (act === 'logout') doLogout();
+        else if (act === 'atmosphere' && typeof Atmosphere !== 'undefined') Atmosphere.openSettings();
       });
     });
 
@@ -97,6 +98,8 @@
     // 启动时取一次当前玩家，显示名字 / 来客退出入口。
     $('home-logout').addEventListener('click', function (e) { e.preventDefault(); doLogout(); });
     $('g-logout').addEventListener('click', function (e) { e.preventDefault(); doLogout(); });
+    if ($('btn-atmosphere')) $('btn-atmosphere').addEventListener('click', function () { Atmosphere.toggle(); });
+    if ($('g-atmosphere-settings')) $('g-atmosphere-settings').addEventListener('click', function () { Atmosphere.openSettings(); });
     api('/api/me').then(renderPlayerInfo).catch(function () {});
     route();
   }

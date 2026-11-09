@@ -35,6 +35,10 @@ const CONTENT_TYPES = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
   '.txt': 'text/plain; charset=utf-8',
 };
 
@@ -191,6 +195,78 @@ async function handleStreamTurn(req, res, g, id, images, dataDir) {
   }
 }
 
+// ---- 氛围素材（public/assets/atmosphere）：目录级缓存 + 音频单段 Range ----
+const ATMOSPHERE_CACHE = 'private, max-age=86400';
+const RANGE_AUDIO_EXTS = new Set(['.mp3', '.ogg', '.wav']);
+
+// 仅解析单段 bytes 范围：bytes=start-end / bytes=start- / bytes=-suffix。
+function parseByteRange(header, size) {
+  if (typeof header !== 'string') return { kind: 'none' };
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return { kind: 'invalid' };
+  const s = m[1];
+  const e = m[2];
+  if (s === '' && e === '') return { kind: 'invalid' };
+  let start;
+  let end;
+  if (s === '') {
+    const suffix = Number(e);
+    if (!Number.isInteger(suffix) || suffix <= 0) return { kind: 'invalid' };
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(s);
+    if (!Number.isInteger(start)) return { kind: 'invalid' };
+    if (e === '') {
+      end = size - 1;
+    } else {
+      end = Number(e);
+      if (!Number.isInteger(end)) return { kind: 'invalid' };
+    }
+    if (start > end) return { kind: 'invalid' };
+  }
+  if (start >= size) return { kind: 'invalid' };
+  if (end >= size) end = size - 1;
+  return { kind: 'range', start, end };
+}
+
+function serveAtmosphereAudio(req, res, filePath, type, size, isHead) {
+  const base = {
+    'Content-Type': type,
+    'Cache-Control': ATMOSPHERE_CACHE,
+    'Accept-Ranges': 'bytes',
+  };
+  const parsed = parseByteRange(req.headers.range, size);
+  if (parsed.kind === 'invalid') {
+    res.writeHead(416, Object.assign({}, base, {
+      'Content-Range': 'bytes */' + size,
+      'Content-Length': 0,
+    }));
+    return res.end();
+  }
+  // 空音频无 Range 时 start=0/end=-1 会让 createReadStream 同步抛 RangeError。
+  // 直接 200 + Content-Length 0 结束且不打开流；带 Range 已在上面按 416 处理。
+  if (size === 0) {
+    res.writeHead(200, Object.assign({}, base, { 'Content-Length': 0 }));
+    return res.end();
+  }
+  const status = parsed.kind === 'range' ? 206 : 200;
+  const start = parsed.kind === 'range' ? parsed.start : 0;
+  const end = parsed.kind === 'range' ? parsed.end : size - 1;
+  const headers = Object.assign({}, base, { 'Content-Length': end - start + 1 });
+  if (status === 206) {
+    headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + size;
+  }
+  res.writeHead(status, headers);
+  if (isHead) return res.end();
+  const stream = fs.createReadStream(filePath, { start, end });
+  stream.on('error', () => res.destroy());
+  // 客户端切歌/静音会中断请求，HTTP 响应 close 时 pipe 只解绑、不会销毁源流，
+  // paused 的 fs 流会悬挂占 FD。响应关闭即销毁源流；正常结束/出错时 destroy 幂等。
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+
 function serveStatic(req, res, pathname, isHead) {
   let rel;
   try {
@@ -206,15 +282,23 @@ function serveStatic(req, res, pathname, isHead) {
   if (filePath !== PUBLIC_DIR && !filePath.startsWith(prefix)) {
     return sendError(res, 403, '禁止访问该路径');
   }
+  const ext = path.extname(filePath).toLowerCase();
+  const type = CONTENT_TYPES[ext] || 'application/octet-stream';
+  const atmospherePrefix = path.join(PUBLIC_DIR, 'assets', 'atmosphere') + path.sep;
+  const inAtmosphere = filePath.startsWith(atmospherePrefix);
+  const cacheControl = inAtmosphere ? ATMOSPHERE_CACHE : 'no-cache';
+  const rangeAudio = inAtmosphere && RANGE_AUDIO_EXTS.has(ext);
   fs.stat(filePath, (err, st) => {
     if (err || !st.isFile()) return sendError(res, 404, '页面不存在');
-    const type = CONTENT_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+    if (rangeAudio) {
+      return serveAtmosphereAudio(req, res, filePath, type, st.size, isHead);
+    }
     fs.readFile(filePath, (err2, data) => {
       if (err2) return sendError(res, 500, '读取静态文件失败');
       res.writeHead(200, {
         'Content-Type': type,
         'Content-Length': data.length,
-        'Cache-Control': 'no-cache',
+        'Cache-Control': cacheControl,
       });
       res.end(isHead ? undefined : data);
     });

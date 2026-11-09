@@ -185,7 +185,10 @@ var Tts = (function () {
     }
   }
 
-  function refreshUI() { updateTurnButtons(); updateBar(); }
+  function refreshUI() {
+    updateTurnButtons(); updateBar();
+    if (typeof Atmosphere !== 'undefined') Atmosphere.setVoiceState({ active: !!S, paused: !!(S && S.paused) });
+  }
 
   // ---- 整回合分组：把连续段落打包成若干组（每组 ≤ 3 段且 ≤ 300 字）----
   var GROUP_MAX_SEGS = 3;

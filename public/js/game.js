@@ -157,7 +157,8 @@
       var state = results[0];
       var log = results[1];
       currentState = state;
-      renderHeader(state);
+      var atmosphereLastLog = Array.isArray(log) && log.length ? log[log.length - 1] : null;
+      renderHeader(state, atmosphereLastLog ? { scene: atmosphereLastLog.scene, narration: atmosphereLastLog.narration } : null);
       var sit = state.bible && state.bible.start && state.bible.start.situation;
       if (sit) appendOpening(sit);
       (log || []).forEach(appendLogRecord);
@@ -197,6 +198,7 @@
   }
 
   function renderHeader(s) {
+    var atmosphereOptions = arguments[1];
     $('g-title').textContent = (s.bible && s.bible.title) || '无限世界';
     $('g-life').textContent = '第 ' + s.life + ' 世';
     $('g-turn').textContent = '第 ' + s.turn + ' 回合';
@@ -207,6 +209,7 @@
     $('g-omen').hidden = !s.omen;
     $('g-danger').hidden = !s.danger; // 体魄 ≤ 2：顶部提示「伤势沉重」
     renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
+    if (typeof Atmosphere !== 'undefined') Atmosphere.enterWorld(s, atmosphereOptions);
   }
 
   // ---- 文风切换：⋯ 菜单项与桌面地点行标签共用一个选择列表 ----
@@ -781,7 +784,7 @@
   // result 到来（或普通 /turn 返回）后的统一渲染：叙事、徽章、事件/结算卡片、头部/面板/建议/死亡。
   function renderResult(res) {
     currentState = res.state;
-    renderHeader(res.state);
+    renderHeader(res.state, { scene: res.scene, narration: res.narration });
     if (res.event) appendEventCard(res.event);
     var sceneId = (res.scene && res.scene.draw && res.sceneKey)
       ? (res.state.life + '-' + res.state.turn) : null;

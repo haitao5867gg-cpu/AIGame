@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+<div id="world-backdrop" class="world-backdrop" aria-hidden="true" hidden></div>
 <div id="app">
 
   <!-- 首页 -->
@@ -61,6 +62,7 @@
       <button id="btn-usage" class="btn tiny" aria-expanded="false" aria-controls="usage-pop">用量</button>
       <button id="btn-panel" class="btn tiny">角色面板</button>
       <button id="btn-export" class="btn tiny">导出</button>
+      <button id="btn-atmosphere" class="btn tiny atmosphere-quick" type="button" aria-label="开启或恢复氛围声音" aria-pressed="false">♩</button>
       <a id="g-logout" class="logout-link" hidden>退出</a>
       <button id="btn-more" class="more-btn" aria-label="更多" aria-expanded="false">⋯</button>
       <div id="more-menu" class="more-menu" hidden>
@@ -68,6 +70,7 @@
         <button type="button" class="more-menu-item" data-menu="panel">角色面板</button>
         <button type="button" class="more-menu-item" data-menu="export">导出</button>
         <button type="button" id="menu-genre" class="more-menu-item" data-menu="genre">文风：<span id="menu-genre-name">识别中</span></button>
+        <button type="button" class="more-menu-item" data-menu="atmosphere">氛围设置</button>
         <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
       </div>
       <div id="usage-pop" class="usage-pop" hidden></div>
@@ -80,6 +83,7 @@
         <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
         <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
         <button type="button" id="g-genre" class="genre-tag">文风·识别中</button>
+        <button type="button" id="g-atmosphere-settings" class="genre-tag" aria-label="打开氛围设置">氛围设置</button>
       </div>
       <div id="top-attrs" class="top-attrs"></div>
     </div>
@@ -112,6 +116,9 @@
 <script src="/js/images.js"></script>
 <script src="/js/prologue.js"></script>
 <script src="/js/items.js"></script>
+<script src="/js/atmosphere-state.js"></script>
+<script src="/js/atmosphere-audio.js"></script>
+<script src="/js/atmosphere.js"></script>
 <script src="/js/tts.js"></script>
 <script src="/js/game.js"></script>
 <script src="/js/panels.js"></script>

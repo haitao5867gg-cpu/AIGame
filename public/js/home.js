@@ -1,6 +1,7 @@
 'use strict';
   // ---- 路由 ----
   function hideAllViews() {
+    if (typeof Atmosphere !== 'undefined') Atmosphere.leaveWorld();
     ['view-home', 'view-new', 'view-game'].forEach(function (id) { $(id).hidden = true; });
     $('panel').dataset.open = 'false';
     syncBodyScrollLock(); // 路由切换收起抽屉时恢复背景滚动
