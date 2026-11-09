@@ -554,3 +554,104 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   /* 历史回合：各回合开头留高 80px 小缩略图，点开放大 */
   #stream .scene-frame.scene-history{width:142px;height:80px;aspect-ratio:auto;max-height:none;margin:4px 0 10px}
 }
+
+/* ===== 认识的人：两行列表 + 搜索 + 人物档案卡 ===== */
+/* 搜索框 16px（防 iOS 聚焦放大）、常驻；过滤到 0 条时仍在，可随时清查询 */
+.npc-search{width:100%;font-size:16px;min-height:40px;margin:0 0 8px;
+  background:var(--bg-2);color:var(--ink);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;font-family:var(--sans);outline:none}
+.npc-search:focus{border-color:var(--accent)}
+.npc-search[hidden]{display:none}
+.npc-rows{display:block}
+/* 行：头像 + 可点名字/简介按钮 + 🔊；按钮是唯一打开档案的入口 */
+.npc-row{align-items:flex-start}
+.npc-open{flex:1;min-width:0;min-height:40px;display:flex;flex-direction:column;gap:2px;
+  text-align:left;background:transparent;border:0;color:var(--ink);
+  font-family:var(--sans);font-size:12px;padding:2px 0;cursor:pointer}
+.npc-open:focus{outline:1px solid var(--accent-2);outline-offset:2px}
+.npc-line1{display:flex;align-items:center;gap:8px;min-width:0}
+.npc-line2{display:flex;align-items:center;gap:8px;min-width:0}
+.npc-clue{flex:1;min-width:0;color:var(--muted);font-size:11px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis} /* 仅 CSS 截断，存储不裁 */
+.npc-turn{flex:none;color:var(--muted);font-size:11px;white-space:nowrap}
+
+/* 档案卡：遮罩 + 居中可滚动卡片 */
+.npc-card-mask{position:fixed;inset:0;z-index:85;background:rgba(9,8,6,.92);
+  display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
+.npc-card{position:relative;width:100%;max-width:640px;max-height:calc(100vh - 32px);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--panel);
+  border:1px solid var(--line);border-radius:14px;padding:20px 20px 22px;
+  box-shadow:0 12px 48px rgba(0,0,0,.6);scrollbar-gutter:stable;scrollbar-width:thin;
+  scrollbar-color:rgba(154,146,124,.4) transparent}
+.npc-card::-webkit-scrollbar{width:8px}
+.npc-card::-webkit-scrollbar-thumb{background:rgba(154,146,124,.4);border-radius:4px}
+.npc-card-head{display:flex;gap:14px;align-items:center;margin-bottom:8px}
+.npc-card-hero-slot{flex:none;width:88px;height:88px}
+.npc-card-hero{width:88px;height:88px;border-radius:14px;object-fit:cover;display:block;
+  background:var(--bg);border:1px solid var(--line)}
+.npc-card-hero[src]{cursor:zoom-in}
+.npc-card-hero.img-fallback{display:flex;align-items:center;justify-content:center;
+  color:#e6c9a0;font-size:40px;font-family:var(--serif)}
+.npc-card-head-meta{min-width:0;flex:1}
+.npc-card-title{font-family:var(--serif);font-size:24px;font-weight:600;
+  color:var(--ink);word-break:break-all;margin:0 0 4px}
+.npc-card-role{font-family:var(--sans);font-size:13px;color:var(--muted);margin-bottom:4px;
+  white-space:pre-wrap;overflow-wrap:break-word}
+.npc-card-attitude{color:var(--accent-2);letter-spacing:2px;font-size:16px}
+.npc-sec{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+.npc-sec-h{font-family:var(--sans);font-size:13px;color:var(--accent-2);
+  letter-spacing:1px;margin:0 0 8px;font-weight:600}
+/* 最初记录：默认折叠的原生 details/summary，点标题展开看完整初见形象 */
+.npc-initial > .npc-initial-sum{list-style:none;cursor:pointer;min-height:40px;
+  display:flex;align-items:center;gap:8px}
+.npc-initial > .npc-initial-sum::-webkit-details-marker{display:none}
+.npc-initial > .npc-initial-sum::before{content:'▸';color:var(--accent-2)}
+.npc-initial[open] > .npc-initial-sum::before{content:'▾'}
+.npc-initial[open] > .npc-initial-sum{margin-bottom:10px}
+.npc-hint{font-family:var(--sans);font-size:12px;color:var(--muted);line-height:1.7;margin:4px 0}
+.npc-field,.npc-trait{display:flex;gap:10px;align-items:flex-start;
+  font-family:var(--sans);font-size:13px;line-height:1.7;margin:4px 0}
+.npc-field-k,.npc-trait-k{flex:none;min-width:56px;color:var(--muted)}
+.npc-field-v,.npc-trait-v{flex:1;min-width:0;color:var(--ink);
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word} /* 值完整可读 */
+.npc-trait-group{margin:6px 0 10px}
+.npc-trait-cat{font-family:var(--sans);font-size:12px;color:var(--muted);margin:0 0 2px}
+/* 经历：可展开详情，摘要 + 玩家当时行动，点开看完整原文与公开变化 */
+.npc-hist-item{border:1px solid var(--line);border-radius:8px;margin:8px 0;
+  background:var(--bg-2);overflow:hidden}
+.npc-hist-summary{list-style:none;cursor:pointer;padding:10px 12px;
+  font-family:var(--sans);font-size:12px;color:var(--ink);min-height:40px}
+.npc-hist-summary::-webkit-details-marker{display:none}
+.npc-kind{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;
+  margin-right:8px;border:1px solid var(--line);color:var(--muted)}
+.npc-kind.interaction{color:#a9d6ad;border-color:rgba(124,192,127,.5)}
+.npc-kind.mention{color:#d9a441;border-color:rgba(217,164,65,.5)}
+.npc-kind.change{color:#e8a99d;border-color:rgba(224,114,95,.5)}
+.npc-hist-meta,.npc-hist-hero{color:var(--muted);margin-right:8px}
+.npc-hist-excerpt{margin-top:6px;color:var(--ink);line-height:1.7;
+  white-space:pre-wrap;overflow-wrap:break-word}
+.npc-hist-action{margin-top:2px;color:var(--muted);white-space:pre-wrap;overflow-wrap:break-word}
+.npc-hist-toggle{display:inline-block;margin-top:6px;color:var(--accent-2);font-size:11px}
+.npc-hist-body{border-top:1px dashed var(--line);padding:10px 12px}
+.npc-hist-narration{font-family:var(--serif);font-size:15px;line-height:1.9;color:var(--ink);
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
+.npc-hist-changes{margin-top:10px}
+.npc-changes-h{font-family:var(--sans);font-size:12px;color:var(--muted);margin-bottom:4px}
+.npc-change{font-family:var(--sans);font-size:12px;line-height:1.7;color:var(--ink);
+  white-space:pre-wrap;overflow-wrap:break-word}
+.npc-more-btn{display:block;width:100%;margin-top:10px;min-height:40px}
+.npc-card-close{display:block;width:100%;margin-top:14px;min-height:40px}
+
+/* 手机：bottom sheet，全宽、85vh 内滚动、右上 ×、触点 ≥40px */
+@media (max-width:600px){
+  .npc-card-mask{align-items:flex-end;padding:0}
+  .npc-card{max-width:none;max-height:85vh;border-radius:16px 16px 0 0;
+    border-bottom:0;padding:22px 16px calc(16px + env(safe-area-inset-bottom))}
+  .npc-card::before{content:'';display:block;width:38px;height:4px;border-radius:2px;
+    background:var(--line);margin:0 auto 12px}
+  .npc-open,.npc-search,.npc-more-btn,.npc-card-close,.npc-hist-summary{min-height:40px}
+}
+/* 手机横屏：弹层 90vh 可滚动 */
+@media (max-height:500px) and (orientation:landscape){
+  .npc-card{max-height:90vh;overflow-y:auto}
+}

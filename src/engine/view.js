@@ -1,8 +1,25 @@
 'use strict';
 
 const { isInternalReject, computeOmen, computeDanger, cloneState } = require('./util.js');
+const npcs = require('../npcs.js');
 
-// ---- 对外视图：apex 与 Key 绝不出现在接口返回里 ----
+// ---- 对外视图：apex / Key / 私有档案绝不出现在接口返回里 ----
+
+// 普通回合 applied 的公开白名单：即便有人误把 npc_memory / npc_updates /
+// original / internal 塞进 applied，也只放行这些已消毒的玩法字段。
+const APPLIED_PUBLIC_KEYS = Object.freeze([
+  'state_diff', 'items_add', 'items_remove', 'npc_attitude',
+  'persona_tags', 'persona', 'suggestions', 'narration',
+]);
+
+function toPublicApplied(applied) {
+  const a = applied && typeof applied === 'object' ? applied : {};
+  const out = {};
+  for (const k of APPLIED_PUBLIC_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(a, k)) out[k] = a[k];
+  }
+  return out;
+}
 
 function toPublicState(state) {
   const out = cloneState(state || {});
@@ -12,6 +29,13 @@ function toPublicState(state) {
     if (key === 'apex' || key === 'pendingEventTheme' || key === 'twist' || /api.?key/i.test(key)) {
       delete out[key];
     }
+  }
+  // NPC 长期档案：内部 profile（含 original / internal / want / 隐藏动机）→ 公开白名单投影。
+  // 私有 state 的完整 bible / npcProfiles 原文不改写（cloneState 已是副本）。
+  out.npcProfiles = npcs.publicNpcProfiles(out);
+  const bibleNpcs = npcs.publicBibleNpcs(out);
+  if (bibleNpcs !== undefined && out.bible && typeof out.bible === 'object') {
+    out.bible.npcs = bibleNpcs; // 过滤 want 等隐藏动机及未知私有字段
   }
   // 风声预兆：只给出布尔标记，从不带出主题名。
   out.omen = computeOmen(out);
@@ -23,8 +47,8 @@ function toPublicState(state) {
 function toPublicTurnResult(result, state) {
   return {
     narration: result.narration,
-    applied: result.applied,
-    // 内部原因（如收益递减）只进内部日志，不给玩家看。
+    applied: toPublicApplied(result.applied),
+    // 内部原因（如收益递减 / npc_updates 拒绝）只进内部日志，不给玩家看。
     rejected: (result.rejected || []).filter((r) => !isInternalReject(r)),
     suggestions: result.suggestions,
     event: result.event,

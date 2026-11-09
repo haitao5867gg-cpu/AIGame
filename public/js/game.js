@@ -869,6 +869,8 @@
   // ---- 电脑端翻页：输入框未聚焦时，空格 / PageDown 翻一屏（留 2 行重叠），Shift+空格 / PageUp 上翻 ----
   document.addEventListener('keydown', function (e) {
     if (window.innerWidth < 860) return;
+    // 弹层（含人物档案）打开时，空格 / PageDown 不翻动背后正文。
+    if (typeof anyOverlayOpen === 'function' && anyOverlayOpen()) return;
     var ai = $('action-input');
     if (ai && document.activeElement === ai) return;              // 输入框聚焦时不触发
     var t = e.target;

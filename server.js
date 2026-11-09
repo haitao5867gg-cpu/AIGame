@@ -485,6 +485,46 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { items });
   }
 
+  // 人物档案详情：GET /api/worlds/:id/npcs/:npcId?before=...&limit=...
+  // 只读，复用登录 + requireOwner；不存在 / 未公开 / 跨世界人物 404，异常参数 400。
+  // 不提供 includePrivate 等开关（该参数一律忽略，绝不泄露 original / internal / want / apex）。
+  // 打开人物卡不调用 LLM / TTS / 出图，也不写任何存档。
+  const npcMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/npcs\/([^/]+)$/);
+  if (npcMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    let npcId;
+    try {
+      id = decodeURIComponent(npcMatch[1]);
+      npcId = decodeURIComponent(npcMatch[2]);
+    } catch (_) {
+      return sendError(res, 400, '非法的 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
+    const beforeRaw = searchParams ? searchParams.get('before') : null;
+    const limitRaw = searchParams ? searchParams.get('limit') : null;
+    // before：排他原始日志位置，必须是非负整数；空串按「从头」。turn 号不能当 cursor。
+    let before;
+    if (beforeRaw !== null && beforeRaw !== '') {
+      if (!/^\d+$/.test(beforeRaw) || !Number.isSafeInteger(Number(beforeRaw))) {
+        return sendError(res, 400, 'before 必须是非负整数');
+      }
+      before = Number(beforeRaw);
+    }
+    // limit：正整数，缺省 20，最大 50（由 getNpcHistory 夹取）。
+    let limit;
+    if (limitRaw !== null && limitRaw !== '') {
+      if (!/^\d+$/.test(limitRaw) || Number(limitRaw) <= 0 || !Number.isSafeInteger(Number(limitRaw))) {
+        return sendError(res, 400, 'limit 必须是正整数');
+      }
+      limit = Number(limitRaw);
+    }
+    const detail = g.getNpcDetail(id, npcId, { before, limit });
+    if (!detail) return sendError(res, 404, '人物不存在或未公开');
+    return sendJson(res, 200, detail);
+  }
+
   // 题材：POST /api/worlds/:id/genre {genre} 手选覆盖（requireOwner 后改并保存）。
   const genreMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/genre$/);
   if (genreMatch) {

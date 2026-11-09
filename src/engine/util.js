@@ -199,6 +199,11 @@ function normalizeState(state) {
   if (typeof s.rebirthOpening !== 'string') s.rebirthOpening = '';
   // 老存档缺物品介绍：补空表，接口 /items 会按需补生成。
   if (!s.itemInfo || typeof s.itemInfo !== 'object' || Array.isArray(s.itemInfo)) s.itemInfo = {};
+  // NPC 长期档案：老存档缺字段补默认，且不 require npcs 模块（避免循环 require）。
+  // npcMemoryVersion 缺省为 0 = 旧档「需要回填」标记；绝不在此伪标为当前版本，
+  // 真正的回填由 loadState 调 hydrateNpcMemory(state, events) 完成。
+  if (!s.npcProfiles || typeof s.npcProfiles !== 'object' || Array.isArray(s.npcProfiles)) s.npcProfiles = {};
+  if (!Number.isInteger(s.npcMemoryVersion) || s.npcMemoryVersion < 0) s.npcMemoryVersion = 0;
   if (!Array.isArray(s.rumors)) s.rumors = [];
   if (!Array.isArray(s.pastLives)) s.pastLives = [];
   if (!Array.isArray(s.facts)) s.facts = [];

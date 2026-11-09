@@ -236,7 +236,8 @@
     return ($('panel') && $('panel').dataset.open === 'true')
       || ($('usage-pop') && !$('usage-pop').hidden)
       || !!document.getElementById('prologue-mask')
-      || !!document.getElementById('item-card-modal');
+      || !!document.getElementById('item-card-modal')
+      || !!document.getElementById('npc-card-modal');
   }
   function syncBodyScrollLock() {
     var locked = window.innerWidth <= 600 && anyOverlayOpen();

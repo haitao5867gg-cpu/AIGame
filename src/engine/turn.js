@@ -5,6 +5,7 @@ const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFa
 const { validateProposal } = require('./proposal.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
 const { apexConditionMet, applyDeath } = require('./life.js');
+const npcs = require('../npcs.js');
 
 // ---- 单回合主流程（纯函数） ----
 
@@ -267,6 +268,17 @@ function resolveTurn(state, input, opts) {
   // 亲密 / 成人回合不出图：焦点是玩家与 NPC 的相处，不生成场景插图。
   if (nf.focus === 'intimate' || adult) scene.draw = false;
 
+  // NPC 长期档案：仅在叙事 / 数值结算都已验证有效后应用 npc_updates。
+  // 时间 / 主角名 / 世数取原 beforeState（state），死亡当回合不落入下一世。
+  // 变化仅落在私有 result.npc_memory，绝不进入公开 applied / 普通回合响应。
+  const rawNpcUpdates = prop.npc_updates !== undefined ? prop.npc_updates : data.npc_updates;
+  const npcMem = npcs.applyNpcMemory(state, s, rawNpcUpdates, {
+    action,
+    narration: applied.narration,
+  });
+  s = npcMem.state;
+  for (const r of npcMem.rejected) rejected.push(internalReject(r));
+
   const result = {
     turn: nextTurn,
     life: s.life,
@@ -285,6 +297,7 @@ function resolveTurn(state, input, opts) {
     adult,          // 本回合是否含成人露骨内容：进公开结果 / events 记录，供前端朗读判定
     apex: apexInfo, // 仅用于 events.jsonl 内部记录，接口返回前必须过滤
     twist,          // 本回合强制转折，仅写入 events.jsonl，绝不进公开状态 / 公开回合结果
+    npc_memory: npcMem.changes, // 私有：仅 game.appendEvent 落库，绝不进公开 applied / 响应
     needChapter: !!(plan.needChapter && !chapter),
     needNewApex: apexInfo.needNewApex,
     ts: now,

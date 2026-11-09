@@ -304,6 +304,7 @@ function mockTurn(m) {
       ? { '一枚旧币': { desc: '拾来的一枚磨损旧币，面文已模糊，或可换些小物。', type: '杂物' } }
       : {},
     npc_attitude: {},
+    npc_updates: [], // 可选人物档案更新；下面按「确实出场的人物 / 原文」补合法条目，无变化保持空数组
     persona_tags: ['冒险'],
     suggestions: ['继续沿旧道探查', '向守夜人打听钟声', '先去枯井集市补给'],
     // 越界升级：约每 7 回合模拟一次越界行为，让引擎累计 oversteps、覆盖升级阶梯链路。
@@ -371,6 +372,29 @@ function mockTurn(m) {
     { para: 1, mood: 'tense', pace: 'normal', speaker: '守夜人' },
     { para: 2, mood: 'calm', pace: 'normal' },
   ];
+  // NPC 长期档案：守夜人确实出现在上面这段叙事里，evidence 是 narration 的连续子串、
+  // 公共值摘自原文。只给「确实出场的人物 / 原文」合法 npc_updates，不编造未登场人物、
+  // 不把没发生的事写成已发生；第 1 回合给一次身份 / 描述线索，其后偶尔记一次真实出场
+  // （不加新资料），其余回合保持空数组，不为测试填满资料、不强求每回合变化。
+  // 这条固定证据只在该分支最终 narration 确实出现时才发：overstep / event / settlement
+  // 等特殊分支各按自身实际叙事判断，绝不发出「证据不在原文」的自相矛盾夹具，也不改
+  // 原故事来凑字段。
+  const npcEvidence = '守夜人提灯拦住去路';
+  if (out.narration.includes(npcEvidence)) {
+    if (turn === 1) {
+      out.npc_updates.push({
+        name: '守夜人',
+        kind: 'interaction',
+        evidence: npcEvidence,
+        known: {
+          role: '守夜人',
+          description: '守夜人提灯拦住去路',
+        },
+      });
+    } else if (turn % 5 === 0) {
+      out.npc_updates.push({ name: '守夜人', kind: 'interaction', evidence: npcEvidence });
+    }
+  }
   return out;
 }
 
@@ -447,6 +471,7 @@ function mockItemsInfo(m) {
 
 function mockFor(purpose, m) {
   switch (purpose) {
+    case 'npc_memory': return { npc_updates: [] };
     case PURPOSES.WORLD: return mockWorld(m);
     case PURPOSES.TURN: return mockTurn(m);
     case PURPOSES.CHAPTER: return mockChapter(m);
@@ -615,7 +640,9 @@ function createClient(cfg, dataDir) {
     };
   }
 
-  async function httpChat(model, messages, responseFormat) {
+  async function httpChat(model, messages, responseFormat, requestOptions) {
+    const ro = requestOptions || {};
+    const requestTimeout = Number.isSafeInteger(ro.timeoutMs) && ro.timeoutMs > 0 ? Math.min(timeout, ro.timeoutMs) : timeout;
     if (!base) {
       const err = new Error('未配置 LLM_BASE，无法调用真实模型');
       err.status = 500;
@@ -628,10 +655,11 @@ function createClient(cfg, dataDir) {
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
     });
+    if (Number.isSafeInteger(ro.maxTokens) && ro.maxTokens > 0) payload.max_tokens = ro.maxTokens;
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+    const timer = setTimeout(() => controller.abort(), requestTimeout);
     let resp;
     try {
       resp = await fetch(base + '/chat/completions', {
@@ -641,22 +669,23 @@ function createClient(cfg, dataDir) {
         signal: controller.signal,
       });
     } catch (err) {
-      clearTimeout(timer);
       if (err && err.name === 'AbortError') {
-        const e = new Error(`LLM 调用超时（${timeout} ms）`);
+        clearTimeout(timer);
+        const e = new Error(`LLM 调用超时（${requestTimeout} ms）`);
         e.status = 504;
         e.expose = true;
         throw e;
       }
+      clearTimeout(timer);
       const e = new Error(`LLM 网络请求失败：${err && err.message ? err.message : err}`);
       e.status = 502;
       e.expose = true;
       throw e;
     }
-    clearTimeout(timer);
     if (!resp.ok) {
       let text = '';
       try { text = await resp.text(); } catch (_) { /* 忽略读取错误 */ }
+      clearTimeout(timer);
       const e = new Error(`LLM 接口返回 ${resp.status}：${clip(text, 200)}`);
       e.status = 502;
       e.expose = true;
@@ -664,11 +693,13 @@ function createClient(cfg, dataDir) {
     }
     let data;
     try { data = await resp.json(); } catch (_) {
+      clearTimeout(timer);
       const e = new Error('LLM 返回不是合法 JSON');
       e.status = 502;
       e.expose = true;
       throw e;
     }
+    clearTimeout(timer);
     const content =
       data && data.choices && data.choices[0] &&
       data.choices[0].message && data.choices[0].message.content;
@@ -793,7 +824,7 @@ function createClient(cfg, dataDir) {
 
     const t0 = Date.now();
     try {
-      const r = await httpChat(model, messages, o.responseFormat);
+      const r = await httpChat(model, messages, o.responseFormat, o);
       const ms = Date.now() - t0;
       appendUsage({
         ts: now, model, purpose,

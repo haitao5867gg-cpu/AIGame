@@ -8,6 +8,8 @@ const events = require('./engine/events.js');
 const life = require('./engine/life.js');
 const view = require('./engine/view.js');
 const turn = require('./engine/turn.js');
+const npcs = require('./npcs.js');
+const eventLog = require('./event-log.js');
 
 module.exports = {
   ATTRS: constants.ATTRS,
@@ -82,4 +84,24 @@ module.exports = {
   toPublicState: view.toPublicState,
   toPublicTurnResult: view.toPublicTurnResult,
   resolveTurn: turn.resolveTurn,
+  // ---- NPC 长期人物档案（纯数据层，供 game / API / 提示词接线复用） ----
+  NPC_MEMORY_VERSION: npcs.NPC_MEMORY_VERSION,
+  NPC_FIELD_MAX: npcs.NPC_FIELD_MAX,
+  NPC_UPDATES_MAX: npcs.NPC_UPDATES_MAX,
+  HISTORY_LIMIT_DEFAULT: npcs.HISTORY_LIMIT_DEFAULT,
+  HISTORY_LIMIT_MAX: npcs.HISTORY_LIMIT_MAX,
+  TRAIT_CATEGORIES: npcs.TRAIT_CATEGORIES,
+  stableId: npcs.stableId,
+  initializeNpcMemory: npcs.initializeNpcMemory,
+  normalizeNpcMemory: npcs.normalizeNpcMemory,
+  needsNpcHydration: npcs.needsNpcHydration,
+  hydrateNpcMemory: npcs.hydrateNpcMemory,
+  applyNpcMemory: npcs.applyNpcMemory,
+  publicNpcProfiles: npcs.publicNpcProfiles,
+  publicBibleNpcs: npcs.publicBibleNpcs,
+  getNpcHistory: npcs.getNpcHistory,
+  npcPromptContext: npcs.npcPromptContext,
+  // ---- 共享可见事件过滤（game 迁移前的共享纯函数） ----
+  visibleEventRecords: eventLog.visibleEventRecords,
+  visibleEventEntries: eventLog.visibleEventEntries,
 };

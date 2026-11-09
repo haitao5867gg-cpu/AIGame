@@ -3,6 +3,7 @@
 const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS } = require('./constants.js');
 const { normalizeGenre } = require('../genres.js');
 const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue, cleanItemInfo } = require('./util.js');
+const npcs = require('../npcs.js');
 
 // ---- 建世界 / 分配属性点 ----
 
@@ -46,7 +47,7 @@ function createWorld(spec, opts) {
   if (prologue) bible.prologue = prologue;
   else delete bible.prologue;
   const startItems = startingItems(bible);
-  return {
+  const world = {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
     seed: s.seed || '',
@@ -88,6 +89,8 @@ function createWorld(spec, opts) {
     // 起始物品介绍：只接受真正加入物品栏的名字，desc/type 由 cleanItemInfo 消毒。
     itemInfo: cleanItemInfo(bible.start && bible.start.items_info, startItems),
   };
+  // 新世界：初始化 NPC 长期档案（按 bible.npcs 建立完整 original 基线，标记已迁移）。
+  return npcs.initializeNpcMemory(world);
 }
 
 module.exports = {

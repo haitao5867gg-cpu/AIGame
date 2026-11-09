@@ -7,6 +7,8 @@
 const crypto = require('node:crypto');
 const store = require('./store.js');
 const engine = require('./engine.js');
+const eventLog = require('./event-log.js');
+const npcExtraction = require('./npc-extraction.js');
 const llm = require('./llm.js');
 const prompts = require('./prompts.js');
 const prefs = require('./prefs.js');
@@ -177,24 +179,14 @@ function toPublicLogRecord(rec) {
   };
 }
 
-// 从 events.jsonl 原始记录中挑出「可见」记录（供 /log 与导出回放）：
-//  - {type:'undo'} 是撤回标记，不是叙事，隐藏；
-//  - 每条撤回标记紧跟在被撤回回合记录之后（日志只追加不删除，且撤回在世界锁内紧接回合发生），
-//    因此把标记前一条 turn === undoneTurn 的记录一并隐藏。
-// 用「位置」而非全局回合号集合判定：撤回后再走一步会复用同一回合号，新记录位于标记之后、仍可见。
+// 从 events.jsonl 原始记录中挑出「可见」记录（供 /log 与导出回放）。
+// 具体实现已提到 src/event-log.js 作为共享纯函数：NPC 档案回填 / 历史 / AI 资料
+// 与这里复用同一份 canonical 过滤，确保撤回旧分支不能复活。game.js 保留同名导出
+// 以兼容既有调用方与测试，行为与 eventLog.visibleEventRecords 完全一致。
+//  - {type:'undo'} 是撤回标记，不是叙事，隐藏；标记前一条 turn === undoneTurn 的记录一并隐藏；
+//  - 用「位置」而非全局回合号集合判定：撤回后再走一步会复用同一回合号，新记录仍可见。
 function visibleEventRecords(events) {
-  const list = Array.isArray(events) ? events : [];
-  const hidden = new Set();
-  for (let i = 0; i < list.length; i++) {
-    const e = list[i];
-    if (!e || e.type !== 'undo') continue;
-    hidden.add(i);
-    const prev = list[i - 1];
-    if (prev && prev.type !== 'undo' && prev.turn === e.undoneTurn) hidden.add(i - 1);
-  }
-  const out = [];
-  for (let i = 0; i < list.length; i++) if (!hidden.has(i)) out.push(list[i]);
-  return out;
+  return eventLog.visibleEventRecords(events);
 }
 
 // 取被撤回回合的行动文字：最近一条 turn === undoneTurn 的回合记录，供前端填回输入框。
@@ -286,6 +278,34 @@ function maybeRestoreRecent(dataDir, worldId, state) {
   } catch (_) {
     return state; // 恢复失败绝不破坏现有读存档 / 回合流程
   }
+}
+
+// 旧存档 NPC 档案「只读回填」缓存：key = dataDir + worldId，value = { revision, hydrated }。
+// 缓存的是 hydrateNpcMemory(state, events) 的结果，只在内存里给读路径用，绝不写回磁盘；
+// 命中时返回副本，避免 ensureGenre / setGenre 等调用方改动共享对象。
+// revision 取 store.worldRevision（state/events 的 mtime+size，外加 inode 兜底），
+// 撤回 / 重走同 turn 改变文件字节即失效，不依赖 world.turn，绝不复活旧分支记忆。
+const npcHydrationCache = new Map();
+
+// 回填缓存有界 LRU：全局 Map 会随访问过的世界数无限增长，给一个合理上限；
+// 命中 / 写入都把项移到「最近使用」末尾，超限淘汰最久未用的首项。纯内存，
+// 不新增持久文件 / 依赖，也不改真实存档；删除 / 不存在世界另见 loadState / deleteWorld 清理。
+const NPC_HYDRATION_CACHE_MAX = 64;
+
+function rememberHydration(cacheKey, value) {
+  if (npcHydrationCache.has(cacheKey)) npcHydrationCache.delete(cacheKey);
+  npcHydrationCache.set(cacheKey, value);
+  while (npcHydrationCache.size > NPC_HYDRATION_CACHE_MAX) {
+    npcHydrationCache.delete(npcHydrationCache.keys().next().value);
+  }
+}
+
+function npcHydrationCacheSize() {
+  return npcHydrationCache.size;
+}
+
+function cloneForRead(v) {
+  return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
 
 function createGame(cfg, dataDir) {
@@ -412,9 +432,45 @@ function createGame(cfg, dataDir) {
   }
 
   // 读取世界状态；老存档缺少新玩法字段时自动补默认值，不报错。
+  // 旧格式 NPC 档案：从 canonical 可见 events 只读回填，缓存按 state/events 文件 revision
+  // （不是 world.turn）判失效，避免图片轮询 / 人物详情反复全量扫描，且 undo / 重走同 turn
+  // 不会串回旧分支记忆。回填只在内存、不写 state 文件、不调 LLM；缺日志 / 旧字段继续玩、
+  // 不造历史；新格式（npcMemoryVersion 已达标）正常回合保存后不再扫描全史。
   function loadState(worldId) {
-    const state = store.loadWorld(dataDir, worldId);
-    return state ? engine.normalizeState(state) : null;
+    const cacheKey = `${dataDir}\u0000${worldId}`;
+    const raw = store.loadWorld(dataDir, worldId);
+    if (!raw) {
+      // 世界已删除 / 不存在：清掉可能残留的旧档回填缓存，不让失效世界占着有界缓存。
+      npcHydrationCache.delete(cacheKey);
+      return null;
+    }
+    const state = engine.normalizeState(raw);
+    if (!engine.needsNpcHydration(state)) {
+      npcHydrationCache.delete(cacheKey);
+      return state;
+    }
+    let revision;
+    try {
+      revision = store.worldRevision(dataDir, worldId);
+    } catch (_) {
+      revision = null;
+    }
+    const cached = npcHydrationCache.get(cacheKey);
+    if (cached && revision !== null && cached.revision === revision) {
+      rememberHydration(cacheKey, cached); // 命中：维持 LRU 顺序，不重复全史扫描
+      return cloneForRead(cached.hydrated); // 命中返回深拷贝，调用方改动不污染缓存
+    }
+    let events = [];
+    try {
+      events = store.readEvents(dataDir, worldId);
+    } catch (_) {
+      // 缺日志 / 读失败：用空事件回填（仅保留 bible / attitude 基线），继续玩、不造历史。
+      events = [];
+    }
+    // hydrateNpcMemory 内部复用共享 canonical 过滤（visibleEventEntries），撤回分支被排除。
+    const hydrated = engine.hydrateNpcMemory(state, events);
+    rememberHydration(cacheKey, { revision, hydrated });
+    return cloneForRead(hydrated);
   }
 
   // ---- 建世界 ----
@@ -594,16 +650,96 @@ function createGame(cfg, dataDir) {
     return client.usageToday(Date.now(), playerId);
   }
 
-  // GET /api/worlds/:id/export：state.json（去掉 apex 等内部字段，用公开状态）
-  // + events.jsonl 的公开字段，打包成一个可下载的对象。
+  // 收集某位已公开人物的「全部」履历：复用 getNpcHistory 的排他 eventIndex 游标逐页翻，
+  // 直到 hasMore=false，绝不只取前 20/50 条。任何「声称还有记录却无法安全推进」的异常
+  // （空页、hasMore 与 nextCursor 不一致、游标不前进 / 倒退循环、guard 耗尽、实收条目
+  // 少于 total）都明确抛带状态码的安全错误中止，绝不 break 后返回 entries 不足却 total
+  // 更大的半份「完整」导出；正常 120+ 条、before=0 翻到最旧合成开场仍能读全。
+  const MAX_HISTORY_PAGES = 10000; // 分页安全上限：远超任何真实世界页数，仅防异常游标死循环
+  function collectNpcHistory(state, rawEvents, npcId) {
+    const limit = engine.HISTORY_LIMIT_MAX;
+    const first = engine.getNpcHistory(state, rawEvents, npcId, { limit });
+    if (!first) return null;
+    const entries = first.history.entries.slice();
+    const total = first.history.total;
+
+    // 校验一页并返回下一页游标；异常一律抛安全错误，绝不静默 break。
+    // prevCursor 为 null 表示首调用（before 未给），只校验游标本身、不做「必须变小」比较。
+    function advance(page, prevCursor) {
+      const h = page && page.history;
+      if (!h || !Array.isArray(h.entries)) {
+        throw httpError(500, '人物履历分页数据异常，导出中止');
+      }
+      if (!h.entries.length) {
+        throw httpError(500, '人物履历返回空页，导出中止');
+      }
+      if (!h.hasMore) return null; // 正常收尾
+      const c = h.nextCursor;
+      if (c === null || c === undefined) {
+        throw httpError(500, '人物履历分页游标缺失（hasMore 与 nextCursor 不一致），导出中止');
+      }
+      if (!Number.isInteger(c) || c < 0 || (prevCursor !== null && c >= prevCursor)) {
+        throw httpError(500, '人物履历分页游标未推进 / 倒退循环，导出中止');
+      }
+      return c;
+    }
+
+    let cursor = advance(first, null);
+    let pages = 1; // 首调用已计入
+    while (cursor !== null) {
+      if (pages >= MAX_HISTORY_PAGES) {
+        throw httpError(500, '人物履历分页超过安全上限，导出中止');
+      }
+      const page = engine.getNpcHistory(state, rawEvents, npcId, { before: cursor, limit });
+      const next = advance(page, cursor); // 先校验，异常时绝不把半页并进结果返回
+      entries.push(...page.history.entries);
+      cursor = next;
+      pages += 1;
+    }
+    if (entries.length !== total) {
+      throw httpError(500, `人物履历收集不完整（实收 ${entries.length} / total ${total}），导出中止`);
+    }
+    return { profile: first.profile, history: { entries, total } };
+  }
+
+  // GET /api/worlds/:id/export：保持「去私密」语义（公开状态 + 公开日志），
+  // 并额外导出完整公开 NPC 档案 / 履历（遍历分页收集全部原文，不含
+  // original / internal / want / apex 等私有资料）。
+  // 这是给玩家分享的公开导出，不是服务器 state/events 完整备份：后者含私有字段，
+  // 用途与权限都不同；需要完整历史请以服务器文件备份为准。
   function exportWorld(worldId) {
     store.assertWorldId(worldId);
     const state = loadState(worldId);
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+    const rawEvents = store.readEvents(dataDir, worldId);
+    // 人物集合以「有效当前档案」为准：loadState 已处理旧迁移，state 里已接纳的当前角色 /
+    // traits 不因旧日志全缺 / 只剩部分记录被重建抹掉（旧版先无条件 hydrate 再取集合会丢档案）。
+    // 两处都只取 established===true 的公开字典：current 保住有效 schema1 当前档案，
+    // event 再并上仅由 canonical 可见叙事 / 事件建立、state 里仍是基线的人物，保证不漏人。
+    // 历史只从剩余 canonical 日志由 getNpcHistory 分页收集，不造记录、不补全成完整原文。
+    const currentProfiles = engine.publicNpcProfiles(state);
+    const eventProfiles = engine.publicNpcProfiles(engine.hydrateNpcMemory(state, rawEvents));
+    const npcArchive = {};
+    for (const npcId of new Set([...Object.keys(currentProfiles), ...Object.keys(eventProfiles)])) {
+      const detail = collectNpcHistory(state, rawEvents, npcId);
+      if (detail) npcArchive[npcId] = detail;
+    }
     return {
       state: engine.toPublicState(state),
-      events: visibleEventRecords(store.readEvents(dataDir, worldId)).map(toPublicLogRecord),
+      events: visibleEventRecords(rawEvents).map(toPublicLogRecord),
+      npcArchive, // 完整公开档案 + 全量履历原文（已由 getNpcHistory 过滤 internal）
     };
+  }
+
+  // 人物档案详情（只读）：GET /api/worlds/:id/npcs/:npcId 的数据来源。
+  // 复用共享契约 getNpcHistory（canonical 可见记录、公共投影、原始 eventIndex 游标分页）。
+  // 不存在 / 未公开 / 不属于本世界的人物返回 null；读路径不写盘、不调 LLM / 出图 / TTS。
+  function getNpcDetail(worldId, npcId, opts) {
+    store.assertWorldId(worldId);
+    const state = loadState(worldId);
+    if (!state) return null;
+    const rawEvents = store.readEvents(dataDir, worldId);
+    return engine.getNpcHistory(state, rawEvents, npcId, opts);
   }
 
   // GET /api/worlds/:id/log?limit=50：从 events.jsonl 读最近 N 条，只返回公开字段。
@@ -686,6 +822,7 @@ function createGame(cfg, dataDir) {
         focus: out.focus, // 玩家本回合在做的事（安静模式判定用）
         continuing: out.continuing, // 是否继续上一回合同一件事（安静模式判定用）
         adult: out.adult, // 本回合是否含成人露骨内容
+        npc_updates: out.npc_updates, // 可选人物档案更新；引擎校验后只落私有 result.npc_memory
       };
       const data = {
         action,
@@ -739,6 +876,10 @@ function createGame(cfg, dataDir) {
         throw httpError(422, resolved.error || '本回合无效，请重试');
       }
 
+      const npcExtractionInfo = await npcExtraction.completeMemory(
+        client, turnModel, state, resolved, action, usages,
+      );
+
       // 死亡：额外调用一次回合模型写墓志铭并入 state.pastLives。
       // 失败 / 超时都回退模板，绝不阻断本回合落库与后续重生。
       let finalState = resolved.state;
@@ -773,6 +914,8 @@ function createGame(cfg, dataDir) {
         death: resolved.result.death || null,
         apex: resolved.result.apex || null,
         twist: resolved.result.twist || null, // 导演转折只进 events.jsonl，不进公开状态 / 公开 log
+        npc_memory: resolved.result.npc_memory || [], // 私有：仅内部 events.jsonl，绝不进公开 applied / 响应 / log
+        npc_memory_extraction: npcExtractionInfo, // 私有补档诊断，不进公开响应
         scene: resolved.result.scene || null,
         voice_hints: resolved.result.voice_hints || [],
         adult: resolved.result.adult === true,
@@ -871,6 +1014,8 @@ function createGame(cfg, dataDir) {
     return store.withWorldLock(worldId, async () => {
       const dest = store.deleteWorld(dataDir, worldId);
       if (!dest) throw httpError(404, '世界不存在');
+      // 世界已移入回收站：清掉旧档回填缓存里对应项，不让已删除世界占着有界缓存。
+      npcHydrationCache.delete(`${dataDir}\u0000${worldId}`);
       return { deleted: true };
     });
   }
@@ -885,7 +1030,7 @@ function createGame(cfg, dataDir) {
 
   return {
     buildWorld, getWorld, ensurePrologue, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
-    exportWorld, undoTurn, listScenes,
+    exportWorld, undoTurn, listScenes, getNpcDetail,
   };
 }
 
@@ -897,4 +1042,5 @@ module.exports = {
   templateEpitaph, epitaphFromParsed,
   templateRebirthOpening, openingFromParsed, rebirthInfo,
   REBIRTH_OPENING_MIN, REBIRTH_OPENING_MAX,
+  NPC_HYDRATION_CACHE_MAX, npcHydrationCacheSize,
 };

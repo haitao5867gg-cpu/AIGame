@@ -157,6 +157,24 @@ function readEvents(dataDir, worldId) {
   return readJsonl(eventsPath(dataDir, worldId));
 }
 
+// 只读「修订号」：把 state.json 与 events.jsonl 的 mtime+size（外加 inode 作同毫秒兜底）
+// 拼成一个字符串。旧存档 NPC 档案回填的缓存用它判失效，而不是只看 world.turn——
+// 撤回只追加 undo 标记、重走同 turn 复用回合号，两者都会改变这两个文件的字节，
+// 即使回合号不变也能让缓存失效，绝不复活被撤回分支的旧记忆。
+// 纯读：文件不存在记 0，不创建、不写盘；不纳入撤回备份 / 不新增可变历史文件。
+function worldRevision(dataDir, worldId) {
+  const parts = [];
+  for (const p of [statePath(dataDir, worldId), eventsPath(dataDir, worldId)]) {
+    try {
+      const st = fs.statSync(p);
+      parts.push(`${st.mtimeMs}:${st.size}:${st.ino}`);
+    } catch (_) {
+      parts.push('0:0:0');
+    }
+  }
+  return parts.join('|');
+}
+
 function appendUsage(dataDir, record) {
   // 请求级上下文里带着当前玩家：记用量时补上，方便按玩家统计（有值才补，已带则不改）。
   let rec = record;
@@ -293,6 +311,7 @@ module.exports = {
   worldExists,
   appendEvent,
   readEvents,
+  worldRevision,
   appendUsage,
   backupForUndo,
   hasUndoBackup,

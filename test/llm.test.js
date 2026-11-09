@@ -57,6 +57,29 @@ function stubWarn(t) {
   return warns;
 }
 
+test('人物补档可单独限制输出，且计入正常模型用量', async (t) => {
+  const dir = tmpDir(t);
+  const c = llm.createClient(baseCfg({ LLM_EXTRA_BODY: '{"max_tokens":9999}' }), dir);
+  const captured = await captureFetch(t, () => c.complete({ purpose: 'npc_memory',
+    messages: [{ role: 'user', content: '摘录' }], maxTokens: 1500, timeoutMs: 1000 }));
+  assert.equal(captured.body.max_tokens, 1500);
+  const usage = JSON.parse(fs.readFileSync(path.join(dir, 'usage.jsonl'), 'utf8').trim());
+  assert.equal(usage.purpose, 'npc_memory');
+  assert.equal(usage.prompt_tokens, 2);
+});
+
+test('短补档超时覆盖响应体读取，不能等到全局长超时', async (t) => {
+  const dir = tmpDir(t), original = global.fetch;
+  global.fetch = async (_, opts) => ({ ok: true, json: () => new Promise((_, reject) => {
+    opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  }) });
+  t.after(() => { global.fetch = original; });
+  const c = llm.createClient(baseCfg({ LLM_TIMEOUT_MS: 5000 }), dir);
+  const start = Date.now();
+  await assert.rejects(c.complete({ purpose: 'npc_memory', messages: [], timeoutMs: 25 }), /JSON|超时/);
+  assert(Date.now() - start < 1000);
+});
+
 test('parseExtraBody: 合法 JSON 对象、空值、解析失败 / 非对象时忽略并告警', (t) => {
   assert.deepEqual(llm.parseExtraBody(''), {});
   assert.deepEqual(llm.parseExtraBody(null), {});
@@ -294,4 +317,43 @@ test('全局每日上限逻辑保留不变：任何人达到全局上限都被�
       (err) => err.status === 429 && /今日 token 用量已达上限 50/.test(err.message),
     );
   });
+});
+
+// 第1轮收尾返工：mock 的 npc_updates 证据始终是该分支实际 narration 的连续子串。
+test('mockTurn：overstep/event/settlement 分支的 npc_updates 证据始终合法', async (t) => {
+  const cfg = baseCfg({ LLM_MOCK: true });
+  const client = llm.createClient(cfg, tmpDir(t));
+  const cases = [
+    { turn: 1 },
+    { turn: 1, needEvent: true, theme: '秘境开启' },
+    { turn: 1, needEvent: true, needSettlement: true, theme: '天灾' },
+    { turn: 5 },
+    { turn: 5, needEvent: true, theme: '商路断绝' },
+    { turn: 7, needSettlement: true },                        // overstep
+    { turn: 7, needEvent: true, needSettlement: true, theme: '古神低语' },
+    { turn: 8 },
+  ];
+  for (const m of cases) {
+    const res = await client.complete({ purpose: 'turn', model: 'm', messages: [], mock: m });
+    const out = JSON.parse(res.content);
+    assert.equal(typeof out.narration, 'string', `turn=${m.turn} 有 narration`);
+    const updates = out.npc_updates || [];
+    for (const u of updates) {
+      assert.ok(out.narration.includes(u.evidence),
+        `turn=${m.turn} evidence 必须是该分支最终 narration 的连续子串：${u.evidence}`);
+      assert.ok(out.narration.includes(u.name), `turn=${m.turn} 人物须真实出场`);
+      const known = u.known || {};
+      for (const k of ['role', 'description', 'voice', 'publicGoal', 'relationshipSummary']) {
+        if (typeof known[k] === 'string' && known[k]) {
+          assert.ok(out.narration.includes(known[k]), `turn=${m.turn} known.${k} 须摘自原文`);
+        }
+      }
+    }
+    if (!out.narration.includes('守夜人提灯拦住去路')) {
+      assert.deepEqual(updates, [], `turn=${m.turn} 守夜人未出现就不发证据（不自相矛盾）`);
+    }
+  }
+  // 守卫确实按「该分支最终 narration」判断，而不是无条件发固定证据。
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/llm.js'), 'utf8');
+  assert.match(src, /narration\.includes\(npcEvidence\)/, 'mock 对固定 evidence 有实际 narration 守卫');
 });
