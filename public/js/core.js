@@ -53,6 +53,15 @@
     return n;
   }
 
+  // 游戏日显示：每 365 日算一「年」。正整数 day ≤ 365 显示「第N日」，
+  // 否则换算成「第N年 第M日」；非正整数 / 非法值一律按第 1 日。
+  function formatGameDay(day) {
+    var d = Number(day);
+    if (!Number.isFinite(d) || d < 1 || Math.floor(d) !== d) d = 1;
+    if (d <= 365) return '第' + d + '日';
+    return '第' + (Math.floor((d - 1) / 365) + 1) + '年 第' + ((d - 1) % 365 + 1) + '日';
+  }
+
   /* NARRATION_HELPERS_START */
   // 按空行（\n\n，中间可含空白）把叙事切成段落；纯函数，供流式实时分段。
   function splitByBlankLines(text) {
@@ -235,6 +244,7 @@
   function anyOverlayOpen() {
     return ($('panel') && $('panel').dataset.open === 'true')
       || ($('usage-pop') && !$('usage-pop').hidden)
+      || ($('timeskip-pop') && !$('timeskip-pop').hidden)
       || !!document.getElementById('prologue-mask')
       || !!document.getElementById('item-card-modal')
       || !!document.getElementById('npc-card-modal')

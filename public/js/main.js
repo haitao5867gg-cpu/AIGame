@@ -61,10 +61,17 @@
         if (act === 'usage') setUsageOpen(true);
         else if (act === 'panel') { $('panel').dataset.open = 'true'; syncBodyScrollLock(); }
         else if (act === 'export') { if (currentWorldId) exportWorld(currentWorldId); }
+        else if (act === 'timeskip') openTimeSkip();
         else if (act === 'genre') openGenrePop();
         else if (act === 'logout') doLogout();
         else if (act === 'atmosphere' && typeof Atmosphere !== 'undefined') Atmosphere.openSettings();
       });
+    });
+
+    // ---- 时光推进：桌面地点行标签点击打开弹层 ----
+    $('g-timeskip').addEventListener('click', function (e) {
+      e.stopPropagation();
+      openTimeSkip();
     });
 
     // ---- 文风：桌面地点行标签点击弹出选择列表；点列表 / 标签 / 菜单项之外收起 ----

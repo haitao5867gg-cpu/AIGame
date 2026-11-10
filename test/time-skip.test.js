@@ -251,6 +251,8 @@ test('prompts：timeSkip → 含新段 / landing_period / label / plan，不含�
   assert.ok(system.content.includes('一年'));
   assert.ok(system.content.includes('闭关修炼'));
   assert.ok(system.content.includes('单项最多 +3，正向合计最多 +5'));
+  assert.ok(system.content.includes('叙事从【时与地】的此刻出发，结尾落在跳跃结束之后的新时刻'),
+    '提示词应含第 8 条：本段优先于 time_passes / 时与地一致要求');
   assert.equal(system.content.includes('时间只随回合缓慢推进'), false);
   // opts.timeSkip 也能触发
   const [system2] = prompts.buildTurnMessages(makePromptState(),

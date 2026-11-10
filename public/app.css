@@ -704,3 +704,23 @@ body.atmosphere-background .g-subhead{background:rgba(20,19,15,.86);border-radiu
   .atmosphere-quick{margin-right:0}
 }
 @media(prefers-reduced-motion:reduce){.world-backdrop{transition:none}}
+
+/* ---- 时光推进弹层：居中卡片，遮罩点击关闭；分隔线复用 .divider ---- */
+.timeskip-pop{position:fixed;inset:0;z-index:88;background:rgba(8,8,6,.82);display:flex;
+  align-items:center;justify-content:center;padding:12px}
+.timeskip-card{position:relative;width:100%;max-width:420px;max-height:calc(100vh - 24px);overflow-y:auto;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:22px;font-family:var(--sans)}
+.timeskip-card h3{margin:0 0 10px;font-family:var(--serif);font-size:22px}
+.timeskip-desc{font-size:13px;color:var(--muted);line-height:1.7;margin:0 0 14px}
+.timeskip-options{display:flex;flex-direction:column;gap:6px;margin:0 0 14px}
+.timeskip-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:16px;
+  color:var(--ink);background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+.timeskip-option input{width:18px;height:18px;flex:none;accent-color:var(--accent-2);margin:0}
+.timeskip-plan{display:block;width:100%;min-height:88px;font-size:16px;background:var(--bg-2);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical}
+.timeskip-buttons{display:flex;gap:10px;margin-top:14px}
+.timeskip-buttons .btn{flex:1;min-height:44px}
+@media(max-width:600px){
+  .timeskip-pop{align-items:flex-end}
+  .timeskip-card{max-height:85vh;border-radius:16px 16px 0 0;padding:22px 16px calc(18px + env(safe-area-inset-bottom))}
+}

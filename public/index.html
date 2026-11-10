@@ -69,12 +69,14 @@
         <button type="button" class="more-menu-item" data-menu="usage">用量</button>
         <button type="button" class="more-menu-item" data-menu="panel">角色面板</button>
         <button type="button" class="more-menu-item" data-menu="export">导出</button>
+        <button type="button" id="menu-timeskip" class="more-menu-item" data-menu="timeskip">时光推进</button>
         <button type="button" id="menu-genre" class="more-menu-item" data-menu="genre">文风：<span id="menu-genre-name">识别中</span></button>
         <button type="button" class="more-menu-item" data-menu="atmosphere">氛围设置</button>
         <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
       </div>
       <div id="usage-pop" class="usage-pop" hidden></div>
       <div id="genre-pop" class="genre-pop" hidden></div>
+      <div id="timeskip-pop" class="timeskip-pop" role="dialog" aria-modal="true" aria-labelledby="timeskip-title" hidden></div>
     </header>
     <div id="g-subtitle" class="g-subtitle"></div>
     <div class="g-strip">
@@ -82,6 +84,7 @@
         <span id="g-place" class="g-place"></span>
         <span id="g-omen" class="omen-tag" hidden>风声渐紧</span>
         <span id="g-danger" class="danger-tag" hidden>伤势沉重</span>
+        <button type="button" id="g-timeskip" class="genre-tag">时光推进</button>
         <button type="button" id="g-genre" class="genre-tag">文风·识别中</button>
         <button type="button" id="g-atmosphere-settings" class="genre-tag" aria-label="打开氛围设置">氛围设置</button>
       </div>

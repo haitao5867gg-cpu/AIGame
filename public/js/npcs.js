@@ -242,9 +242,9 @@
   function npcAtLine(at) {
     at = (at && typeof at === 'object') ? at : {};
     var clock = (at.clock && typeof at.clock === 'object') ? at.clock : {};
-    var day = npcText(clock.day), period = npcText(clock.period);
+    var period = npcText(clock.period);
     var bits = [];
-    if (npcRecorded(clock.day)) bits.push('第' + day + '日'); // day=0 / 缺项 → 不显示第0日
+    if (npcRecorded(clock.day)) bits.push(formatGameDay(clock.day)); // day=0 / 缺项 → 不显示第0日
     if (period) bits.push(period);
     var time = bits.length ? bits.join(' · ') : '时间未记载';
     var turn = npcText(at.turn) ? ('第' + npcText(at.turn) + '回合') : '回合未记载'; // turn=0 作为开场回合保留

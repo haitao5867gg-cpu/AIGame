@@ -205,7 +205,7 @@
     $('g-subtitle').textContent = '第 ' + s.life + ' 世 · 第 ' + s.turn + ' 回合';
     var loc = s.location || (s.bible && s.bible.start && s.bible.start.place) || '—';
     var c = s.clock || {};
-    $('g-place').textContent = loc + ' · 第' + (c.day || 1) + '日 ' + (c.period || '清晨');
+    $('g-place').textContent = loc + ' · ' + formatGameDay(c.day) + ' ' + (c.period || '清晨');
     $('g-omen').hidden = !s.omen;
     $('g-danger').hidden = !s.danger; // 体魄 ≤ 2：顶部提示「伤势沉重」
     renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
@@ -387,6 +387,10 @@
     if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
     if (rec.event) appendEventCard(rec.event);
+    // 时光推进：在行动行之后、叙事之前插一条分隔，label 非字符串时不插。
+    if (rec.timeSkip && typeof rec.timeSkip.label === 'string') {
+      appendDivider('—— ' + rec.timeSkip.label + '后 ——');
+    }
     if (rec.narration) {
       var logSceneId = (rec.scene && rec.scene.draw) ? (rec.life + '-' + rec.turn) : null;
       currentVoiceHints = rec.voice_hints || [];
@@ -748,12 +752,13 @@
     dispatch();
   }
 
-  // 发起流式回合：delta 边到边显示，返回最后的 result（与普通 /turn 响应体相同）。
-  async function streamTurn(action, block) {
+  // 发起流式回合：body 为完整请求体对象（{action} 或 {timeSkip}），
+  // delta 边到边显示，返回最后的 result（与普通 /turn 响应体相同）。
+  async function streamTurn(body, block) {
     var res = await fetch('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: action }),
+      body: JSON.stringify(body),
     });
     // 未登录 / 会话失效：跳到登录页。
     if (res.status === 401) {
@@ -789,6 +794,10 @@
     var sceneId = (res.scene && res.scene.draw && res.sceneKey)
       ? (res.state.life + '-' + res.state.turn) : null;
     currentVoiceHints = res.voice_hints || [];
+    // 时光推进：在事件卡片之后、叙事之前插一条分隔，label 非字符串时不插。
+    if (res.timeSkip && typeof res.timeSkip.label === 'string') {
+      appendDivider('—— ' + res.timeSkip.label + '后 ——');
+    }
     var narr = appendNarration(res.narration, badgesFromApplied(res.applied), sceneId);
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
@@ -820,7 +829,7 @@
     usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
     var block = beginStreamNarration();
     try {
-      var res = await streamTurn(action, block);
+      var res = await streamTurn({ action: action }, block);
       input.value = ''; // 成功后才清空，失败时保留输入
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
       renderResult(res);
@@ -841,6 +850,168 @@
       setBusy(false);
       refreshUsage();
     }
+  }
+
+  // ---- 时光推进 ----
+  // span → 中文标签，与后端 normalizeTimeSkip 的 label 一致。
+  var TIME_SKIP_SPANS = [
+    { value: 'month', label: '一个月' },
+    { value: 'season', label: '三个月' },
+    { value: 'half', label: '半年' },
+    { value: 'year', label: '一年' },
+  ];
+  var TIME_SKIP_DEFAULT = 'year';
+  var timeSkipPrevFocus = null;
+  var timeSkipRadios = [];
+  var timeSkipPlanInput = null;
+
+  function timeSkipLabel(span) {
+    for (var i = 0; i < TIME_SKIP_SPANS.length; i++) {
+      if (TIME_SKIP_SPANS[i].value === span) return TIME_SKIP_SPANS[i].label;
+    }
+    return TIME_SKIP_SPANS[TIME_SKIP_SPANS.length - 1].label;
+  }
+
+  // 弹层内容只构建一次：关闭（含失败重试）后保留文本框里已写的打算。
+  function renderTimeSkipPop() {
+    var pop = $('timeskip-pop');
+    if (pop.firstChild) return;
+    pop.tabIndex = -1;
+    var card = el('div', 'timeskip-card');
+
+    var title = el('h3', '', '时光推进');
+    title.id = 'timeskip-title';
+    card.appendChild(title);
+    card.appendChild(el('p', 'timeskip-desc',
+      '一次写完这段时间里发生的事，落到之后的新场景。不满意可以撤回。'));
+
+    var opts = el('div', 'timeskip-options');
+    TIME_SKIP_SPANS.forEach(function (s) {
+      var label = el('label', 'timeskip-option');
+      var input = el('input');
+      input.type = 'radio';
+      input.name = 'timeskip-span';
+      input.value = s.value;
+      input.checked = (s.value === TIME_SKIP_DEFAULT);
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(s.label));
+      opts.appendChild(label);
+      timeSkipRadios.push(input);
+    });
+    card.appendChild(opts);
+
+    var plan = el('textarea', 'timeskip-plan');
+    plan.rows = 3;
+    plan.setAttribute('placeholder',
+      '这段时间打算做什么？可不填，比如：闭关修炼、经营铺子、四处打听师父的下落');
+    plan.setAttribute('maxlength', '200');
+    card.appendChild(plan);
+    timeSkipPlanInput = plan;
+
+    var buttons = el('div', 'timeskip-buttons');
+    var cancel = el('button', 'btn', '取消');
+    cancel.type = 'button';
+    cancel.addEventListener('click', closeTimeSkip);
+    var start = el('button', 'btn primary', '开始推进');
+    start.type = 'button';
+    start.addEventListener('click', function () {
+      var span = TIME_SKIP_DEFAULT;
+      for (var i = 0; i < timeSkipRadios.length; i++) {
+        if (timeSkipRadios[i].checked) { span = timeSkipRadios[i].value; break; }
+      }
+      sendTimeSkip(span, timeSkipPlanInput.value.trim());
+    });
+    buttons.appendChild(cancel);
+    buttons.appendChild(start);
+    card.appendChild(buttons);
+
+    pop.appendChild(card);
+    pop.addEventListener('click', function (e) { if (e.target === pop) closeTimeSkip(); });
+  }
+
+  function openTimeSkip() {
+    // 主角已终 / 等待重生：只提示，不打开弹层。
+    if (currentState && (currentState.awaitingRebirth
+        || (currentState.character && currentState.character.alive === false))) {
+      toast('本世已终，请先重生'); return;
+    }
+    if (busy || !currentWorldId) { toast('世界还在回应，稍等'); return; }
+    var pop = $('timeskip-pop');
+    if (!pop.hidden) return;
+    renderTimeSkipPop();
+    timeSkipPrevFocus = document.activeElement;
+    pop.hidden = false;
+    syncBodyScrollLock();
+    pop.focus();
+  }
+
+  function closeTimeSkip() {
+    var pop = $('timeskip-pop');
+    if (!pop || pop.hidden) return;
+    pop.hidden = true;
+    syncBodyScrollLock();
+    var focusTarget = timeSkipPrevFocus && timeSkipPrevFocus.isConnected
+      && timeSkipPrevFocus.getClientRects && timeSkipPrevFocus.getClientRects().length
+      ? timeSkipPrevFocus : ($('g-timeskip') || $('menu-timeskip'));
+    if (focusTarget && focusTarget.getClientRects && focusTarget.getClientRects().length) focusTarget.focus();
+  }
+
+  // Escape 关闭、Tab 约束在弹层内（照氛围设置弹层的做法）。
+  document.addEventListener('keydown', function (e) {
+    var pop = $('timeskip-pop');
+    if (!pop || pop.hidden) return;
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      e.preventDefault(); e.stopImmediatePropagation();
+      closeTimeSkip();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    var list = Array.prototype.filter.call(
+      pop.querySelectorAll('button,input,textarea,select,summary'),
+      function (n) { return !n.disabled && !n.hidden && (!n.getClientRects || n.getClientRects().length); }
+    );
+    if (!list.length) return;
+    var first = list[0], last = list[list.length - 1], active = document.activeElement;
+    if (e.shiftKey && (active === first || active === pop)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (active === last || active === pop)) { e.preventDefault(); first.focus(); }
+  });
+
+  async function sendTimeSkip(span, plan) {
+    if (busy || !currentWorldId) return;
+    if (typeof Tts !== 'undefined') Tts.stop();
+    setBusy(true);
+    // 关闭弹层露出流式叙事：失败时弹层保持关闭、文本框内容保留以便重试。
+    closeTimeSkip();
+    var label = timeSkipLabel(span);
+    appendActionLine('【时光推进·' + label + '】' + (plan || '按眼下的日子过下去'));
+    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
+    var block = beginStreamNarration();
+    var body = { timeSkip: { span: span, plan: plan } };
+    var ok = false;
+    try {
+      var res = await streamTurn(body, block);
+      if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      renderResult(res);
+      ok = true;
+    } catch (err) {
+      // 流式失败：移除半成品叙事块，自动回退普通 /turn。
+      if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      try {
+        var fb = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        renderResult(fb);
+        ok = true;
+      } catch (err2) {
+        toast(err2.message); // 失败不清空弹层文本框，重试时内容还在
+      }
+    } finally {
+      setBusy(false);
+      refreshUsage();
+      if (ok && timeSkipPlanInput) timeSkipPlanInput.value = ''; // 成功才清空，失败保留以便重试
+    }
+    // 不动 #action-input 的内容。
   }
 
   // ---- 宽屏插图镜像：当前回合插图放到右侧栏最上方，历史回合在正文里留小缩略图 ----
