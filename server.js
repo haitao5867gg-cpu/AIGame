@@ -769,6 +769,7 @@ function createHttpServer(cfg, opts) {
 }
 
 if (require.main === module) {
+  require('./src/log-time.js').installLogTimestamps();
   const cfg = env.getConfig();
   // 启动时先做一次存档备份（失败只告警，不阻断启动）。
   createBackup(env.resolveDataDir(cfg));
