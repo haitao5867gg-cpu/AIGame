@@ -10,12 +10,14 @@ const source = fs.readFileSync(path.join(__dirname, '../public/js/atmosphere.js'
 const plain = value => JSON.parse(JSON.stringify(value));
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
-function setup() {
-  const requests = [], timers = new Map(), events = {}, calls = [];
+function setup(opts) {
+  const o = opts || {};
+  const requests = [], timers = new Map(), events = {}, calls = [], classOps = [];
+  const backdrop = { hidden: false, dataset: {}, style: {} };
   let timerId = 0, currentPrefs, unlocked = false;
   const controller = {
     setPrefs(p) { currentPrefs = p; }, setScene(s) { calls.push(['scene', plain(s)]); },
-    setCatalog() {}, setHidden(v) { calls.push(['hidden', v]); },
+    setCatalog(c) { calls.push(['catalog', plain(c)]); }, setHidden(v) { calls.push(['hidden', v]); },
     setVoiceState(v) { calls.push(['voice', plain(v)]); },
     stop() { calls.push(['stop']); }, destroy() { calls.push(['destroy']); },
     onStatus() {}, getStatus() { return { enabled: currentPrefs.enabled, unlocked, playing: false }; },
@@ -24,18 +26,22 @@ function setup() {
   const context = {
     AtmosphereState: State, AtmosphereAudio: { create: () => controller },
     myPrefs: { tts: { rate: 1.2 }, scenes: false }, currentWorldId: 'w1',
-    document: { hidden: false, getElementById: () => null,
-      body: { classList: { toggle() {}, remove() {} } },
+    document: { hidden: false,
+      getElementById: (id) => (o.backdrop && id === 'world-backdrop' ? backdrop : null),
+      body: { classList: {
+        toggle(name, force) { classOps.push({ name, force }); },
+        remove(name) { classOps.push({ name, force: false }); },
+      } },
       addEventListener(name, fn) { events[name] = fn; } },
     window: { Audio: function () {}, addEventListener(name, fn) { events[name] = fn; } },
     Tts: { stop() { calls.push(['tts-stop']); } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
     clearTimeout(id) { timers.delete(id); }, toast(text) { calls.push(['toast', text]); },
-    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ themes: {}, credits: [] }) }),
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve(o.catalog || { themes: {}, credits: [] }) }),
     api(url, opts) { return new Promise((resolve, reject) => requests.push({ url, body: JSON.parse(opts.body), resolve, reject })); },
   };
   vm.runInNewContext(source, context);
-  return { context, app: context.Atmosphere, requests, calls, events,
+  return { context, app: context.Atmosphere, requests, calls, events, classOps, backdrop,
     tick() { const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); } };
 }
 
@@ -90,4 +96,23 @@ test('世界过期响应不串场，朗读状态和后台事件传到播放器�
   assert.deepEqual(h.calls.at(-1), ['hidden', false]);
   h.app.leaveWorld();
   assert.ok(h.calls.some(c => c[0] === 'stop'));
+});
+
+test('协调器：urban 主题无 backgrounds.field 时田地也不显示背景、不抛错', async () => {
+  const h = setup({
+    backdrop: true,
+    catalog: { themes: { urban: { backgrounds: {} } }, credits: [] },
+  });
+  h.app.applyPrefs({}, 'host');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', location: '灵田', clock: { period: '午后' } });
+  await settled();
+  // 目录加载后 applyScene 正常跑完（setScene 紧随其后即证明未在取背景处抛错）
+  const catIdx = h.calls.findIndex(c => c[0] === 'catalog');
+  assert.ok(catIdx >= 0, '目录应已加载');
+  assert.ok(h.calls.slice(catIdx + 1).some(c => c[0] === 'scene'), '带 catalog 的 applyScene 正常执行');
+  const bgToggles = h.classOps.filter(op => op.name === 'atmosphere-background');
+  assert.ok(bgToggles.length > 0, 'applyScene 至少 toggle 一次背景类');
+  assert.ok(bgToggles.every(op => op.force === false), 'urban 无 field 背景时 visible 恒为 false');
+  assert.equal(h.backdrop.hidden, true, '底图保持隐藏');
+  assert.equal(h.backdrop.style.backgroundImage, '', '不设置背景图');
 });

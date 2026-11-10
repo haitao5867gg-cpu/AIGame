@@ -3,6 +3,7 @@
 // 氛围素材 HTTP 音频真实验证（只跑本文件）。
 // 复用 public/assets/atmosphere 下真实 MP3，仅做静态 GET/HEAD，不调用任何 AI / TTS / 图片接口。
 
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -15,6 +16,72 @@ const AUDIO_URL = '/assets/atmosphere/' + AUDIO_NAME;
 const AUDIO_PATH = path.join(PUBLIC_DIR, 'assets', 'atmosphere', AUDIO_NAME);
 const IMAGE_URL = '/assets/atmosphere/lingtian-field-v1.jpg';
 const OLD_STATIC_URL = '/app.css';
+
+// ---------- 真实 catalog 素材校验：数量与条目全部按 catalog 计算，不硬编码 ----------
+const ASSET_DIR = path.join(PUBLIC_DIR, 'assets', 'atmosphere');
+const catalog = JSON.parse(fs.readFileSync(path.join(ASSET_DIR, 'catalog.json'), 'utf8'));
+const CREDITS_MD = fs.readFileSync(path.join(ASSET_DIR, 'CREDITS.md'), 'utf8');
+const MOODS = ['calm', 'explore', 'tense'];
+const ALL_THEMES = Object.keys(catalog.themes);
+const NEW_THEMES = ALL_THEMES.filter((t) => t !== 'lingtian');
+const CREDIT_BY_ID = new Map(catalog.credits.map((c) => [c.id, c]));
+const assetPath = (src) => path.join(ASSET_DIR, path.basename(src));
+
+test('catalog：六个主题各三首 calm/explore/tense，文件真实存在且非空', () => {
+  assert.equal(ALL_THEMES.length, 6, '共六个主题');
+  for (const t of ALL_THEMES) {
+    const music = catalog.themes[t].music;
+    assert.ok(music, t + ' 有 music');
+    for (const m of MOODS) {
+      assert.ok(music[m], t + '/' + m + ' 有曲目');
+      const p = assetPath(music[m].src);
+      assert.ok(fs.existsSync(p), p + ' 存在');
+      assert.ok(fs.statSync(p).size > 0, p + ' 非空');
+    }
+  }
+});
+
+test('catalog：每个 music/ambience/background 条目的 creditId 都能在 credits 找到', () => {
+  for (const t of ALL_THEMES) {
+    const theme = catalog.themes[t];
+    for (const group of ['music', 'ambience', 'backgrounds']) {
+      const entries = theme[group] || {};
+      for (const key of Object.keys(entries)) {
+        const cid = entries[key].creditId;
+        assert.ok(CREDIT_BY_ID.has(cid), t + '/' + group + '/' + key + ' creditId ' + cid);
+      }
+    }
+  }
+});
+
+test('catalog：新主题 backgrounds 均为空对象', () => {
+  assert.equal(NEW_THEMES.length, 5, '五个新主题');
+  for (const t of NEW_THEMES) {
+    const bg = catalog.themes[t].backgrounds;
+    assert.ok(bg && typeof bg === 'object' && !Array.isArray(bg), t + ' backgrounds 是对象');
+    assert.equal(Object.keys(bg).length, 0, t + ' 暂无背景图');
+  }
+});
+
+test('catalog：15 首新曲目 credits 均为 CC BY 4.0 且作者含 Kevin MacLeod', () => {
+  const newIds = [];
+  for (const t of NEW_THEMES) for (const m of MOODS) newIds.push(t + '-' + m);
+  assert.equal(newIds.length, 15, '十五首新曲');
+  for (const id of newIds) {
+    const c = CREDIT_BY_ID.get(id);
+    assert.ok(c, 'credit 存在: ' + id);
+    assert.equal(c.license, 'CC BY 4.0', id + ' license');
+    assert.ok(c.author.includes('Kevin MacLeod'), id + ' author 含 Kevin MacLeod');
+  }
+});
+
+test('catalog：CREDITS.md 含每首新曲名', () => {
+  for (const t of NEW_THEMES) for (const m of MOODS) {
+    const c = CREDIT_BY_ID.get(t + '-' + m);
+    assert.ok(c, 'credit 存在: ' + t + '-' + m);
+    assert.ok(CREDITS_MD.includes(c.title), 'CREDITS.md 含 ' + c.title);
+  }
+});
 
 // 原始字节请求：拿到精确状态码、响应头与二进制 body，且不会自动跟随 302。
 function rawRequest(base, method, pathname, headers) {

@@ -42,6 +42,191 @@
           "duration": 38.568
         }
       }
+    },
+    "urban": {
+      "backgrounds": {},
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/urban-calm-v1.mp3",
+          "creditId": "urban-calm",
+          "duration": 193.201633
+        },
+        "explore": {
+          "src": "/assets/atmosphere/urban-explore-v1.mp3",
+          "creditId": "urban-explore",
+          "duration": 226.977959
+        },
+        "tense": {
+          "src": "/assets/atmosphere/urban-tense-v1.mp3",
+          "creditId": "urban-tense",
+          "duration": 200.829002
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
+    },
+    "game": {
+      "backgrounds": {},
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/game-calm-v1.mp3",
+          "creditId": "game-calm",
+          "duration": 220.05551
+        },
+        "explore": {
+          "src": "/assets/atmosphere/game-explore-v1.mp3",
+          "creditId": "game-explore",
+          "duration": 231.261995
+        },
+        "tense": {
+          "src": "/assets/atmosphere/game-tense-v1.mp3",
+          "creditId": "game-tense",
+          "duration": 180.061995
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
+    },
+    "horror": {
+      "backgrounds": {},
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/horror-calm-v1.mp3",
+          "creditId": "horror-calm",
+          "duration": 236.434286
+        },
+        "explore": {
+          "src": "/assets/atmosphere/horror-explore-v1.mp3",
+          "creditId": "horror-explore",
+          "duration": 240
+        },
+        "tense": {
+          "src": "/assets/atmosphere/horror-tense-v1.mp3",
+          "creditId": "horror-tense",
+          "duration": 240
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
+    },
+    "cozy": {
+      "backgrounds": {},
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/cozy-calm-v1.mp3",
+          "creditId": "cozy-calm",
+          "duration": 240
+        },
+        "explore": {
+          "src": "/assets/atmosphere/cozy-explore-v1.mp3",
+          "creditId": "cozy-explore",
+          "duration": 205.139592
+        },
+        "tense": {
+          "src": "/assets/atmosphere/cozy-tense-v1.mp3",
+          "creditId": "cozy-tense",
+          "duration": 93.543991
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
+    },
+    "general": {
+      "backgrounds": {},
+      "music": {
+        "calm": {
+          "src": "/assets/atmosphere/general-calm-v1.mp3",
+          "creditId": "general-calm",
+          "duration": 240
+        },
+        "explore": {
+          "src": "/assets/atmosphere/general-explore-v1.mp3",
+          "creditId": "general-explore",
+          "duration": 240
+        },
+        "tense": {
+          "src": "/assets/atmosphere/general-tense-v1.mp3",
+          "creditId": "general-tense",
+          "duration": 165.355011
+        }
+      },
+      "ambience": {
+        "wind": {
+          "src": "/assets/atmosphere/wind-v1.mp3",
+          "creditId": "wind",
+          "duration": 59.998912
+        },
+        "rain": {
+          "src": "/assets/atmosphere/rain-v1.mp3",
+          "creditId": "rain",
+          "duration": 10.866259
+        },
+        "insects": {
+          "src": "/assets/atmosphere/insects-v1.mp3",
+          "creditId": "insects",
+          "duration": 38.568
+        }
+      }
     }
   },
   "credits": [
@@ -107,6 +292,141 @@
       "license": "本项目生成素材",
       "licenseUrl": "",
       "changes": "生成原图另存JPEG压缩版，画面内容不改。"
+    },
+    {
+      "id": "urban-calm",
+      "title": "Lobby Time",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600054",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "urban-explore",
+      "title": "Spy Glass",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500058",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "urban-tense",
+      "title": "Hitman",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1300013",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "game-calm",
+      "title": "Wallpaper",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100843",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "game-explore",
+      "title": "Cipher",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100844",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "game-tense",
+      "title": "Cyborg Ninja",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600008",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "horror-calm",
+      "title": "Comfortable Mystery",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100287",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "horror-explore",
+      "title": "Ossuary 6 - Air",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500048",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "截取开头约4分钟、为背景播放统一音量、添加淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "horror-tense",
+      "title": "Unseen Horrors",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400043",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "截取开头约4分钟、为背景播放统一音量、添加淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "cozy-calm",
+      "title": "Daily Beetle",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500025",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "截取开头约4分钟、为背景播放统一音量、添加淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "cozy-explore",
+      "title": "Carefree",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400037",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "cozy-tense",
+      "title": "Investigations",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100646",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "general-calm",
+      "title": "Healing",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1200048",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "截取开头约4分钟、为背景播放统一音量、添加淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "general-explore",
+      "title": "Inspired",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600022",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "截取开头约4分钟、为背景播放统一音量、添加淡入淡出并转换格式；旋律、音高和节奏未改。"
+    },
+    {
+      "id": "general-tense",
+      "title": "Volatile Reaction",
+      "author": "Kevin MacLeod (incompetech.com)",
+      "source": "https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400039",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "为背景播放统一音量、添加短淡入淡出并转换格式；旋律、音高和节奏未改。"
     }
   ]
 }

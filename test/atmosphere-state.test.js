@@ -109,15 +109,30 @@ test('resolve：源码无模型 / 文件 / 网络 / 时钟定时器副作用', (
   }
 });
 
-test('resolve：worldId / theme 仅玄幻或指定书名才 lingtian，其它题材不套仙侠素材', () => {
+test('resolve：worldId / theme 仅玄幻或指定书名才 lingtian，其它题材同名主题且不套仙侠素材', () => {
   assert.equal(A.resolve(state({ id: 'w1', genre: 'xuanhuan' })).theme, 'lingtian');
   assert.equal(A.resolve(state({ id: 'w1', genre: 'urban', bible: { title: '外门杂役录' } })).theme,
     'lingtian', 'title 命中也套 lingtian');
-  assert.equal(A.resolve(state({ id: 'w1', genre: 'urban', bible: { title: '别的' } })).theme,
-    null, '其它题材保持原界面');
+  const r = A.resolve(state({ id: 'w1', genre: 'urban', bible: { title: '别的' } }));
+  assert.notEqual(r.theme, 'lingtian', '其它题材仍不得是 lingtian');
+  assert.equal(r.theme, 'urban', '但应得到对应主题');
+  assert.equal(A.resolve(state({ id: 'w1', genre: undefined, bible: { title: '别的' } })).theme,
+    'general', '缺 genre 归 general');
   assert.equal(A.resolve(state({ id: 'w1' })).worldId, 'w1');
   assert.equal(A.resolve({ worldId: 'w2' }).worldId, 'w2');
   assert.equal(A.resolve({}).worldId, null);
+});
+
+test('resolve：五个新题材各自映射；未知 genre 归 general；title 命中外门杂役录仍 lingtian', () => {
+  for (const g of ['urban', 'game', 'horror', 'cozy', 'general']) {
+    assert.equal(A.resolve(state({ genre: g, bible: { title: '别的' } })).theme, g, g + ' → 同名主题');
+  }
+  assert.equal(A.resolve(state({ genre: 'foo', bible: { title: '别的' } })).theme,
+    'general', "未知 genre 'foo' → general");
+  assert.equal(A.resolve(state({ genre: '识别中', bible: { title: '别的' } })).theme,
+    'general', '识别中 → general');
+  assert.equal(A.resolve(state({ genre: 'urban', bible: { title: '外门杂役录' } })).theme,
+    'lingtian', 'title 命中外门杂役录仍 lingtian');
 });
 
 // ---------- 明确地点 → background ----------
@@ -327,7 +342,7 @@ test('resolve：ambience 始终是 wind/rain/insects 子集且长度 <=2（音�
 
 test('resolve：场景未知 / 非法入参保守回退，不抛错', () => {
   const fallback = {
-    worldId: null, theme: null, background: 'neutral', period: 'day',
+    worldId: null, theme: 'general', background: 'neutral', period: 'day',
     mood: 'calm', ambience: [], location: null,
   };
   for (const bad of [undefined, null, 'x', 42, [], {}]) {

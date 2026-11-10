@@ -11,7 +11,29 @@
 | rain | Rain on Window Loop | alxl | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) · [作者发布页](https://opengameart.org/content/rain-on-window-loop) | 转MP3、响度归一、首尾短淡化；不改旋律/音高/速度 |
 | insects | cricket sounds | syncopika | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) · [作者发布页](https://opengameart.org/content/cricket-sounds) | 转MP3、响度归一、首尾短淡化；不改旋律/音高/速度 |
 
-三首音乐使用 Kevin MacLeod 的 CC BY 4.0 署名授权。请在游戏氛围设置的“素材致谢”中保留作品名、作者、来源、许可链接与修改说明。自然音效选用发布页明确给出的 CC0 授权；仍保留作者致谢。
+## 其他题材配乐（2026-11-10 新增）
+
+每个题材三首，分别用于平静、探索、遇险；风、雨、虫鸣环境声各题材共用上表素材。
+
+| 用途 | 作品 | 作者 | 许可与来源 | 修改 |
+|---|---|---|---|---|
+| 都市·平静（urban-calm） | Lobby Time | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600054) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 都市·探索（urban-explore） | Spy Glass | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500058) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 都市·遇险（urban-tense） | Hitman | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1300013) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 游戏系统·平静（game-calm） | Wallpaper | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100843) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 游戏系统·探索（game-explore） | Cipher | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100844) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 游戏系统·遇险（game-tense） | Cyborg Ninja | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600008) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 恐怖悬疑·平静（horror-calm） | Comfortable Mystery | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100287) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 恐怖悬疑·探索（horror-explore） | Ossuary 6 - Air | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500048) | 截取开头约4分钟、转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 恐怖悬疑·遇险（horror-tense） | Unseen Horrors | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400043) | 截取开头约4分钟、转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 休闲日常·平静（cozy-calm） | Daily Beetle | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1500025) | 截取开头约4分钟、转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 休闲日常·探索（cozy-explore） | Carefree | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400037) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 休闲日常·遇险（cozy-tense） | Investigations | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1100646) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 通用·平静（general-calm） | Healing | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1200048) | 截取开头约4分钟、转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 通用·探索（general-explore） | Inspired | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1600022) | 截取开头约4分钟、转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+| 通用·遇险（general-tense） | Volatile Reaction | Kevin MacLeod (incompetech.com) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) · [作者发布页](https://incompetech.com/music/royalty-free/index.html?Search=Search&isrc=USUAN1400039) | 转MP3、响度归一、首尾淡化；不改旋律/音高/速度 |
+
+全部音乐使用 Kevin MacLeod 的 CC BY 4.0 署名授权。请在游戏氛围设置的“素材致谢”中保留作品名、作者、来源、许可链接与修改说明。自然音效选用发布页明确给出的 CC0 授权；仍保留作者致谢。
 
 ## 背景图
 

@@ -155,7 +155,10 @@ function () {
   function classifyTheme(state) {
     var genre = firstString(state.genre, state.bible && state.bible.genre);
     var title = firstString(state.bible && state.bible.title, state.title);
-    return (genre === 'xuanhuan' || title === '外门杂役录') ? 'lingtian' : null;
+    if (genre === 'xuanhuan' || title === '外门杂役录') return 'lingtian';
+    if (genre === 'urban' || genre === 'game' || genre === 'horror' ||
+        genre === 'cozy' || genre === 'general') return genre;
+    return 'general'; // 缺失 / 未知 / 识别中：所有世界都有配乐，按通用处理
   }
 
   function resolveLocation(state, opts) {
