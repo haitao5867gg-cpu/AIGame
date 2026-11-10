@@ -1,6 +1,6 @@
 'use strict';
 
-const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, ITEM_INFO_DESC_MAX, ITEM_INFO_TYPE_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, SCENE_PLACE_MAX, SCENE_NAME_MAX, SCENE_CAST_MAX, SCENE_ITEMS_MAX, SCENE_ACTION_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
+const { PERSONA_DIMS, GENERIC_EVENT_THEMES, TWIST_GAP_MIN, INTERNAL_REJECT_TAG, ITEM_NAME_MAX, ITEM_INFO_DESC_MAX, ITEM_INFO_TYPE_MAX, PERSONA_INIT, OMEN_MIN_GAP, OMEN_MAX_GAP, RUMOR_MAX, SCENE_DESC_MAX, SCENE_PLACE_MAX, SCENE_NAME_MAX, SCENE_CAST_MAX, SCENE_ITEMS_MAX, SCENE_ACTION_MAX, FACT_TEXT_MAX, MARK_TEXT_MAX, THREAD_TEXT_MAX, PERIODS, MOVE_TO_MAX, TIME_PASSES_MIN, TIME_PASSES_MAX, TIME_PASSES_DEFAULT, TIME_SKIP_SPANS, TIME_SKIP_PLAN_MAX, DANGER_THRESHOLD, DEFAULT_VOICES } = require('./constants.js');
 
 // 物品介绍消毒：只接受 allowedNames 里的名字（实际被接受的物品名），
 // desc 去空白截 60 字、type 去空白截 6 字（可选）；无介绍文字的条目不落库。
@@ -151,6 +151,22 @@ function normalizeTimePasses(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return TIME_PASSES_DEFAULT;
   return clamp(Math.round(n), TIME_PASSES_MIN, TIME_PASSES_MAX);
+}
+
+// 时光推进参数校验：非法参数一律返回 null，绝不改动入参。
+// span 必须是 TIME_SKIP_SPANS 的键；plan 去控制字符 / 去首尾空白 / 截到上限，非字符串为 ''。
+function normalizeTimeSkip(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const span = raw.span;
+  if (typeof span !== 'string' || !Object.prototype.hasOwnProperty.call(TIME_SKIP_SPANS, span)) {
+    return null;
+  }
+  const def = TIME_SKIP_SPANS[span];
+  let plan = '';
+  if (typeof raw.plan === 'string') {
+    plan = raw.plan.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, TIME_SKIP_PLAN_MAX);
+  }
+  return { span, days: def.days, label: def.label, plan };
 }
 
 // 朗读提示校验：只保留合法条目，最多 8 条；坏数据一律丢弃/回退，绝不影响回合。
@@ -393,6 +409,7 @@ module.exports = {
   normalizeThread,
   normalizeMoveTo,
   normalizeTimePasses,
+  normalizeTimeSkip,
   normalizeVoiceHints,
   advanceClock,
   normalizeState,

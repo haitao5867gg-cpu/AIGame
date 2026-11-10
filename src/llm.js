@@ -289,13 +289,16 @@ function mockGenre(m) {
 
 function mockTurn(m) {
   const turn = (m && m.turn) || 1;
+  const timeSkip = m && m.timeSkip;
   // 分成 2~4 个短段落，段落间用 \n\n 分隔，台词单独成段（与回合 prompt 的分段要求一致）。
+  const baseNarration = [
+    `第${turn}回合，你顺着灰烬港的旧道继续前行，雾里传来断续的钟声。`,
+    '守夜人提灯拦住去路：「钟声乱了，你听见了几下？」',
+    '远处有人在低声交换消息，你停下脚步，权衡着下一步该信任谁。',
+  ].join('\n\n');
   const out = {
-    narration: [
-      `第${turn}回合，你顺着灰烬港的旧道继续前行，雾里传来断续的钟声。`,
-      '守夜人提灯拦住去路：「钟声乱了，你听见了几下？」',
-      '远处有人在低声交换消息，你停下脚步，权衡着下一步该信任谁。',
-    ].join('\n\n'),
+    // 时光推进：叙事首句点明这段时间过去了，其余正文照旧。
+    narration: timeSkip ? `${timeSkip.label}过去了。\n\n${baseNarration}` : baseNarration,
     state_diff: { 心智: 1 },
     items_add: turn % 5 === 0 ? ['一枚旧币'] : [],
     items_remove: [],
@@ -395,6 +398,8 @@ function mockTurn(m) {
       out.npc_updates.push({ name: '守夜人', kind: 'interaction', evidence: npcEvidence });
     }
   }
+  // 时光推进：跳跃结束时的时段，供引擎落定时钟（其余字段不变）。
+  if (timeSkip) out.landing_period = '黄昏';
   return out;
 }
 

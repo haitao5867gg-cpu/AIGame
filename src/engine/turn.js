@@ -1,6 +1,6 @@
 'use strict';
 
-const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
+const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
 const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, normalizeFocus, normalizeAdult, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
@@ -17,7 +17,8 @@ function resolveTurn(state, input, opts) {
   const action = typeof data.action === 'string' ? data.action : '';
 
   const plan = data.plan || planTurn(state, { rng });
-  const validation = validateProposal(state, data.proposal);
+  const timeSkip = (plan && plan.timeSkip) || null;
+  const validation = validateProposal(state, data.proposal, { timeSkip });
   if (validation.error) {
     // 无效回合：不推进 turn，状态原样退回。
     return { state, result: null, invalid: true, error: validation.error, plan };
@@ -209,7 +210,15 @@ function resolveTurn(state, input, opts) {
   // 地点与时间：校验 move_to / time_passes 后写入（叙事须与之一致，由 prompt 约束）
   const moveTo = normalizeMoveTo(state, prop.move_to, applied.narration);
   if (moveTo) s.location = moveTo;
-  s.clock = advanceClock(s.clock, normalizeTimePasses(prop.time_passes));
+  if (timeSkip) {
+    // 时光推进：忽略 time_passes，直接落到跳跃结束时的时钟；非法 landing_period 回退「清晨」。
+    const baseDay = (s.clock && Number.isInteger(s.clock.day) && s.clock.day >= 1)
+      ? s.clock.day : 1;
+    const period = PERIODS.includes(prop.landing_period) ? prop.landing_period : '清晨';
+    s.clock = { day: baseDay + timeSkip.days, period };
+  } else {
+    s.clock = advanceClock(s.clock, normalizeTimePasses(prop.time_passes));
+  }
 
   // 编年史：turn % 20 == 0，摘要由 LLM_MODEL_WORLD 生成后从 data.chapterSummary 回传
   let chapter = null;
@@ -262,9 +271,23 @@ function resolveTurn(state, input, opts) {
     s.sceneStreak = boring ? prevStreak + 1 : 0;
   }
 
+  // 时光推进：跳跃结束后复位安静 / 导演状态，重排下一次转折与事件（用注入的 rng）。
+  if (timeSkip) {
+    s.focus = 'action';
+    s.continuing = false;
+    s.sceneStreak = 0;
+    s.pendingEventTheme = null;
+    s.nextTwistTurn = nextTurn + TWIST_GAP_MIN + Math.floor(unit(rng) * TWIST_GAP_SPAN);
+    // 结算后没有进行中事件：新时期很快会有新动静。
+    if (!s.activeEvent) {
+      s.nextEventTurn = nextTurn + 3 + Math.floor(unit(rng) * 3);
+    }
+  }
+
   // 关键回合（开启新事件 / 事件结算 / 死亡）强制出图，其余回合按 proposal.scene 决定。
   const forced = !!(openedEvent || settlement || death);
-  const scene = normalizeScene(prop.scene, forced);
+  // 时光推进强制出图（落到一个全新场景）；亲密 / 成人回合照旧由下方规则置 draw=false。
+  const scene = normalizeScene(prop.scene, forced || !!timeSkip);
   // 亲密 / 成人回合不出图：焦点是玩家与 NPC 的相处，不生成场景插图。
   if (nf.focus === 'intimate' || adult) scene.draw = false;
 
@@ -272,7 +295,9 @@ function resolveTurn(state, input, opts) {
   // 时间 / 主角名 / 世数取原 beforeState（state），死亡当回合不落入下一世。
   // 变化仅落在私有 result.npc_memory，绝不进入公开 applied / 普通回合响应。
   const rawNpcUpdates = prop.npc_updates !== undefined ? prop.npc_updates : data.npc_updates;
-  const npcMem = npcs.applyNpcMemory(state, s, rawNpcUpdates, {
+  // 时光推进：人物档案时间戳取跳跃后的时钟（atRecord 读 beforeState.clock），其余参数不变。
+  const memoryBase = timeSkip ? Object.assign({}, state, { clock: s.clock }) : state;
+  const npcMem = npcs.applyNpcMemory(memoryBase, s, rawNpcUpdates, {
     action,
     narration: applied.narration,
   });
@@ -301,6 +326,11 @@ function resolveTurn(state, input, opts) {
     needChapter: !!(plan.needChapter && !chapter),
     needNewApex: apexInfo.needNewApex,
     ts: now,
+    ...(timeSkip ? {
+      timeSkip: {
+        span: timeSkip.span, days: timeSkip.days, label: timeSkip.label, plan: timeSkip.plan,
+      },
+    } : {}),
   };
   return { state: s, result, invalid: false, error: null, plan };
 }

@@ -44,8 +44,21 @@ function toPublicState(state) {
   return out;
 }
 
+// 时光推进公开字段：逐字段取，类型不对就不输出；无有效字段时整体不输出。
+function publicTimeSkip(ts) {
+  if (!ts || typeof ts !== 'object' || Array.isArray(ts)) return null;
+  const out = {};
+  if (typeof ts.span === 'string') out.span = ts.span;
+  if (typeof ts.days === 'number' && Number.isFinite(ts.days)) out.days = ts.days;
+  if (typeof ts.label === 'string') out.label = ts.label;
+  if (typeof ts.plan === 'string') out.plan = ts.plan;
+  return Object.keys(out).length ? out : null;
+}
+
 function toPublicTurnResult(result, state) {
+  const ts = publicTimeSkip(result.timeSkip);
   return {
+    ...(ts ? { timeSkip: ts } : {}),
     narration: result.narration,
     applied: toPublicApplied(result.applied),
     // 内部原因（如收益递减 / npc_updates 拒绝）只进内部日志，不给玩家看。

@@ -1,12 +1,21 @@
 'use strict';
 
-const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
+const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, TIME_SKIP_DIFF_MIN, TIME_SKIP_DIFF_MAX, TIME_SKIP_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
 const { clamp, toInt, cleanDialogueTics } = require('./util.js');
 
 // ---- validateProposal：把 LLM 提议消毒成实际可应用的 diff ----
 
-function validateProposal(state, proposal) {
+function validateProposal(state, proposal, opts) {
   const p = proposal && typeof proposal === 'object' ? proposal : {};
+  const timeSkip = opts && opts.timeSkip;
+  // 时光推进放宽数值上限；跳一个月与普通回合一致（单项 +1 / 正向合计 2）。
+  const diffMin = timeSkip ? TIME_SKIP_DIFF_MIN : DIFF_MIN;
+  let diffMax = timeSkip ? TIME_SKIP_DIFF_MAX : DIFF_MAX;
+  let diffTotalMax = timeSkip ? TIME_SKIP_POSITIVE_TOTAL_MAX : DIFF_POSITIVE_TOTAL_MAX;
+  if (timeSkip && timeSkip.span === 'month') {
+    diffMax = DIFF_MAX;
+    diffTotalMax = DIFF_POSITIVE_TOTAL_MAX;
+  }
   const rejected = [];
   const applied = {
     state_diff: {},
@@ -31,7 +40,8 @@ function validateProposal(state, proposal) {
     return { applied, rejected, error: `叙事过短（少于 ${NARRATION_MIN} 字），本回合无效，请重试` };
   }
 
-  // state_diff：白名单 / 取整 / 单项 [-2,+1] / 正向总和 ≤ 2（按顺序截断）/ 属性 [0,40]
+  // state_diff：白名单 / 取整 / 单项上下限 / 正向总预算（按顺序截断）/ 属性 [0,40]。
+  // 普通回合 [-2,+1] / ≤2；时光推进用放宽后的上限（跳一个月回到普通回合上限）。
   const diff = p.state_diff && typeof p.state_diff === 'object' ? p.state_diff : {};
   let positiveTotal = 0;
   for (const key of Object.keys(diff)) {
@@ -46,22 +56,22 @@ function validateProposal(state, proposal) {
     }
     let delta = toInt(raw);
     if (delta === 0) continue;
-    if (delta > DIFF_MAX) {
-      rejected.push(`「${key}」单项变化超过 +${DIFF_MAX}，已截断`);
-      delta = DIFF_MAX;
+    if (delta > diffMax) {
+      rejected.push(`「${key}」单项变化超过 +${diffMax}，已截断`);
+      delta = diffMax;
     }
-    if (delta < DIFF_MIN) {
-      rejected.push(`「${key}」单项变化超过 ${DIFF_MIN}，已截断`);
-      delta = DIFF_MIN;
+    if (delta < diffMin) {
+      rejected.push(`「${key}」单项变化超过 ${diffMin}，已截断`);
+      delta = diffMin;
     }
     if (delta > 0) {
-      if (positiveTotal >= DIFF_POSITIVE_TOTAL_MAX) {
-        rejected.push(`正向变化总和已达 ${DIFF_POSITIVE_TOTAL_MAX}，忽略「${key}」`);
+      if (positiveTotal >= diffTotalMax) {
+        rejected.push(`正向变化总和已达 ${diffTotalMax}，忽略「${key}」`);
         continue;
       }
-      if (positiveTotal + delta > DIFF_POSITIVE_TOTAL_MAX) {
-        const allowed = DIFF_POSITIVE_TOTAL_MAX - positiveTotal;
-        rejected.push(`正向变化总和超过 ${DIFF_POSITIVE_TOTAL_MAX}，「${key}」由 +${delta} 截断为 +${allowed}`);
+      if (positiveTotal + delta > diffTotalMax) {
+        const allowed = diffTotalMax - positiveTotal;
+        rejected.push(`正向变化总和超过 ${diffTotalMax}，「${key}」由 +${delta} 截断为 +${allowed}`);
         delta = allowed;
       }
       positiveTotal += delta;

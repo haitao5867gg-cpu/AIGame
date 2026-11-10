@@ -148,13 +148,26 @@ function toPublicScene(sc) {
   return out;
 }
 
+// 时光推进公开字段：逐字段取，类型不对就不输出；无有效字段时整体不输出。
+function publicTimeSkip(ts) {
+  if (!ts || typeof ts !== 'object' || Array.isArray(ts)) return null;
+  const out = {};
+  if (typeof ts.span === 'string') out.span = ts.span;
+  if (typeof ts.days === 'number' && Number.isFinite(ts.days)) out.days = ts.days;
+  if (typeof ts.label === 'string') out.label = ts.label;
+  if (typeof ts.plan === 'string') out.plan = ts.plan;
+  return Object.keys(out).length ? out : null;
+}
+
 // events.jsonl 的单条记录 → 只保留公开字段，绝不把 apex / twist / raw / proposal / rejected / usage 带出去。
 function toPublicLogRecord(rec) {
   const e = rec && typeof rec === 'object' ? rec : {};
   const ev = e.event && typeof e.event === 'object' ? e.event : null;
   const st = e.settlement && typeof e.settlement === 'object' ? e.settlement : null;
   const d = e.death && typeof e.death === 'object' ? e.death : null;
+  const ts = publicTimeSkip(e.timeSkip);
   return {
+    ...(ts ? { timeSkip: ts } : {}),
     turn: e.turn,
     life: e.life,
     action: typeof e.action === 'string' ? e.action : '',
@@ -769,10 +782,18 @@ function createGame(cfg, dataDir) {
       // 老存档兼容：仅在本回合、拼提示词前把被截短的 recent 正文从本世界事件日志补回。
       // 普通读不经过此处；恢复只读不写盘，本回合正常落库时自然沿用完整 recent。
       state = maybeRestoreRecent(dataDir, worldId, state);
-      const action = typeof (input && input.action) === 'string' ? input.action : '';
+      let action = typeof (input && input.action) === 'string' ? input.action : '';
+      // 时光推进：校验参数；非法直接 400，不推进回合。有效时覆盖本回合 action。
+      let timeSkip = null;
+      const rawSkip = input && input.timeSkip;
+      if (rawSkip !== undefined && rawSkip !== null) {
+        timeSkip = engine.normalizeTimeSkip(rawSkip);
+        if (!timeSkip) throw httpError(400, '时光推进参数无效');
+        action = `【时光推进·${timeSkip.label}】${timeSkip.plan || '按眼下的日子过下去'}`;
+      }
       const rng = Math.random;
       const now = Date.now();
-      const plan = engine.planTurn(state, { rng });
+      const plan = engine.planTurn(state, { rng, timeSkip: timeSkip || undefined });
       const nextTurn = plan.nextTurn;
 
       const needChapter = plan.needChapter;
@@ -792,10 +813,15 @@ function createGame(cfg, dataDir) {
         theme: plan.theme,
         needEvent: plan.opening,
         needSettlement: plan.settling,
+        timeSkip: timeSkip || undefined,
       };
       const tp = await callTurnParsed(
         'turn', turnModel,
-        prompts.buildTurnMessages(state, plan, action, { adult: adultPrompt, narrativeStyle: cfg.NARRATIVE_STYLE }),
+        prompts.buildTurnMessages(state, plan, action, {
+          adult: adultPrompt,
+          narrativeStyle: cfg.NARRATIVE_STYLE,
+          timeSkip: timeSkip || undefined,
+        }),
         turnCtx, usages, onDelta,
       );
       const out = tp.parsed;
@@ -823,6 +849,7 @@ function createGame(cfg, dataDir) {
         continuing: out.continuing, // 是否继续上一回合同一件事（安静模式判定用）
         adult: out.adult, // 本回合是否含成人露骨内容
         npc_updates: out.npc_updates, // 可选人物档案更新；引擎校验后只落私有 result.npc_memory
+        landing_period: out.landing_period, // 时光推进：跳跃结束时的时段（仅 plan.timeSkip 回合生效）
       };
       const data = {
         action,
@@ -919,6 +946,7 @@ function createGame(cfg, dataDir) {
         scene: resolved.result.scene || null,
         voice_hints: resolved.result.voice_hints || [],
         adult: resolved.result.adult === true,
+        ...(resolved.result.timeSkip ? { timeSkip: resolved.result.timeSkip } : {}),
         usage: usageAgg,
         ts: resolved.result.ts,
       });

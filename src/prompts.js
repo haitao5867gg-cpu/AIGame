@@ -426,10 +426,33 @@ function firstActEnvironment(state) {
   return { name: place.name, desc: place.desc.trim() };
 }
 
+// 时光推进（仅 plan.timeSkip 存在时）：替换「时与地（叙事一致性）」段。
+// 单项 / 合计上限与 validateProposal 保持一致：month 为 1 / 2，其余为 3 / 5。
+function timeSkipSectionText(ts) {
+  const month = ts && ts.span === 'month';
+  const diffMax = month ? 1 : 3;
+  const totalMax = month ? 2 : 5;
+  const planText = ts && ts.plan ? ts.plan : '玩家没有说明，按主角眼下的处境和性格过日子';
+  const label = ts && ts.label ? ts.label : '';
+  const days = Number.isFinite(ts && ts.days) ? ts.days : 0;
+  return [
+    `本回合不是一步普通行动，而是时间跳跃：从【时与地】给出的此刻起，过去${label}（约${days}天）。玩家对这段时间的打算：「${planText}」。`,
+    '写法：',
+    '1. 先用 3~6 段按时间顺序概写这段时间，段首可点明季节或月份；主角按玩家的打算行事，得到与其能力、处境相符的结果，有代价、有挫折也有收获，不要一路顺风。',
+    '2. 再用 2~4 段落到跳跃结束时一个具体的时刻：主角在哪、在做什么、眼前出现了什么新情况；结尾留一个钩子，不要出选择题。',
+    '3. 只写玩家打算之内的事和世界自然的变化；不要替玩家做重大、不可逆的决定（拜师、成亲、背叛、杀人、远走他乡等），除非玩家的打算里写了。',
+    '4. 已认识的人物在这段时间里按各自的性格、处境和动机过日子，有的变化明显，有的几乎没变；只写主角能看见、听到的部分，私密动机只能通过可见的举动体现，不能直接说破。每个在正文里写到变化的人物，都在 npc_updates 里记下，证据必须出自本回合正文。',
+    '5. 进行中的事件与未解线索在这段时间里应当有结果或进展，正文里要交代清楚。',
+    `6. 数值：state_diff 反映这段时间的积累（单项最多 +${diffMax}，正向合计最多 +${totalMax}）；可以增减物品；可以 move_to 到新地点（正文必须写明怎么到的）；new_facts 记 1~2 条这段时间确立的重要事实。`,
+    '7. 输出 JSON 里额外给 "landing_period"：跳跃结束时的时段，只能是 清晨 / 午后 / 黄昏 / 深夜 之一。time_passes 本回合不起作用。',
+  ].join('\n');
+}
+
 // 回合：返回 OpenAI chat/completions 的 messages 数组。
 // opts.adult：本回合是否使用「成人模式开」档提示词（由编排层按主人总开关 + 该玩家开关计算）。
 function buildTurnMessages(state, plan, action, opts) {
   const p = plan || {};
+  const timeSkip = p.timeSkip || (opts && opts.timeSkip) || null;
   const adult = !!(opts && opts.adult);
   const nextTurn = p.nextTurn || (state.turn || 0) + 1;
   // 叙事写法：默认读配置（编排层把 cfg.NARRATIVE_STYLE 经 opts.narrativeStyle 传入，
@@ -460,9 +483,13 @@ function buildTurnMessages(state, plan, action, opts) {
     sys.push(section('第一幕（开场衔接）',
       '这是第一幕：从序章「此刻」给出的处境自然接上展开，不要丢开序章已经给玩家的处境。'));
   }
-  sys.push(section('时与地（叙事一致性）',
-    '叙事里的所处地点、白昼/黑夜、所在日子必须与【时与地】一致，不要凭空跳到别处或别的时段；' +
-    '时间只随回合缓慢推进，不可一夜之间改换季节。'));
+  if (timeSkip) {
+    sys.push(section('时光推进（本回合特殊）', timeSkipSectionText(timeSkip)));
+  } else {
+    sys.push(section('时与地（叙事一致性）',
+      '叙事里的所处地点、白昼/黑夜、所在日子必须与【时与地】一致，不要凭空跳到别处或别的时段；' +
+      '时间只随回合缓慢推进，不可一夜之间改换季节。'));
+  }
 
   // 已确立的事实：把全部 facts 列为叙事必须遵守、不得改写的客观真理（动态列表，最多 40 条）。
   const factTexts = (state && Array.isArray(state.facts))

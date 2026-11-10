@@ -23,6 +23,18 @@ const DIFF_MIN = -2;
 const DIFF_MAX = 1; // 普通回合单项正向最多 +1（负向仍以 DIFF_MIN=-2 为界）
 const DIFF_POSITIVE_TOTAL_MAX = 2; // 普通回合正向总预算；事件结算不受此限
 
+// 时光推进：一回合跳过一段较长时间，复用现有回合流程（不新开接口 / 事件类型）。
+const TIME_SKIP_SPANS = Object.freeze({
+  month: Object.freeze({ days: 30, label: '一个月' }),
+  season: Object.freeze({ days: 90, label: '三个月' }),
+  half: Object.freeze({ days: 180, label: '半年' }),
+  year: Object.freeze({ days: 365, label: '一年' }),
+});
+const TIME_SKIP_PLAN_MAX = 200;
+const TIME_SKIP_DIFF_MAX = 3;             // 时光推进单项正向上限（跳一个月除外）
+const TIME_SKIP_DIFF_MIN = -3;            // 时光推进单项负向下限
+const TIME_SKIP_POSITIVE_TOTAL_MAX = 5;   // 时光推进正向总预算（跳一个月除外）
+
 // 通用事件主题：建世界 eventThemes 少于 4 个时补齐；引擎开启事件时主题为空也用它兜底。
 const GENERIC_EVENT_THEMES = Object.freeze(
   ['天灾', '瘟疫', '战乱', '权力更迭', '神秘来客', '资源枯竭'],
@@ -127,6 +139,11 @@ module.exports = {
   DIFF_MIN,
   DIFF_MAX,
   DIFF_POSITIVE_TOTAL_MAX,
+  TIME_SKIP_SPANS,
+  TIME_SKIP_PLAN_MAX,
+  TIME_SKIP_DIFF_MAX,
+  TIME_SKIP_DIFF_MIN,
+  TIME_SKIP_POSITIVE_TOTAL_MAX,
   GENERIC_EVENT_THEMES,
   TWISTS,
   TWIST_STREAK_THRESHOLD,

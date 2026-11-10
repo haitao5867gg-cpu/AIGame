@@ -11,6 +11,29 @@ const MAX_QUIET_POSTPONE = 3;
 // 本回合开始前决定：是否开新事件、是否结算旧事件、是否压编年史。
 function planTurn(state, opts) {
   const options = opts || {};
+  // 时光推进：复用回合流程但不排新事件 / 预兆 / 转折，安静模式一律关掉。
+  // 有进行中事件时本回合照常结算（不论 startedTurn，也不顺延），让模型在这段时间里交代结局。
+  if (options.timeSkip) {
+    const nextTurn = state.turn + 1;
+    const settling = !!state.activeEvent;
+    return {
+      nextTurn,
+      quiet: false,
+      settlePostponed: false,
+      settling,
+      opening: false,
+      theme: null,
+      omen: false,
+      omenTheme: null,
+      pendingEventTheme: null,
+      twist: null,
+      nextTwistTurn: null,
+      needEvent: false,
+      needSettlement: settling,
+      needChapter: nextTurn % 20 === 0,
+      timeSkip: options.timeSkip,
+    };
+  }
   const rng = options.rng || Math.random;
   const nextTurn = state.turn + 1;
   let themes =
