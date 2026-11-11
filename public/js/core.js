@@ -73,11 +73,25 @@
   function formatGameDay(day) {
     var d = Number(day);
     if (!Number.isFinite(d) || d < 1 || Math.floor(d) !== d) d = 1;
-    if (d <= 365) return '第' + d + '日';
-    return '第' + (Math.floor((d - 1) / 365) + 1) + '年 第' + ((d - 1) % 365 + 1) + '日';
-  }
+  if (d <= 365) return '第' + d + '日';
+  return '第' + (Math.floor((d - 1) / 365) + 1) + '年 第' + ((d - 1) % 365 + 1) + '日';
+}
 
-  /* NARRATION_HELPERS_START */
+// 相对时间：ts 为毫秒时间戳。非有限数字返回空串；越界 / 时钟误差按「刚刚」。
+// now 缺省用 Date.now()；超过 30 天返回本地日期 YYYY-M-D。纯函数，便于单测。
+function relTime(ts, now) {
+  if (typeof ts !== 'number' || !isFinite(ts)) return '';
+  var base = (typeof now === 'number' && isFinite(now)) ? now : Date.now();
+  var diff = base - ts;
+  if (diff < 60000) return '刚刚'; // 含负数：ts 比 now 还晚（时钟误差）
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+  if (diff < 2592000000) return Math.floor(diff / 86400000) + ' 天前';
+  var d = new Date(ts);
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+
+/* NARRATION_HELPERS_START */
   // 按空行（\n\n，中间可含空白）把叙事切成段落；纯函数，供流式实时分段。
   function splitByBlankLines(text) {
     return String(text == null ? '' : text)

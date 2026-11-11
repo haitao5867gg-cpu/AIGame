@@ -44,14 +44,64 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .logout-link{font-family:var(--sans);font-size:12px;color:var(--muted);cursor:pointer;
   text-decoration:underline;margin-left:10px;background:none;border:none;padding:0}
 .logout-link:hover{color:var(--accent-2)}
-.world-list{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
-.world-card{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
-  cursor:pointer;transition:.15s}
-.world-card:hover{border-color:var(--accent);transform:translateY(-1px)}
-.world-card h3{margin:0 0 6px;font-size:18px;font-weight:600}
-.world-card .meta{font-family:var(--sans);font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
-.world-card .card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
-.world-card .go{font-family:var(--sans);font-size:12px;color:var(--accent-2)}
+/* ---- 我的世界：带封面的小说卡片 ---- */
+.world-list{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.world-card{position:relative;display:flex;flex-direction:column;
+  background:rgba(24,22,17,.8);border:1px solid var(--line);border-radius:16px;
+  overflow:hidden;cursor:pointer;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  transition:transform .25s,border-color .25s,box-shadow .25s}
+.world-card:hover,.world-card:focus-visible{transform:translateY(-3px);
+  border-color:rgba(212,169,90,.5);box-shadow:0 18px 40px rgba(0,0,0,.45)}
+.world-card:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+.wc-cover{position:relative;aspect-ratio:16/9;overflow:hidden;background:#0d0c09}
+.wc-img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .8s ease}
+.world-card:hover .wc-img{transform:scale(1.05)}
+.wc-img.hero{object-position:center 22%}
+.wc-cover.no-img::before{content:'';position:absolute;inset:0;
+  background:var(--door-img) center/cover no-repeat;
+  filter:saturate(.75) brightness(.62);transition:transform .8s ease}
+.world-card:hover .wc-cover.no-img::before{transform:scale(1.05)}
+.wc-cover::after{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:linear-gradient(to top,rgba(14,13,10,.96) 0%,rgba(14,13,10,.4) 48%,rgba(14,13,10,0) 76%)}
+.wc-tags{position:absolute;top:12px;left:12px;z-index:2;display:flex;gap:6px}
+.wc-genre{font-family:var(--sans);font-size:11px;letter-spacing:.15em;
+  padding:3px 10px;border-radius:999px;background:rgba(0,0,0,.5);
+  border:1px solid rgba(255,255,255,.18);color:var(--gold-2)}
+.wc-status{font-family:var(--sans);font-size:11px;letter-spacing:.15em;
+  padding:3px 10px;border-radius:999px;color:#ffb9ad;
+  border:1px solid rgba(224,84,63,.6);background:rgba(110,20,10,.5)}
+.wc-recent{position:absolute;top:12px;right:12px;z-index:2;
+  font-family:var(--sans);font-size:11px;letter-spacing:.1em;
+  padding:3px 10px;border-radius:999px;color:#fff;
+  background:linear-gradient(135deg,#d64a33,#a52c1f);
+  box-shadow:0 4px 14px rgba(192,57,43,.45)}
+.door-seal.wc-seal{top:auto;left:auto;right:14px;bottom:14px;z-index:2}
+.wc-title{position:absolute;left:16px;right:60px;bottom:12px;z-index:2;margin:0;
+  font-family:var(--serif);font-size:21px;font-weight:600;line-height:1.35;color:#fbf3df;
+  text-shadow:0 2px 14px rgba(0,0,0,.85);
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+
+.wc-body{padding:12px 16px 14px;flex:1;display:flex;flex-direction:column}
+.wc-meta{font-family:var(--sans);font-size:12px;color:rgba(232,226,208,.72);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-excerpt{font-family:var(--serif);font-size:14px;line-height:1.75;
+  color:rgba(232,226,208,.84);margin:10px 0 12px;padding-left:10px;
+  border-left:2px solid rgba(212,169,90,.4);
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+.wc-foot{margin-top:auto;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.wc-stats{font-family:var(--sans);font-size:12px;color:var(--muted)}
+.wc-actions{display:flex;gap:6px;flex:none}
+
+/* 桌面宽屏：最新一张卡横向铺两列，封面占左侧大块 */
+@media (min-width:900px){
+  .world-card.featured{grid-column:span 2;flex-direction:row}
+  .world-card.featured .wc-cover{flex:0 0 58%;aspect-ratio:auto;min-height:270px}
+  .world-card.featured .wc-body{padding:22px 22px 18px}
+  .world-card.featured .wc-title{font-size:26px}
+  .world-card.featured .wc-excerpt{font-size:15px;-webkit-line-clamp:5;line-clamp:5}
+  .world-card.featured .wc-meta{font-size:13px}
+}
 
 /* ==== 首页（重做）：深色宣纸夜空 + 金 / 朱红点缀 ==== */
 .home-backdrop{position:fixed;inset:0;z-index:0;pointer-events:none;background:var(--bg)}
@@ -80,13 +130,16 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .hero-portal{position:absolute;top:38%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:0}
 .hero-portal i{position:absolute;top:50%;left:50%;border:1px solid rgba(212,169,90,.16);
   border-radius:50%;transform:translate(-50%,-50%)}
-.hero-portal i:nth-child(1){width:360px;height:360px}
+/* 三个金点各占一个角度：约 2 点 / 8 点 / 5 点方向；环 2 从其初始角开始旋转 */
+.hero-portal i:nth-child(1){width:360px;height:360px;transform:translate(-50%,-50%) rotate(60deg)}
 .hero-portal i:nth-child(2){width:500px;height:500px;border-style:dashed;
-  border-color:rgba(212,169,90,.22);animation:portal-spin 90s linear infinite}
-.hero-portal i:nth-child(3){width:640px;height:640px;border-color:rgba(212,169,90,.10)}
+  border-color:rgba(212,169,90,.22);transform:translate(-50%,-50%) rotate(240deg);
+  animation:portal-spin 90s linear infinite}
+.hero-portal i:nth-child(3){width:640px;height:640px;border-color:rgba(212,169,90,.10);
+  transform:translate(-50%,-50%) rotate(150deg)}
 .hero-portal i::before{content:'';position:absolute;top:-3px;left:50%;width:5px;height:5px;
   border-radius:50%;background:var(--gold-2);box-shadow:0 0 10px 2px rgba(212,169,90,.7)}
-@keyframes portal-spin{from{transform:translate(-50%,-50%) rotate(0deg)}to{transform:translate(-50%,-50%) rotate(360deg)}}
+@keyframes portal-spin{from{transform:translate(-50%,-50%) rotate(240deg)}to{transform:translate(-50%,-50%) rotate(600deg)}}
 
 .hero-kicker{font-family:var(--sans);font-size:12px;letter-spacing:.5em;color:var(--gold);margin-bottom:14px}
 .hero-title{font-size:clamp(52px,14vw,104px);font-weight:700;letter-spacing:.16em;padding-left:.16em;
@@ -215,6 +268,15 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   .hero-portal i:nth-child(2){width:330px;height:330px}
   .hero-portal i:nth-child(3){width:420px;height:420px}
   #view-home a,#view-home button,#view-home textarea{min-height:40px}
+  /* 我的世界：手机单列；操作按钮放大点击区 */
+  .world-list{grid-template-columns:1fr;gap:14px}
+  .wc-actions .btn{min-height:40px;min-width:52px}
+  /* 怎么玩：两列网格，序号占两行且垂直居中，桌面布局不变 */
+  .pillar{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;
+    column-gap:14px;padding:14px 16px}
+  .pillar-num{grid-column:1;grid-row:1/3;align-self:center;margin-bottom:0;font-size:30px}
+  .pillar h3{grid-column:2;margin:0 0 4px}
+  .pillar p{grid-column:2}
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -226,6 +288,10 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   .reveal{opacity:1;transform:none;transition:none}
   .door,.btn.primary.hero-go{transition:none}
   .door:hover,.door:focus-visible,.btn.primary.hero-go:hover{transform:none}
+  /* 世界卡片：关掉过渡、hover 位移与封面放大 */
+  .world-card,.wc-img,.wc-cover.no-img::before{transition:none}
+  .world-card:hover,.world-card:focus-visible{transform:none}
+  .world-card:hover .wc-img,.world-card:hover .wc-cover.no-img::before{transform:none}
 }
 
 /* ---- 新世界 ---- */
@@ -599,7 +665,6 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .genre-tag{display:none}
   .alloc-row{min-height:44px}
   .alloc-row .btn.tiny{min-width:40px;min-height:40px}
-  .world-card{min-height:64px}
   .undo-btn{min-height:40px}
   .logout-link,.npc-voice-btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center}
 

@@ -230,27 +230,70 @@
     nodes.forEach(function (n) { if (!n.classList.contains('in')) io.observe(n); });
   }
 
+  // 每个世界一张「有封面的小说」卡片；全程 el()/textContent/setAttribute 构建，不拼接 HTML 字符串。
   function renderWorldList(list) {
     var box = $('world-list');
     box.textContent = '';
-    list.forEach(function (w) {
-      var card = el('div', 'world-card');
-      card.appendChild(el('h3', '', w.title || '未命名世界'));
-      var meta = el('div', 'meta');
-      meta.appendChild(el('span', '', '第 ' + w.life + ' 世'));
-      meta.appendChild(el('span', '', '第 ' + w.turn + ' 回合'));
-      meta.appendChild(el('span', '', w.alive ? '在世' : '已终'));
-      meta.appendChild(el('span', '', w.updatedAt ? new Date(w.updatedAt).toLocaleString() : ''));
-      card.appendChild(meta);
+    list.forEach(function (w, idx) {
+      var door = homeDoorFor(w.genre);
+      var title = w.title || '未命名世界';
+      var card = el('article', 'world-card');
+      if (idx === 0) card.classList.add('featured');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('role', 'link');
+      card.setAttribute('aria-label', '进入世界：' + title);
 
-      var footer = el('div', 'card-footer');
-      footer.appendChild(el('span', 'go', '进入世界 ›'));
+      // ---- 封面 ----
+      var cover = el('div', 'wc-cover');
+      cover.style.setProperty('--door-img', 'url(' + door.img + ')');
+      cover.style.setProperty('--door-accent', door.accent);
+      var seal = el('span', 'door-seal wc-seal', door.glyph); // 无封面 / 图片加载失败时补上
+      var hasCover = !!(w.cover && w.cover.url);
+      if (hasCover) {
+        var img = el('img', 'wc-img' + (w.cover.kind === 'hero' ? ' hero' : ''));
+        img.setAttribute('alt', '');
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.setAttribute('src', w.cover.url);
+        img.addEventListener('error', function () {
+          if (img.parentNode) img.parentNode.removeChild(img);
+          cover.classList.add('no-img');
+          if (!seal.parentNode) cover.appendChild(seal);
+        });
+        cover.appendChild(img);
+      } else {
+        cover.classList.add('no-img');
+      }
+
+      var tags = el('div', 'wc-tags');
+      var gname = genreName(w.genre);
+      if (gname) tags.appendChild(el('span', 'wc-genre', gname));
+      var statusParts = [];
+      if (!w.alive) statusParts.push('已终');
+      if (w.awaitingRebirth) statusParts.push('待重生');
+      if (statusParts.length) tags.appendChild(el('span', 'wc-status', statusParts.join(' · ')));
+      cover.appendChild(tags);
+      if (idx === 0) cover.appendChild(el('span', 'wc-recent', '最近在玩'));
+      if (!hasCover) cover.appendChild(seal);
+      cover.appendChild(el('h3', 'wc-title', title));
+
+      // ---- 正文 ----
+      var body = el('div', 'wc-body');
+      var metaParts = [];
+      if (w.charName) metaParts.push(w.charName);
+      if (w.place) metaParts.push(w.place);
+      if (w.day) metaParts.push(formatGameDay(w.day) + (w.period ? ' ' + w.period : ''));
+      if (metaParts.length) body.appendChild(el('div', 'wc-meta', metaParts.join(' · ')));
+      if (w.excerpt) body.appendChild(el('p', 'wc-excerpt', '…' + w.excerpt));
+
+      var foot = el('div', 'wc-foot');
+      var stats = '第 ' + w.life + ' 世 · 第 ' + w.turn + ' 回合';
+      if (w.updatedAt) stats += ' · ' + relTime(w.updatedAt);
+      foot.appendChild(el('span', 'wc-stats', stats));
+      var actions = el('span', 'wc-actions');
       var exp = el('button', 'btn tiny', '导出');
-      exp.addEventListener('click', function (e) {
-        e.stopPropagation();
-        exportWorld(w.id);
-      });
-      footer.appendChild(exp);
+      exp.addEventListener('click', function (e) { e.stopPropagation(); exportWorld(w.id); });
+      actions.appendChild(exp);
       var del = el('button', 'btn danger tiny', '删除');
       var armed = false;
       del.addEventListener('click', function (e) {
@@ -265,10 +308,20 @@
           .then(function () { showHome(); })
           .catch(function (err) { toast(err.message); });
       });
-      footer.appendChild(del);
-      card.appendChild(footer);
+      actions.appendChild(del);
+      foot.appendChild(actions);
+      body.appendChild(foot);
 
-      card.addEventListener('click', function () { location.hash = '#/w/' + w.id; });
+      card.appendChild(cover);
+      card.appendChild(body);
+
+      function go() { location.hash = '#/w/' + encodeURIComponent(w.id); }
+      card.addEventListener('click', go);
+      card.addEventListener('keydown', function (e) {
+        if (e.target !== card || e.key !== 'Enter') return; // 导出/删除按钮自身处理，不重复跳转
+        e.preventDefault();
+        go();
+      });
       box.appendChild(card);
     });
   }
@@ -276,6 +329,7 @@
   // ---- 新世界 ----
   function showNew() {
     $('view-new').hidden = false;
+    window.scrollTo(0, 0); // 进入新世界页时回到顶部，避免停在首页的滚动位置
     var bd = $('home-backdrop');
     bd.hidden = false;
     bd.classList.add('dim');
@@ -293,6 +347,10 @@
             break;
           }
         }
+      } else {
+        // 首屏表单 /「换个灵感」：genre 为 null，重置为「自动」，避免沿用上次点门选的文风。
+        selectedGenre = 'auto';
+        renderGenres();
       }
     }
     homeDraft = null;

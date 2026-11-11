@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..', 'public');
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -106,4 +107,65 @@ test('app.css：首页新样式与减少动态效果规则', () => {
 test('main.js：不再有 btn-new 的 click 跳转绑定', () => {
   assert.equal(/\$\('btn-new'\)\.addEventListener\('click'/.test(mainJs), false,
     'btn-new 现在是表单提交按钮，跳转改由 hero-form submit 处理');
+});
+
+// ---- 世界卡片重做：relTime / 封面卡片 / showNew 两处修复 ----
+
+test('core.js relTime：相对时间、边界与本地日期（node:vm 隔离执行）', () => {
+  // core.js 顶层只有声明与赋值，不碰 DOM；仅给 Date / Math 即可。
+  const ctx = { Date, Math };
+  vm.runInNewContext(coreJs, ctx);
+  assert.equal(typeof ctx.relTime, 'function', 'core.js 应定义 relTime');
+  const rel = ctx.relTime;
+  const now = Date.UTC(2026, 5, 15, 12, 0, 0);
+  assert.equal(rel('x', now), '', '非数字 → 空串');
+  assert.equal(rel(NaN, now), '', 'NaN → 空串');
+  assert.equal(rel(now - 30 * 1000, now), '刚刚', '30 秒前 → 刚刚');
+  assert.equal(rel(now - 5 * 60 * 1000, now), '5 分钟前');
+  assert.equal(rel(now - 3 * 3600 * 1000, now), '3 小时前');
+  assert.equal(rel(now - 2 * 86400 * 1000, now), '2 天前');
+  const old = now - 40 * 86400 * 1000;
+  const local = new Date(old);
+  const dateStr = local.getFullYear() + '-' + (local.getMonth() + 1) + '-' + local.getDate();
+  assert.equal(rel(old, now), dateStr, '40 天前 → 本地日期');
+  assert.match(rel(old, now), /^\d{4}-\d{1,2}-\d{1,2}$/, '本地日期应为 YYYY-M-D 格式');
+  assert.equal(rel(now + 60 * 1000, now), '刚刚', '未来时间（时钟误差）→ 刚刚');
+  assert.equal(rel(Date.now()), '刚刚', 'now 缺省时用 Date.now()');
+});
+
+test('home.js renderWorldList：封面字段、状态类、图片回退与安全构建', () => {
+  const body = homeJs.slice(homeJs.indexOf('function renderWorldList'), homeJs.indexOf('function showNew'));
+  for (const s of ['w.cover', 'w.excerpt', 'w.charName', 'w.place', 'relTime', 'homeDoorFor', 'formatGameDay']) {
+    assert.ok(body.includes(s), 'renderWorldList 应使用 ' + s);
+  }
+  for (const s of ["'featured'", "'no-img'", "'wc-recent'"]) {
+    assert.ok(body.includes(s), 'renderWorldList 应含类 ' + s);
+  }
+  assert.match(body, /setAttribute\('loading'/, 'img 应设置 loading');
+  assert.match(body, /addEventListener\('error'/, 'img 应处理 error 事件');
+  assert.equal(/innerHTML/.test(homeJs), false, 'home.js 仍不得使用 innerHTML');
+  assert.ok(homeJs.includes('确认删除？'), '删除仍是两步确认');
+});
+
+test('home.js showNew：进入回到顶部 + 首屏来源重置文风为 auto', () => {
+  const body = homeJs.slice(homeJs.indexOf('function showNew'), homeJs.indexOf('function renderPresets'));
+  assert.match(body, /scrollTo\(0,\s*0\)/, '应 window.scrollTo(0, 0)');
+  assert.match(body, /selectedGenre\s*=\s*'auto'/, "应有把 selectedGenre 设为 'auto' 的分支");
+});
+
+test('app.css：小说封面卡片样式、16/9 与宽屏 featured 规则', () => {
+  assert.match(css, /\.wc-cover\{/, '应有 .wc-cover 规则');
+  assert.match(css, /\.wc-excerpt\{/, '应有 .wc-excerpt 规则');
+  assert.ok(css.includes('aspect-ratio:16/9'), '封面应为 aspect-ratio:16/9');
+  // 抽出 @media (min-width:900px) 块（大括号配对），确认 featured 规则在其中。
+  const open = css.indexOf('@media (min-width:900px){');
+  assert.ok(open >= 0, '应有 min-width:900px 宽屏媒体查询');
+  let i = css.indexOf('{', open) + 1, depth = 1;
+  while (i < css.length && depth > 0) {
+    if (css[i] === '{') depth++;
+    else if (css[i] === '}') depth--;
+    i++;
+  }
+  const block = css.slice(open, i);
+  assert.match(block, /\.world-card\.featured/, '宽屏块内应有 .world-card.featured 规则');
 });
