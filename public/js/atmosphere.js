@@ -4,6 +4,7 @@ var Atmosphere = (function () {
   var world = null, turnOptions = {}, playerId = null, playerEpoch = 0, editVersion = 0;
   var pending = {}, saveTimer = null, inFlight = null, modal = null, previousFocus = null;
   var backdrop = null, catalogFailed = false;
+  var sceneArt = null, shownSrc = null, sceneToken = 0;
   var localEdits = {}, voiceState = { active: false, paused: false };
   function audio() {
     if (!controller && typeof window.Audio === 'function') {
@@ -38,17 +39,68 @@ var Atmosphere = (function () {
     }
     var line = document.getElementById('atmosphere-status'); if (line) line.textContent = message();
   }
-  function safeImage(src) { return typeof src === 'string' && /^\/assets\/atmosphere\/[a-z0-9_./-]+\.(jpg|jpeg|png|webp)$/i.test(src) && src.split('/').indexOf('..') < 0 && src.indexOf('//') < 0; }
+  function safeImage(src) {
+    return typeof src === 'string' && (
+      (/^\/assets\/atmosphere\/[a-z0-9_./-]+\.(jpg|jpeg|png|webp)$/i.test(src) && src.split('/').indexOf('..') < 0 && src.indexOf('//') < 0) ||
+      /^\/assets\/home\/door-(xuanhuan|urban|game|horror|cozy|general)-v1\.jpg$/.test(src) ||
+      /^\/api\/images\/scene-[0-9a-f]{12}\.(jpg|png)$/.test(src)
+    );
+  }
+  function genreKey(theme) {
+    if (theme === 'lingtian') return 'xuanhuan';
+    if (theme === 'urban' || theme === 'game' || theme === 'horror' ||
+        theme === 'cozy' || theme === 'general') return theme;
+    return 'general';
+  }
+  function setSceneArt(url) {
+    var next = (typeof url === 'string' && /^\/api\/images\/scene-[0-9a-f]{12}\.(jpg|png)$/.test(url)) ? url : null;
+    if (next === sceneArt) return;
+    sceneArt = next;
+    applyScene();
+  }
   function applyScene() {
+    var token = ++sceneToken;
     var scene = world ? AtmosphereState.resolve(world, Object.assign({}, turnOptions, { prefs: prefs })) : null;
+    if (scene) {
+      document.body.setAttribute('data-genre', genreKey(scene.theme));
+      document.body.setAttribute('data-period', scene.period);
+    } else {
+      document.body.removeAttribute('data-genre');
+      document.body.removeAttribute('data-period');
+    }
     if (!backdrop) backdrop = document.getElementById('world-backdrop');
-    var theme = scene && catalog && catalog.themes && catalog.themes[scene.theme];
-    var entry = theme && theme.backgrounds && theme.backgrounds[scene.background];
-    var visible = !!(prefs.background && world && entry && safeImage(entry.src));
+    var src = null, artKind = null;
+    if (scene) {
+      var theme = catalog && catalog.themes && catalog.themes[scene.theme];
+      var entry = theme && theme.backgrounds && theme.backgrounds[scene.background];
+      if (entry && safeImage(entry.src)) { src = entry.src; artKind = 'catalog'; }
+      else if (sceneArt && safeImage(sceneArt)) { src = sceneArt; artKind = 'scene'; }
+      else { src = '/assets/home/door-' + genreKey(scene.theme) + '-v1.jpg'; artKind = 'genre'; }
+    }
+    var visible = !!(prefs.background && world && src && safeImage(src));
     document.body.classList.toggle('atmosphere-background', visible);
     if (backdrop) {
       backdrop.hidden = !visible; backdrop.dataset.period = scene ? scene.period : 'day';
-      backdrop.style.backgroundImage = visible ? 'url("' + entry.src + '")' : '';
+      backdrop.dataset.art = visible ? artKind : '';
+      if (!visible) {
+        backdrop.style.backgroundImage = ''; shownSrc = null;
+      } else if (src !== shownSrc) {
+        if (typeof Image === 'function') {
+          var wanted = src, kind = artKind;
+          var pre = new Image();
+          pre.onload = function () {
+            if (token !== sceneToken) return;
+            backdrop.style.backgroundImage = 'url("' + wanted + '")'; shownSrc = wanted;
+          };
+          pre.onerror = function () {
+            if (token !== sceneToken) return;
+            if (kind === 'scene') { sceneArt = null; applyScene(); }
+          };
+          pre.src = wanted;
+        } else {
+          backdrop.style.backgroundImage = 'url("' + src + '")'; shownSrc = src;
+        }
+      }
     }
     var c = audio(); if (c) { c.setPrefs(prefs); c.setScene(scene); }
     refreshStatus();
@@ -107,6 +159,9 @@ var Atmosphere = (function () {
   }
   function leaveWorld() {
     world = null; turnOptions = {}; if (controller) controller.stop();
+    sceneArt = null; shownSrc = null; sceneToken++;
+    document.body.removeAttribute('data-genre');
+    document.body.removeAttribute('data-period');
     if (backdrop) { backdrop.hidden = true; backdrop.style.backgroundImage = ''; }
     document.body.classList.remove('atmosphere-background'); closeSettings(); refreshStatus();
   }
@@ -202,5 +257,6 @@ var Atmosphere = (function () {
   window.addEventListener('pagehide', function () { flushSave(); if (controller) controller.setHidden(true); });
   window.addEventListener('pageshow', function () { if (controller) controller.setHidden(document.hidden === true); });
   return { applyPrefs: applyPrefs, enterWorld: enterWorld, leaveWorld: leaveWorld,
-    openSettings: openSettings, closeSettings: closeSettings, setVoiceState: setVoiceState, toggle: toggle };
+    openSettings: openSettings, closeSettings: closeSettings, setVoiceState: setVoiceState, toggle: toggle,
+    setSceneArt: setSceneArt };
 })();

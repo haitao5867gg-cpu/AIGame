@@ -280,6 +280,23 @@
     if (imagePollTimer) { clearInterval(imagePollTimer); imagePollTimer = null; }
   }
 
+  function latestSceneArt(scenes, life) {
+    var lifeFilter = typeof life === 'number' && isFinite(life);
+    var best = null, bestLife = -Infinity, bestTurn = -Infinity;
+    var obj = scenes || {}, keys = Object.keys(obj);
+    for (var i = 0; i < keys.length; i++) {
+      var item = obj[keys[i]];
+      if (!item || item.status !== 'ready' || typeof item.url !== 'string') continue;
+      if (lifeFilter && item.life !== life) continue;
+      var l = Number(item.life); if (!isFinite(l)) l = 0;
+      var t = Number(item.turn); if (!isFinite(t)) t = 0;
+      if (l > bestLife || (l === bestLife && t > bestTurn)) {
+        best = item.url; bestLife = l; bestTurn = t;
+      }
+    }
+    return best;
+  }
+
   function hasPendingImage(st) {
     var vals = [];
     var it = st.items || {}, np = st.npcs || {}, sc = st.scenes || {};
@@ -309,6 +326,7 @@
         hero: data.hero || {},
       };
       renderImages();
+      if (typeof Atmosphere !== 'undefined' && Atmosphere.setSceneArt) Atmosphere.setSceneArt(latestSceneArt(imageState.scenes, currentState && currentState.life));
       if (!hasPendingImage(imageState)) stopImagePoll();
     } catch (err) {
       // 忽略：图片是附加信息，绝不影响回合
@@ -324,6 +342,7 @@
       imageState = { items: {}, npcs: {}, scenes: {}, hero: {} };
       imageWorldId = id;
       renderImages();
+      if (typeof Atmosphere !== 'undefined' && Atmosphere.setSceneArt) Atmosphere.setSceneArt(null);
     }
     imagePollStart = Date.now();
     fetchImages(id);
