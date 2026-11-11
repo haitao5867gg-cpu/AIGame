@@ -493,6 +493,8 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
   }
   if (pathname === '/api/worlds' && method === 'GET') {
     const list = g.listWorlds().filter((w) => accessMod.ownerOf(dataDir, w.id) === player.id);
+    const covers = imagesMod.coverForWorlds(dataDir, list.map((w) => w.id));
+    for (const w of list) w.cover = covers[w.id] || null;
     return sendJson(res, 200, list);
   }
   if (pathname === '/api/worlds' && method === 'POST') {

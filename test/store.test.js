@@ -166,24 +166,50 @@ test('saveWorld / loadWorld / listWorlds / appendUsage', () => {
     assert.equal(store.worldExists(dir, 'nope'), false);
 
     store.saveWorld(dir, {
-      id: 'w1', turn: 7, life: 2, bible: { title: '甲' }, character: { alive: true },
+      id: 'w1', turn: 7, life: 2, bible: { title: '甲' },
+      character: { alive: true, name: '  令狐冲  ' },
+      genre: '仙侠', location: '  长安城  ',
+      clock: { day: 3, period: '黄昏日落西山后' }, awaitingRebirth: true,
+      recent: [{ narration: '第一回合' }, { narration: '**旅人**踏上了旅程' }],
     });
     store.saveWorld(dir, {
       id: 'w2', turn: 1, life: 1, bible: { title: '乙' }, character: { alive: false },
     });
+    // 用 mtime 拉开两个世界的 updatedAt，验证排序（w2 更新 → 排最前）。
+    fs.utimesSync(store.statePath(dir, 'w1'), 1000000000, 1000000000);
+    fs.utimesSync(store.statePath(dir, 'w2'), 1600000000, 1600000000);
 
     assert.equal(store.loadWorld(dir, 'w1').turn, 7);
     assert.equal(store.worldExists(dir, 'w1'), true);
 
     const list = store.listWorlds(dir);
     assert.equal(list.length, 2);
+    assert.equal(list[0].id, 'w2', 'updatedAt 新的排前面');
+    assert.equal(list[1].id, 'w1');
     const a = list.find((x) => x.id === 'w1');
     assert.equal(a.title, '甲');
     assert.equal(a.turn, 7);
     assert.equal(a.life, 2);
     assert.equal(a.alive, true);
     assert.equal(typeof a.updatedAt, 'number');
-    assert.equal(list.find((x) => x.id === 'w2').alive, false);
+    // 首页新增摘要字段
+    assert.equal(a.genre, '仙侠');
+    assert.equal(a.charName, '令狐冲');
+    assert.equal(a.place, '长安城');
+    assert.equal(a.day, 3);
+    assert.equal(a.period, '黄昏日落西山'); // 截到 6 字
+    assert.equal(a.awaitingRebirth, true);
+    assert.equal(a.excerpt, '旅人踏上了旅程'); // 去掉 ** 后的最后一段
+    const b = list.find((x) => x.id === 'w2');
+    assert.equal(b.alive, false);
+    // 缺字段时的默认值
+    assert.equal(b.genre, null);
+    assert.equal(b.charName, '');
+    assert.equal(b.place, '');
+    assert.equal(b.day, null);
+    assert.equal(b.period, '');
+    assert.equal(b.awaitingRebirth, false);
+    assert.equal(b.excerpt, '');
 
     store.appendUsage(dir, { ts: 1, model: 'm', ok: true });
     store.appendUsage(dir, { ts: 2, model: 'm', ok: false });
@@ -192,6 +218,71 @@ test('saveWorld / loadWorld / listWorlds / appendUsage', () => {
   } finally {
     cleanup(dir);
   }
+});
+
+test('worldExcerpt：来源优先级、多段/加粗/超长截断、异常输入不抛错', () => {
+  // 非对象输入一律 ''
+  for (const bad of [null, undefined, 42, 'abc', [], () => {}]) {
+    assert.equal(store.worldExcerpt(bad), '');
+  }
+  assert.equal(store.worldExcerpt({}), '');
+
+  // 成人内容直接 ''（即使有正文）
+  assert.equal(store.worldExcerpt({ adult: true, recent: [{ narration: '不该露出' }] }), '');
+
+  // recent：从后往前取第一条非空 narration
+  assert.equal(store.worldExcerpt({ recent: [{ narration: 'A' }, { narration: 'B' }] }), 'B');
+  assert.equal(
+    store.worldExcerpt({ recent: [{ narration: '前一条有效' }, { narration: '' }] }),
+    '前一条有效',
+    '最后一条 narration 为空时取前一条',
+  );
+  assert.equal(store.worldExcerpt({ recent: [{ narration: '前一条' }, {}] }), '前一条');
+  assert.equal(
+    store.worldExcerpt({ recent: [{ narration: '前一条' }, { narration: '   ' }] }),
+    '前一条',
+    '空白 narration 也视为空',
+  );
+  assert.equal(
+    store.worldExcerpt({ recent: [{ narration: 123 }], bible: { prologue: { now: '回退' } } }),
+    '回退',
+    '非字符串 narration 跳过并回退',
+  );
+
+  // 无 recent / recent 全空 → prologue.now
+  assert.equal(store.worldExcerpt({ bible: { prologue: { now: '序章此刻' } } }), '序章此刻');
+  assert.equal(
+    store.worldExcerpt({ recent: [], bible: { prologue: { now: '序章' }, start: { situation: '开局' } } }),
+    '序章',
+  );
+  // 再退到 start.situation
+  assert.equal(store.worldExcerpt({ bible: { start: { situation: '开局处境' } } }), '开局处境');
+  assert.equal(
+    store.worldExcerpt({ bible: { prologue: { now: '' }, start: { situation: '退到开局' } } }),
+    '退到开局',
+  );
+
+  // 多段取最后一段（跳过空白段）
+  assert.equal(store.worldExcerpt({ recent: [{ narration: '第一段\n\n第二段\n  \n' }] }), '第二段');
+  // 去掉 Markdown 加粗符号
+  assert.equal(store.worldExcerpt({ recent: [{ narration: '这是**加粗**文字' }] }), '这是加粗文字');
+  // ≤ 70 字直接返回
+  assert.equal(store.worldExcerpt({ recent: [{ narration: '甲'.repeat(70) }] }), '甲'.repeat(70));
+
+  // 超过 70 字：以 … 开头、总长 ≤ 71、且从句末标点之后开始
+  const long = '甲'.repeat(30) + '。' + '乙'.repeat(69);
+  const ex = store.worldExcerpt({ recent: [{ narration: long }] });
+  assert.equal(ex, '…' + '乙'.repeat(69), '从第一个句末标点之后开始截');
+  assert.ok(Array.from(ex).length <= 71);
+  // 前 35 字里没有句末标点时，保留完整最后 70 字
+  const ex2 = store.worldExcerpt({ recent: [{ narration: '甲'.repeat(100) }] });
+  assert.equal(ex2, '…' + '甲'.repeat(70));
+  assert.equal(Array.from(ex2).length, 71);
+
+  // 绝不抛错：带抛错 getter 的对象
+  const evil = {};
+  Object.defineProperty(evil, 'adult', { get() { throw new Error('boom'); } });
+  assert.equal(store.worldExcerpt(evil), '');
 });
 
 test('appendEvent / readEvents: 每回合一行完整记录，永不删除', () => {

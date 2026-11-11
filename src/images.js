@@ -232,6 +232,56 @@ function writeIndex(dataDir, index) {
   store.atomicWriteJson(indexPath(dataDir), index);
 }
 
+// 比较用的数字：非数字一律当 0。
+function coverNum(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+// 场景图择优：life 大 > turn 大 > ts 大。
+function coverSceneBetter(a, b) {
+  if (coverNum(a.life) !== coverNum(b.life)) return coverNum(a.life) > coverNum(b.life);
+  if (coverNum(a.turn) !== coverNum(b.turn)) return coverNum(a.turn) > coverNum(b.turn);
+  return coverNum(a.ts) > coverNum(b.ts);
+}
+
+// 首页世界列表：每个世界挑一张封面图地址（只读一次索引，绝不抛错）。
+// 有场景图就只在场景图里选（life>turn>ts），否则用主角图里 ts 最新的一张。
+function coverForWorlds(dataDir, worldIds) {
+  try {
+    if (!Array.isArray(worldIds)) return {};
+    const wanted = new Set(worldIds.map((id) => String(id)));
+    const idx = readIndex(dataDir);
+    const dir = imagesDir(dataDir);
+    const scenes = new Map();
+    const heroes = new Map();
+    for (const key of Object.keys(idx)) {
+      const e = idx[key];
+      if (!e || typeof e !== 'object') continue;
+      if (e.status !== 'ready') continue;
+      if (typeof e.file !== 'string' || !FILE_NAME_RE.test(e.file)) continue;
+      if (e.kind !== 'scene' && e.kind !== 'hero') continue;
+      const wid = String(e.worldId);
+      if (!wanted.has(wid)) continue;
+      if (!fs.existsSync(path.join(dir, e.file))) continue;
+      if (e.kind === 'scene') {
+        const cur = scenes.get(wid);
+        if (!cur || coverSceneBetter(e, cur)) scenes.set(wid, e);
+      } else {
+        const cur = heroes.get(wid);
+        if (!cur || coverNum(e.ts) > coverNum(cur.ts)) heroes.set(wid, e);
+      }
+    }
+    const out = {};
+    for (const wid of wanted) {
+      const pick = scenes.get(wid) || heroes.get(wid);
+      if (pick) out[wid] = { url: '/api/images/' + pick.file, kind: pick.kind };
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
 function contentTypeFor(filename) {
   if (/\.svg$/i.test(filename)) return 'image/svg+xml';
   if (/\.png$/i.test(filename)) return 'image/png';
@@ -1325,7 +1375,7 @@ function waitIdle() { return defaultInstance().waitIdle(); }
 module.exports = {
   createImages, configure, reset,
   // 纯函数
-  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, gatewayPrompt, listForState, readIndex, serveImage, collectRefs,
+  inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, gatewayPrompt, listForState, readIndex, serveImage, collectRefs, coverForWorlds,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   DEFAULT_SCENE_REF_MODEL,

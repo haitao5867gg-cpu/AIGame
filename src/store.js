@@ -233,6 +233,59 @@ function restoreUndoBackup(dataDir, worldId) {
   }
 }
 
+// 按「字符」截断（Array.from 避免把 emoji / 代理对切坏）。
+function clipChars(s, n) {
+  const t = String(s);
+  const chars = Array.from(t);
+  return chars.length > n ? chars.slice(0, n).join('') : t;
+}
+
+function usableText(v) {
+  return typeof v === 'string' && v.trim().length > 0 ? v : '';
+}
+
+// 首页列表用的剧情摘要（纯函数：任何异常输入都返回 ''，绝不抛错）。
+function worldExcerpt(state) {
+  try {
+    if (!state || typeof state !== 'object') return '';
+    if (state.adult === true) return ''; // 上一回合是成人内容，不在首页露出
+    let text = '';
+    const recent = state.recent;
+    if (Array.isArray(recent)) {
+      for (let i = recent.length - 1; i >= 0; i--) {
+        const item = recent[i];
+        const t = usableText(item && item.narration);
+        if (t) { text = t; break; }
+      }
+    }
+    if (!text) {
+      const bible = state.bible;
+      text = usableText(bible && bible.prologue && bible.prologue.now)
+        || usableText(bible && bible.start && bible.start.situation);
+    }
+    if (!text) return '';
+    // 按换行切段，取最后一个非空段，再去掉 Markdown 加粗符号 **。
+    const lines = text.split(/\r?\n/);
+    let seg = '';
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim().length > 0) { seg = lines[i].trim(); break; }
+    }
+    if (!seg) return '';
+    seg = seg.replace(/\*\*/g, '');
+    const chars = Array.from(seg);
+    if (chars.length <= 70) return seg;
+    // 超过 70 字：取最后 70 个字符；若前 35 字里有句末标点，从第一个标点之后开始截，前面加「…」。
+    const last70 = chars.slice(chars.length - 70);
+    let start = 0;
+    for (let i = 0; i < 35 && i < last70.length; i++) {
+      if ('。！？…」'.includes(last70[i])) { start = i + 1; break; }
+    }
+    return '…' + last70.slice(start).join('');
+  } catch (_) {
+    return '';
+  }
+}
+
 // GET /api/worlds 用的列表；updatedAt 取 state.json 的 mtime。
 function listWorlds(dataDir) {
   const dir = worldsDir(dataDir);
@@ -261,8 +314,26 @@ function listWorlds(dataDir) {
       life: state.life,
       alive: !!(state.character && state.character.alive),
       updatedAt,
+      genre: typeof state.genre === 'string' && state.genre.length > 0 ? state.genre : null,
+      charName: typeof state.character === 'object' && state.character !== null
+        && typeof state.character.name === 'string'
+        ? clipChars(state.character.name.trim(), 20) : '',
+      place: typeof state.location === 'string' ? clipChars(state.location.trim(), 20) : '',
+      day: state.clock && Number.isInteger(state.clock.day) && state.clock.day > 0
+        ? state.clock.day : null,
+      period: state.clock && typeof state.clock.period === 'string'
+        ? clipChars(state.clock.period, 6) : '',
+      awaitingRebirth: !!state.awaitingRebirth,
+      excerpt: worldExcerpt(state),
     });
   }
+  // updatedAt 从新到旧；为 null 的排最后。
+  out.sort((a, b) => {
+    if (a.updatedAt === null && b.updatedAt === null) return 0;
+    if (a.updatedAt === null) return 1;
+    if (b.updatedAt === null) return -1;
+    return b.updatedAt - a.updatedAt;
+  });
   return out;
 }
 
@@ -318,5 +389,6 @@ module.exports = {
   readUndoBackup,
   restoreUndoBackup,
   listWorlds,
+  worldExcerpt,
   deleteWorld,
 };
