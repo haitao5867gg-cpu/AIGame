@@ -39,9 +39,24 @@
   };
   var ATTR_TIP_FOOTER = '属性上限 40，越高越难提升';
   var attrTipOpen = null; // 当前打开的属性名，null 表示未打开
-  // 玩法简介：无世界时醒目显示，有世界时在列表下方用小字显示。
-  var HOME_INTRO = '一句话就能开一个世界。自由输入你想做的任何事——没有任务，也没有结局；'
-    + '死亡只是一世的结束，下一世世界仍会记得你。';
+  // 题材之门：首页六扇门，点击即用对应开头与文风预填新世界页。
+  var HOME_DOORS = [
+    { genre: 'xuanhuan', label: '玄幻修仙', glyph: '仙', img: '/assets/home/door-xuanhuan-v1.jpg', accent: '#e2c77e', seed: '修仙宗门外门杂役：灵田、丹房与藏经阁，一步踏错便是百年苦役' },
+    { genre: 'urban', label: '都市', glyph: '城', img: '/assets/home/door-urban-v1.jpg', accent: '#ff8cc0', seed: '霓虹深处的超一线城市，你是刚被裁员的程序员，却在天台捡到一部能打通十年后的手机' },
+    { genre: 'game', label: '游戏系统', glyph: '界', img: '/assets/home/door-game-v1.jpg', accent: '#63e3ea', seed: '末日降临那天，你眼前弹出一行字：【新手礼包已发放，请选择你的职业】' },
+    { genre: 'horror', label: '恐怖悬疑', glyph: '诡', img: '/assets/home/door-horror-v1.jpg', accent: '#ff7360', seed: '被诅咒的中世纪王国：每当钟敲十三下，就有一个人忘记自己的名字' },
+    { genre: 'cozy', label: '休闲日常', glyph: '闲', img: '/assets/home/door-cozy-v1.jpg', accent: '#ffc685', seed: '海边小镇的旧书店，猫比客人多，每本书里都夹着前一位读者的秘密' },
+    { genre: 'general', label: '奇想', glyph: '奇', img: '/assets/home/door-general-v1.jpg', accent: '#c0aaff', seed: '深海殖民站：万米海沟下的玻璃穹顶，氧气与秘密都要省着用' },
+  ];
+  function homeDoorFor(genre) {
+    for (var i = 0; i < HOME_DOORS.length; i++) {
+      if (HOME_DOORS[i].genre === genre) return HOME_DOORS[i];
+    }
+    for (var j = 0; j < HOME_DOORS.length; j++) {
+      if (HOME_DOORS[j].genre === 'general') return HOME_DOORS[j];
+    }
+    return HOME_DOORS[0];
+  }
 
   function $(id) { return document.getElementById(id); }
 

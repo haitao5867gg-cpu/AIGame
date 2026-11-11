@@ -168,22 +168,13 @@ test('前端：等待回应时显示已等待秒数', () => {
   assert.ok(/clearInterval\(pendingTimer\)/.test(html), '结束时应清理计时器');
 });
 
-test('前端：首页玩法简介（无世界醒目 / 有世界在列表下方小字）', () => {
-  assert.ok(/id=["']home-intro["']/.test(html), '应有玩法简介元素');
-  // 简介文案覆盖玩法要点
-  assert.ok(/一句话/.test(html), '一句话开世界');
-  assert.ok(/自由输入/.test(html), '自由输入行动');
-  assert.ok(/没有任务/.test(html) && /没有结局/.test(html), '没有任务没有结局');
-  assert.ok(/死亡只是一世/.test(html), '死亡只是一世结束');
-  assert.ok(/记得你/.test(html), '世界会记得你');
-  // 未在列表下方用小字，无世界时用大字
-  assert.ok(/HOME_INTRO/.test(html));
-  assert.ok(/home-intro small/.test(html) && /home-intro big/.test(html));
-  assert.ok(/\.home-intro\.small\{[^}]*font-size:12px/.test(html), '有世界时用小字');
-  assert.ok(/intro\.className = list\.length \? 'home-intro small' : 'home-intro big'/.test(html),
-    '按是否有世界切换小字/大字');
-  // 简介元素位于 world-list 之后（列表下方）
-  assert.ok(html.indexOf('id="home-intro"') > html.indexOf('id="world-list"'));
+test('前端：首页玩法区文案（新玩法区，不再有旧简介）', () => {
+  // 玩法区文案都在 index.html 的 .home-pillars 里
+  const texts = ['一句话开世界', '自由输入你的行动', '没有任务', '没有结局', '死亡只是一世的结束', '记得你'];
+  for (const t of texts) {
+    assert.ok(html.includes(t), '玩法区应包含：' + t);
+  }
+  assert.equal(/home-intro/.test(html), false, '不应再有旧的 home-intro 简介');
 });
 
 test('前端：行动改走 fetch 流式读取并自解析 SSE，失败自动回退普通 /turn', () => {

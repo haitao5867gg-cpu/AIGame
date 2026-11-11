@@ -8,19 +8,46 @@
 </head>
 <body>
 <div id="world-backdrop" class="world-backdrop" aria-hidden="true" hidden></div>
+<div id="home-backdrop" class="home-backdrop" aria-hidden="true" hidden><div class="home-art"></div><canvas id="home-sky"></canvas></div>
 <div id="app">
 
   <!-- 首页 -->
-  <section id="view-home" class="view">
-    <header class="home-head">
-      <h1>无限世界</h1>
-      <p class="sub">一句话，开一个永不结束的世界</p>
-      <div class="player-line"><span id="home-player-name"></span><a id="home-logout" class="logout-link" hidden>退出</a></div>
-    </header>
-    <div class="home-actions"><button id="btn-new" class="btn primary">开新世界</button></div>
-    <div id="world-list" class="world-list"></div>
-    <p id="world-empty" class="empty" hidden>还没有世界，先开一个吧。</p>
-    <p id="home-intro" class="home-intro" hidden></p>
+  <section id="view-home" class="view home">
+    <div class="home-hero">
+      <div class="hero-top"><span id="home-player-name"></span><a id="home-logout" class="logout-link" hidden>退出</a></div>
+      <div class="hero-portal" aria-hidden="true"><i></i><i></i><i></i></div>
+      <p class="hero-kicker">AI 驱动 · 无尽角色扮演</p>
+      <h1 class="hero-title">无限世界</h1>
+      <p class="hero-tagline">一句话，开一个永不结束的世界</p>
+      <form id="hero-form" class="hero-seed" autocomplete="off">
+        <label for="home-seed" class="hero-seed-label">写下你的世界</label>
+        <textarea id="home-seed" rows="2" maxlength="300" placeholder="蒸汽朋克长安：机关兽与占星术并存……"></textarea>
+        <div class="hero-seed-row">
+          <button type="button" id="hero-dice" class="hero-dice">换个灵感</button>
+          <button type="submit" id="btn-new" class="btn primary hero-go">开启世界</button>
+        </div>
+      </form>
+      <a id="hero-resume" class="hero-resume" hidden></a>
+      <button type="button" id="hero-more" class="hero-more">看看能开出什么样的世界</button>
+    </div>
+    <section id="home-shelf" class="home-section reveal" hidden>
+      <div class="section-head"><h2>我的世界</h2><span id="shelf-count" class="section-sub"></span></div>
+      <div id="world-list" class="world-list"></div>
+    </section>
+    <section id="home-doors" class="home-section reveal">
+      <div class="section-head"><h2>推开一扇门</h2><span class="section-sub">点一扇门，用它的开头开一个新世界</span></div>
+      <div id="door-row" class="door-row"></div>
+    </section>
+    <section class="home-section home-pillars reveal">
+      <div class="section-head"><h2>怎么玩</h2></div>
+      <div class="pillars">
+        <div class="pillar"><span class="pillar-num">壹</span><h3>一句话开世界</h3><p>写下任何设定，AI 当场生成世界、人物和序章。</p></div>
+        <div class="pillar"><span class="pillar-num">贰</span><h3>想做什么就写什么</h3><p>没有选项框。自由输入你的行动，世界会认真回应。</p></div>
+        <div class="pillar"><span class="pillar-num">叁</span><h3>永不结束</h3><p>没有任务，也没有结局。死亡只是一世的结束，下一世世界仍会记得你。</p></div>
+      </div>
+      <ul class="feature-chips"><li>关键时刻自动出插图</li><li>人物有长期记忆</li><li>题材配乐与环境声</li><li>角色分音色朗读</li><li>时光推进，一年转瞬</li><li>六种文风随时切换</li></ul>
+    </section>
+    <p class="home-foot">无限世界 · 世界由你和 AI 一起写</p>
   </section>
 
   <!-- 新世界 -->
@@ -115,6 +142,7 @@
 <div id="image-viewer" class="image-viewer" hidden></div>
 
 <script src="/js/core.js"></script>
+<script src="/js/sky.js"></script>
 <script src="/js/home.js"></script>
 <script src="/js/images.js"></script>
 <script src="/js/prologue.js"></script>

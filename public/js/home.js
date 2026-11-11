@@ -1,4 +1,9 @@
 'use strict';
+  var homeDraft = null;          // 首页输入 / 点门时暂存，供新世界页预填
+  var heroTypeTimer = null;
+  var heroTyper = { samples: [], index: 0, char: 0, deleting: false, running: false };
+  var doorsRendered = false;
+  var homeScrollTicking = false;
   // ---- 路由 ----
   function hideAllViews() {
     if (typeof Atmosphere !== 'undefined') Atmosphere.leaveWorld();
@@ -12,6 +17,12 @@
     pendingTimer = null;
     stopImagePoll();     // 离开世界：停止 /images 轮询
     closeImageViewer();  // 收起可能还开着的大图
+    if (typeof Sky !== 'undefined') Sky.stop();
+    $('home-backdrop').hidden = true;
+    clearTimeout(heroTypeTimer);
+    heroTypeTimer = null;
+    heroTyper.running = false;
+    window.removeEventListener('scroll', onHomeScroll);
   }
 
   function route() {
@@ -25,19 +36,203 @@
   // ---- 首页 ----
   async function showHome() {
     $('view-home').hidden = false;
+    var bd = $('home-backdrop');
+    bd.hidden = false;
+    bd.classList.remove('dim');
+    if (typeof Sky !== 'undefined') Sky.start($('home-sky'));
+    if (!doorsRendered) { renderDoors(); doorsRendered = true; } // 门只渲染一次
+    startHeroTyper();
+    window.addEventListener('scroll', onHomeScroll, { passive: true });
+    onHomeScroll();
+    startReveal();
     var list = await api('/api/worlds').catch(function (err) { toast(err.message); return []; });
-    renderWorldList(list);
+    list = list.slice().sort(function (a, b) {
+      return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    });
+    var shelf = $('home-shelf');
+    shelf.hidden = list.length === 0;
+    $('shelf-count').textContent = list.length ? '共 ' + list.length + ' 个' : '';
+    if (list.length) renderWorldList(list);
+    else $('world-list').textContent = '';
+    var resume = $('hero-resume');
+    if (list.length) {
+      var w = list[0];
+      var title = w.title || '未命名世界';
+      if (title.length > 14) title = title.slice(0, 14) + '…';
+      resume.href = '#/w/' + encodeURIComponent(w.id);
+      resume.textContent = '继续「' + title + '」 · 第 ' + w.turn + ' 回合';
+      resume.hidden = false;
+    } else {
+      resume.hidden = true;
+      resume.removeAttribute('href');
+    }
+  }
+
+  // ---- 首屏：灵感打字机 ----
+  function heroReduced() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function heroSamples() {
+    var seen = {}, out = [];
+    function push(s) { if (s && !seen[s]) { seen[s] = 1; out.push(s); } }
+    PRESETS.forEach(push);
+    HOME_DOORS.forEach(function (d) { push(d.seed); });
+    return out;
+  }
+
+  function startHeroTyper() {
+    clearTimeout(heroTypeTimer);
+    heroTypeTimer = null;
+    heroTyper.samples = heroSamples();
+    heroTyper.index = 0;
+    heroTyper.char = 0;
+    heroTyper.deleting = false;
+    var seed = $('home-seed');
+    if (heroReduced()) {
+      heroTyper.running = false;
+      seed.placeholder = heroTyper.samples[0] || '';
+      return;
+    }
+    heroTyper.running = true;
+    seed.placeholder = '';
+    typeStep();
+  }
+
+  function typeStep() {
+    var seed = $('home-seed');
+    if (!heroTyper.running || !seed) return;
+    if (document.activeElement === seed || seed.value) return; // 有焦点或已有内容时停住
+    var s = heroTyper.samples[heroTyper.index] || '';
+    if (!heroTyper.deleting) {
+      heroTyper.char += 1;
+      seed.placeholder = s.slice(0, heroTyper.char);
+      if (heroTyper.char >= s.length) {
+        heroTyper.deleting = true;
+        heroTypeTimer = setTimeout(typeStep, 2200);
+        return;
+      }
+      heroTypeTimer = setTimeout(typeStep, 70);
+    } else {
+      heroTyper.char -= 1;
+      seed.placeholder = s.slice(0, Math.max(0, heroTyper.char));
+      if (heroTyper.char <= 0) {
+        heroTyper.deleting = false;
+        heroTyper.index = (heroTyper.index + 1) % heroTyper.samples.length;
+        heroTypeTimer = setTimeout(typeStep, 70);
+        return;
+      }
+      heroTypeTimer = setTimeout(typeStep, 25);
+    }
+  }
+
+  function pauseHeroTyper() {
+    clearTimeout(heroTypeTimer);
+    heroTypeTimer = null;
+    heroTyper.running = false;
+    $('home-seed').placeholder = '写下任何设定，比如：' + (heroTyper.samples[heroTyper.index] || '');
+  }
+
+  function resumeHeroTyper() {
+    var seed = $('home-seed');
+    if (seed.value || document.activeElement === seed) return;
+    if (heroReduced()) { seed.placeholder = heroTyper.samples[0] || ''; return; }
+    heroTyper.running = true;
+    typeStep();
+  }
+
+  function goNewFromSeed() {
+    homeDraft = { seed: $('home-seed').value.trim(), genre: null };
+    location.hash = '#/new';
+  }
+
+  function onHeroDice() {
+    var samples = heroSamples();
+    var cur = $('home-seed').value.trim();
+    var pool = samples.filter(function (s) { return s !== cur; });
+    if (!pool.length) pool = samples;
+    var pick = pool[Math.floor(Math.random() * pool.length)];
+    $('home-seed').value = pick;
+    homeDraft = homeDraft || { seed: null, genre: null };
+    homeDraft.genre = null;
+    pauseHeroTyper();
+    $('home-seed').focus();
+  }
+
+  function onHeroMore() {
+    var target = $('home-shelf').hidden ? $('home-doors') : $('home-shelf');
+    target.scrollIntoView({ behavior: heroReduced() ? 'auto' : 'smooth', block: 'start' });
+  }
+
+  function initHome() {
+    var form = $('hero-form');
+    var seed = $('home-seed');
+    form.addEventListener('submit', function (e) { e.preventDefault(); goNewFromSeed(); });
+    seed.addEventListener('keydown', function (e) {
+      // 避开中文输入法选词时的误提交
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        goNewFromSeed();
+      }
+    });
+    seed.addEventListener('focus', pauseHeroTyper);
+    seed.addEventListener('blur', resumeHeroTyper);
+    seed.addEventListener('input', function () { if (seed.value) pauseHeroTyper(); });
+    $('hero-dice').addEventListener('click', onHeroDice);
+    $('hero-more').addEventListener('click', onHeroMore);
+  }
+
+  // ---- 题材之门 ----
+  function renderDoors() {
+    var row = $('door-row');
+    row.textContent = '';
+    HOME_DOORS.forEach(function (door) {
+      var b = el('button', 'door');
+      b.type = 'button';
+      b.style.setProperty('--door-img', 'url(' + door.img + ')');
+      b.style.setProperty('--door-accent', door.accent);
+      b.appendChild(el('span', 'door-seal', door.glyph));
+      b.appendChild(el('span', 'door-genre', door.label));
+      b.appendChild(el('span', 'door-seed', door.seed));
+      b.appendChild(el('span', 'door-go', '用这个开头 ›'));
+      b.addEventListener('click', function () {
+        homeDraft = { seed: door.seed, genre: door.genre };
+        location.hash = '#/new';
+      });
+      row.appendChild(b);
+    });
+  }
+
+  // ---- 滚动渐隐 / 区块入场 ----
+  function onHomeScroll() {
+    if (homeScrollTicking) return;
+    homeScrollTicking = true;
+    window.requestAnimationFrame(function () {
+      homeScrollTicking = false;
+      var fade = Math.max(0, 1 - window.scrollY / (0.9 * window.innerHeight));
+      $('home-backdrop').style.setProperty('--art-fade', fade.toFixed(2));
+    });
+  }
+
+  function startReveal() {
+    var nodes = document.querySelectorAll('#view-home .reveal');
+    if (!('IntersectionObserver' in window) || heroReduced()) {
+      nodes.forEach(function (n) { n.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('in');
+        io.unobserve(entry.target);
+      });
+    }, { threshold: 0.12 });
+    nodes.forEach(function (n) { if (!n.classList.contains('in')) io.observe(n); });
   }
 
   function renderWorldList(list) {
     var box = $('world-list');
     box.textContent = '';
-    $('world-empty').hidden = list.length > 0;
-    // 玩法简介：没有世界时用大字醒目介绍，有世界时在列表下方用小字带一句。
-    var intro = $('home-intro');
-    intro.textContent = HOME_INTRO;
-    intro.className = list.length ? 'home-intro small' : 'home-intro big';
-    intro.hidden = false;
     list.forEach(function (w) {
       var card = el('div', 'world-card');
       card.appendChild(el('h3', '', w.title || '未命名世界'));
@@ -81,9 +276,26 @@
   // ---- 新世界 ----
   function showNew() {
     $('view-new').hidden = false;
+    var bd = $('home-backdrop');
+    bd.hidden = false;
+    bd.classList.add('dim');
+    if (typeof Sky !== 'undefined') Sky.start($('home-sky'));
     if (!$('presets').childElementCount) renderPresets();
     if (!$('genre-row').childElementCount) renderGenres();
     if (!$('alloc').childElementCount) initAlloc();
+    if (homeDraft) {
+      if (homeDraft.seed) $('seed').value = homeDraft.seed;
+      if (homeDraft.genre) {
+        for (var i = 0; i < GENRE_OPTIONS.length; i++) {
+          if (GENRE_OPTIONS[i].value === homeDraft.genre) {
+            selectedGenre = homeDraft.genre;
+            renderGenres();
+            break;
+          }
+        }
+      }
+    }
+    homeDraft = null;
     updatePoints();
   }
 
@@ -191,4 +403,3 @@
       setCreating(false);
     }
   }
-

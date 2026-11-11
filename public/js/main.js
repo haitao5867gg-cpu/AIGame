@@ -1,7 +1,7 @@
 'use strict';
   // ---- 事件绑定 ----
   function boot() {
-    $('btn-new').addEventListener('click', function () { location.hash = '#/new'; });
+    initHome();
     document.querySelectorAll('[data-nav]').forEach(function (n) {
       n.addEventListener('click', function () { location.hash = n.getAttribute('data-nav'); });
     });
