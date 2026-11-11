@@ -50,15 +50,17 @@
 
 ### public/
 - `index.html` — 单页应用骨架（首页 / 新建 / 游戏视图、面板容器）。
-- `login.html` — 公网来客登录页（访问密码 / 主人口令）。
+- `login.html` — 公网来客登录页（访问密码 / 主人口令），与首页同一套星空视觉。
 - `app.css` — 全部样式（手机 + 桌面响应式）。
 - `js/` — 前端原生 JS 模块，见下。
+- `assets/home/` — 首页 / 登录页配图（首屏星海、六扇题材之门），署名见同目录 CREDITS.md。
 - `assets/atmosphere/` — 随版本分发的背景图、器乐/环境声、固定目录 `catalog.json` 和素材署名；不含运行期生成数据。见 `docs/ATMOSPHERE.md`。
 
 ### public/js/
 - `core.js` — 公共常量（属性 / 性格 / 预设世界观）、DOM 与请求辅助。
 - `game.js` — 主游戏界面：回合输入、叙事渲染、状态、导出世界、朗读提示接线（最大前端模块）。
-- `home.js` — 视图路由与首页 / 新建 / 游戏视图切换。
+- `home.js` — 视图路由与首页 / 新建 / 游戏视图切换；首页首屏、题材之门、世界封面卡。
+- `sky.js` — 首页与登录页共用的星空画布（独立脚本，`window.Sky.start/stop`）。
 - `images.js` — 物品卡片 / NPC 头像 / 主角 / 场景图的请求、轮询与占位。
 - `items.js` — 随身物品介绍卡片（缺介绍时请求 `/items` 补齐）。
 - `main.js` — 入口：事件绑定与 `boot()` 启动。
@@ -157,6 +159,7 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 | 方法 | 路径 | 作用 | 权限 |
 |---|---|---|---|
 | GET | `/login.html` | 登录页 | 公开 |
+| GET | `/js/sky.js`、`/assets/home/*.jpg` | 登录页用的星空脚本与配图（严格正则匹配） | 公开 |
 | POST | `/api/login` | 登录（访问密码 / 主人口令），成功发签名 cookie | 公开 |
 | POST | `/api/logout` | 清除登录 cookie | 公开 |
 | GET | `/api/me` | 当前玩家 id / 名字 / 是否主人 / 偏好 | 需登录 |
