@@ -13,6 +13,7 @@ const root = path.join(__dirname, '..', 'public');
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
 
 const html = read('index.html');
+const loginHtml = read('login.html');
 const css = read('app.css');
 const coreJs = read('js/core.js');
 const skyJs = read('js/sky.js');
@@ -168,4 +169,40 @@ test('app.css：小说封面卡片样式、16/9 与宽屏 featured 规则', () =
   }
   const block = css.slice(open, i);
   assert.match(block, /\.world-card\.featured/, '宽屏块内应有 .world-card.featured 规则');
+});
+
+// ---- 登录页重做：与首页同气质的静态检查 ----
+
+test('login.html：引用星空脚本与首页主视觉图，不依赖 /app.css', () => {
+  assert.match(loginHtml, /src="\/js\/sky\.js"/, '应引用 /js/sky.js');
+  assert.match(loginHtml, /\/assets\/home\/hero-worlds-v1\.jpg/, '应引用主视觉图');
+  assert.equal(/\/app\.css/.test(loginHtml), false, '登录前拿不到 /app.css，不得引用');
+});
+
+test('login.html：六张门图都在，且保留全部交互 id', () => {
+  const doors = [
+    'door-xuanhuan-v1.jpg', 'door-urban-v1.jpg', 'door-game-v1.jpg',
+    'door-horror-v1.jpg', 'door-cozy-v1.jpg', 'door-general-v1.jpg',
+  ];
+  for (const d of doors) assert.ok(loginHtml.includes(d), '应引用门图 ' + d);
+  for (const id of ['form', 'password', 'name', 'hostToggle', 'btn', 'error']) {
+    assert.ok(loginHtml.includes('id="' + id + '"'), '应保留 id=' + id);
+  }
+});
+
+test('login.html：三层星空背景、减少动态效果与 16px 输入框', () => {
+  assert.ok(loginHtml.includes('class="home-backdrop"'));
+  assert.match(loginHtml, /canvas id="home-sky"/);
+  assert.match(loginHtml, /Sky\.start\(/);
+  assert.match(loginHtml, /prefers-reduced-motion/);
+  assert.match(loginHtml, /font-size:16px/, '输入框应为 16px，避免手机聚焦缩放');
+});
+
+test('sky.js：resize 防抖后区分「只改尺寸」与「重建粒子」', () => {
+  const body = skyJs.slice(skyJs.indexOf('function onResize'), skyJs.indexOf('function start'));
+  assert.match(body, /160/, '应有 160px 高度阈值');
+  assert.match(skyJs, /function resizeOnly\(/, '应有只改尺寸的分支');
+  assert.match(skyJs, /function measure\(/, '应有重建粒子的分支');
+  assert.match(body, /resizeOnly\(\)/, '小幅高度变化走只改尺寸');
+  assert.match(body, /measure\(\)/, '宽度变化或大改高度走整体重建');
 });

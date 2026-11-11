@@ -5,6 +5,8 @@
   var ctx = null;
   var W = 0;
   var H = 0;
+  var lastCssW = 0;
+  var lastCssH = 0;
   var dpr = 1;
   var linkLen = 120;
   var particles = [];
@@ -38,16 +40,35 @@
     };
   }
 
-  function measure() {
+  // 只更新画布尺寸与基准视口，不动粒子。
+  function applySize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = Math.round(window.innerWidth * dpr);
     H = Math.round(window.innerHeight * dpr);
     canvas.width = W;
     canvas.height = H;
+    linkLen = (window.innerWidth < 600 ? 80 : 120) * dpr;
+    lastCssW = window.innerWidth;
+    lastCssH = window.innerHeight;
+  }
+
+  // 完整重建：按新视口重新生成粒子（宽度变化或高度大变时用）。
+  function measure() {
+    applySize();
     var count = Math.max(40, Math.min(110, Math.round(window.innerWidth * window.innerHeight / 14000)));
     particles = [];
     for (var i = 0; i < count; i++) particles.push(makeParticle());
-    linkLen = (window.innerWidth < 600 ? 80 : 120) * dpr;
+  }
+
+  // 只改尺寸：手机地址栏伸缩时高度小幅变化，保留粒子，只把越界的按取模挪回画布内，
+  // 避免每次 resize 都重建粒子导致星星「跳」一下。
+  function resizeOnly() {
+    applySize();
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      if (p.x < 0 || p.x > W) p.x = ((p.x % W) + W) % W;
+      if (p.y < 0 || p.y > H) p.y = ((p.y % H) + H) % H;
+    }
   }
 
   function step(dt) {
@@ -159,8 +180,14 @@
     resizeTimer = setTimeout(function () {
       resizeTimer = null;
       if (!active || !canvas) return;
-      measure();
-      if (reduced) draw(0);
+      var widthChanged = window.innerWidth !== lastCssW;
+      var heightDelta = Math.abs(window.innerHeight - lastCssH);
+      if (!widthChanged && heightDelta < 160) {
+        resizeOnly();   // 视口宽度不变、高度变化 < 160px：只改尺寸，不重建粒子
+      } else {
+        measure();      // 宽度变了或高度变化 ≥ 160px：整体重建粒子
+      }
+      if (reduced) draw(0);  // reduced 模式照样重画一帧
     }, 150);
   }
 

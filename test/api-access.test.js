@@ -32,6 +32,34 @@ test('访问控制：来客无 cookie 时 /api/* 返回 401(login)、静态页 3
   });
 });
 
+test('访问控制：登录页静态素材仅放行 sky.js 与 /assets/home/ 图片，其余仍需登录', async () => {
+  await withServer(async ({ base }) => {
+    // 放行的两类素材（仅 GET / HEAD）
+    let r = await req(base, 'GET', '/js/sky.js', undefined, asGuest(), { redirect: 'manual' });
+    assert.equal(r.status, 200);
+
+    r = await req(base, 'GET', '/assets/home/hero-worlds-v1.jpg', undefined, asGuest(), { redirect: 'manual' });
+    assert.equal(r.status, 200);
+
+    // 匹配正则但文件不存在 → 404（而非被访问控制 302 拦下）
+    r = await req(base, 'GET', '/assets/home/nope.jpg', undefined, asGuest(), { redirect: 'manual' });
+    assert.equal(r.status, 404);
+
+    // 其他静态脚本仍需登录 → 302 到登录页
+    r = await req(base, 'GET', '/js/core.js', undefined, asGuest(), { redirect: 'manual' });
+    assert.equal(r.status, 302);
+    assert.equal(r.headers.get('location'), '/login.html');
+
+    // ..%2F 绕过尝试：严格正则不放行，不能是 200
+    r = await req(base, 'GET', '/assets/home/..%2F..%2Fjs%2Fcore.js', undefined, asGuest(), { redirect: 'manual' });
+    assert.notEqual(r.status, 200);
+
+    // 接口仍需登录
+    r = await req(base, 'GET', '/api/worlds', undefined, asGuest(), { redirect: 'manual' });
+    assert.equal(r.status, 401);
+  });
+});
+
 test('访问控制：来客连续输错访问密码 5 次后第 6 次返回 429', async () => {
   await withServer(async ({ base }) => {
     for (let i = 0; i < 5; i++) {

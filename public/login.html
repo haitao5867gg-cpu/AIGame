@@ -6,51 +6,143 @@
 <title>无限世界 · 进入</title>
 <style>
 :root{
-  --bg:#14130f; --bg-2:#1b1a14; --panel:#201e17; --ink:#e8e2d0;
-  --muted:#9a927c; --line:#3a352a; --accent:#c0392b; --accent-2:#e0543f;
+  --bg:#14130f; --ink:#e8e2d0; --muted:#9a927c; --line:#3a352a;
+  --gold:#d4a95a; --gold-2:#f0dca8; --accent:#c0392b; --accent-2:#e0543f;
   --serif:"Songti SC","Noto Serif SC","Source Han Serif SC","STSong",serif;
   --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;min-height:100%}
+html,body{margin:0;padding:0;min-height:100%;overflow-x:hidden}
 body{background:var(--bg);color:var(--ink);font-family:var(--serif);font-size:16px;line-height:1.75;
-  -webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;
-  min-height:100vh;padding:20px}
-.card{width:100%;max-width:380px;background:var(--bg-2);border:1px solid var(--line);
-  border-radius:12px;padding:28px 22px}
-h1{text-align:center;font-size:32px;letter-spacing:6px;margin:0 0 4px;font-weight:600;color:var(--ink)}
-.sub{text-align:center;color:var(--muted);font-family:var(--sans);font-size:13px;margin:0 0 22px;letter-spacing:1px}
-label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);margin:14px 0 6px}
-input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);
-  border-radius:8px;padding:12px;font-family:var(--sans);font-size:16px;outline:none}
-input:focus{border-color:var(--accent)}
-button{width:100%;margin-top:22px;background:var(--accent);border:1px solid var(--accent);
-  color:#fff;border-radius:8px;padding:13px;font-family:var(--sans);font-size:16px;cursor:pointer}
-button:hover:not(:disabled){background:var(--accent-2);border-color:var(--accent-2)}
-button:disabled{opacity:.5;cursor:not-allowed}
+  -webkit-font-smoothing:antialiased;display:flex;min-height:100vh;min-height:100svh;padding:28px 16px}
+
+/* ---- 背景三层：星云图 + 星云径向渐变 + 动态星空 ---- */
+.home-backdrop{position:fixed;inset:0;z-index:0;pointer-events:none;background:var(--bg);overflow:hidden}
+.home-art{position:absolute;inset:0;
+  background:url(/assets/home/hero-worlds-v1.jpg) center 30%/cover no-repeat;
+  opacity:.5;
+  -webkit-mask-image:linear-gradient(to bottom,#000 0%,rgba(0,0,0,.7) 50%,transparent 92%);
+  mask-image:linear-gradient(to bottom,#000 0%,rgba(0,0,0,.7) 50%,transparent 92%)}
+.home-backdrop::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(60% 45% at 50% 28%,rgba(192,57,43,.14),transparent 70%),
+             radial-gradient(40% 35% at 12% 78%,rgba(212,169,90,.08),transparent 70%),
+             radial-gradient(45% 40% at 88% 62%,rgba(80,110,170,.10),transparent 70%);
+  animation:nebula-breathe 14s ease-in-out infinite alternate}
+@keyframes nebula-breathe{from{opacity:.7}to{opacity:1}}
+#home-sky{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+
+/* ---- 居中版面：最大宽 420px ---- */
+.wrap{position:relative;z-index:2;width:100%;max-width:420px;margin:auto;text-align:center}
+.kicker{font-family:var(--sans);font-size:12px;letter-spacing:.5em;color:var(--gold);margin:0 0 14px}
+.title{font-size:clamp(48px,14vw,84px);font-weight:700;letter-spacing:.16em;padding-left:.16em;
+  line-height:1.1;margin:0;
+  background:linear-gradient(180deg,#fbf3df 0%,#f0dca8 50%,#b8893f 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 0 28px rgba(212,169,90,.28))}
+.tagline{font-family:var(--serif);font-size:17px;color:rgba(232,226,208,.86);
+  letter-spacing:.12em;margin:16px 0 0}
+
+/* ---- 玻璃质感表单卡 ---- */
+.card{width:100%;margin:26px 0 0;
+  background:rgba(24,22,17,.74);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border:1px solid rgba(212,169,90,.3);border-radius:18px;
+  padding:22px 20px 16px;
+  box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.sub{text-align:center;color:var(--muted);font-family:var(--sans);font-size:13px;margin:0 0 18px;letter-spacing:1px}
+label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);margin:0 0 6px;text-align:left}
+input{width:100%;background:#14130f;color:var(--ink);border:1px solid var(--line);
+  border-radius:10px;padding:12px;font-family:var(--sans);font-size:16px;outline:none;
+  -webkit-appearance:none}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(192,57,43,.18)}
+#nameWrap{margin-top:12px}
+#btn{width:100%;height:48px;margin-top:18px;
+  background:linear-gradient(135deg,#d64a33,#a52c1f);border:0;
+  color:#fff;border-radius:12px;font-family:var(--sans);font-size:16px;letter-spacing:.1em;
+  cursor:pointer;box-shadow:0 10px 28px rgba(192,57,43,.4);transition:transform .15s,box-shadow .15s}
+#btn::after{content:' →'}
+#btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 12px 32px rgba(192,57,43,.6)}
+#btn:disabled{opacity:.5;cursor:not-allowed}
 .error{color:var(--accent-2);font-family:var(--sans);font-size:13px;margin-top:12px;
   min-height:1.2em;text-align:center}
-.switch{display:block;text-align:center;margin-top:14px;font-family:var(--sans);
-  font-size:13px;color:var(--muted);text-decoration:none;cursor:pointer}
+.switch{display:flex;align-items:center;justify-content:center;min-height:40px;margin-top:6px;
+  font-family:var(--sans);font-size:13px;color:var(--muted);text-decoration:none;cursor:pointer}
 .switch:hover{color:var(--accent-2)}
+
+/* ---- 六个圆形题材缩略图 ---- */
+.doors{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;
+  list-style:none;padding:0;margin:22px 0 0}
+.doors li{width:48px;height:48px;flex:0 0 auto;border-radius:50%;overflow:hidden;
+  border:1px solid rgba(212,169,90,.55)}
+.doors img{display:block;width:100%;height:100%;object-fit:cover}
+.doors-cap{font-family:var(--sans);font-size:12px;color:var(--muted);margin:12px 0 0}
+
+/* ---- 三行卖点 ---- */
+.features{list-style:none;padding:0;margin:20px auto 0;max-width:360px;text-align:left}
+.features li{font-family:var(--sans);font-size:13px;color:var(--muted);line-height:1.7;margin:0 0 4px}
+.features li::before{content:'✦';color:var(--gold);margin-right:8px}
+
+/* ---- 入场：标题 / 标语 / 卡片 / 缩略图依次淡入上移 ---- */
+@keyframes rise-in{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.kicker,.title,.tagline,.card,.doors,.doors-cap,.features{animation:rise-in .8s ease both}
+.kicker{animation-delay:.02s}
+.title{animation-delay:.1s}
+.tagline{animation-delay:.22s}
+.card{animation-delay:.34s}
+.doors{animation-delay:.46s}
+.doors-cap{animation-delay:.56s}
+.features{animation-delay:.64s}
+
+/* 减少动态效果：关闭所有动画与过渡，元素保持最终状态 */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>无限世界</h1>
-  <p class="sub" id="sub">输入访问密码，开始你的旅程</p>
-  <form id="form" autocomplete="off">
-    <label for="password" id="pwdLabel">访问密码</label>
-    <input id="password" type="password" inputmode="numeric" autocomplete="off" placeholder="6 位数字" style="font-size:16px">
-    <div id="nameWrap">
-      <label for="name">你的名字</label>
-      <input id="name" type="text" maxlength="12" autocomplete="off" placeholder="旅人">
-    </div>
-    <button id="btn" type="submit">进入</button>
-    <div id="error" class="error"></div>
-  </form>
-  <a href="#" id="hostToggle" class="switch">主人登录</a>
+<div class="home-backdrop">
+  <div class="home-art"></div>
+  <canvas id="home-sky"></canvas>
 </div>
+
+<div class="wrap">
+  <p class="kicker">AI 驱动 · 无尽角色扮演</p>
+  <h1 class="title">无限世界</h1>
+  <p class="tagline">一句话，开一个永不结束的世界</p>
+
+  <div class="card">
+    <p class="sub" id="sub">输入访问密码，开始你的旅程</p>
+    <form id="form" autocomplete="off">
+      <label for="password" id="pwdLabel">访问密码</label>
+      <input id="password" type="password" inputmode="numeric" autocomplete="off" placeholder="6 位数字" style="font-size:16px">
+      <div id="nameWrap">
+        <label for="name">你的名字</label>
+        <input id="name" type="text" maxlength="12" autocomplete="off" placeholder="旅人">
+      </div>
+      <button id="btn" type="submit">进入</button>
+      <div id="error" class="error"></div>
+    </form>
+    <a href="#" id="hostToggle" class="switch">主人登录</a>
+  </div>
+
+  <ul class="doors">
+    <li><img src="/assets/home/door-xuanhuan-v1.jpg" alt="玄幻修仙"></li>
+    <li><img src="/assets/home/door-urban-v1.jpg" alt="都市"></li>
+    <li><img src="/assets/home/door-game-v1.jpg" alt="游戏系统"></li>
+    <li><img src="/assets/home/door-horror-v1.jpg" alt="恐怖悬疑"></li>
+    <li><img src="/assets/home/door-cozy-v1.jpg" alt="休闲日常"></li>
+    <li><img src="/assets/home/door-general-v1.jpg" alt="奇想"></li>
+  </ul>
+  <p class="doors-cap">修仙、都市、末日、悬疑、日常……任何世界，一句话就能开始</p>
+
+  <ul class="features">
+    <li>一句话开世界：AI 当场生成世界、人物和序章</li>
+    <li>想做什么就写什么：没有选项框，世界认真回应</li>
+    <li>永不结束：死亡只是一世的结束，世界仍记得你</li>
+  </ul>
+</div>
+
+<script src="/js/sky.js"></script>
 <script>
 (function () {
   'use strict';
@@ -105,6 +197,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
       btn.disabled = false;
     }
   });
+
+  if (window.Sky && window.Sky.start) Sky.start(document.getElementById('home-sky'));
 })();
 </script>
 </body>

@@ -358,9 +358,11 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return;
   }
 
-  // ---- 访问控制：仅登录页 / 登录 / 登出无需玩家身份 ----
+  // ---- 访问控制：登录页 / 登录 / 登出 / 登录页所需静态素材无需玩家身份 ----
   const isPublic =
     (pathname === '/login.html' && (method === 'GET' || method === 'HEAD')) ||
+    (pathname === '/js/sky.js' && (method === 'GET' || method === 'HEAD')) ||
+    ((method === 'GET' || method === 'HEAD') && /^\/assets\/home\/[a-z0-9-]+\.jpg$/.test(pathname)) ||
     (pathname === '/api/login' && method === 'POST') ||
     (pathname === '/api/logout' && method === 'POST');
   if (!player && !isPublic) {
