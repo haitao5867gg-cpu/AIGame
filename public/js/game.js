@@ -1167,12 +1167,15 @@
       });
     } else cluesPane.appendChild(el('div', 'muted', '（尚无未解之谜）'));
     var rumors = s.rumors || [];
-    cluesPane.appendChild(el('div', 'pane-h', '坊间传闻'));
-    if (rumors.length) {
-      rumors.slice().reverse().forEach(function (r) {
-        cluesPane.appendChild(clueChip('div', 'rumor-item', '· ' + (r.text || ''), 'rumor', r.text || '', r.turn));
-      });
-    } else cluesPane.appendChild(el('div', 'muted', '（尚无传闻）'));
+    // 新写法（有章节的世界）不再产生坊间传闻：没有旧传闻就整段不显示，少一样要记的东西。
+    if (rumors.length || !s.chapter) {
+      cluesPane.appendChild(el('div', 'pane-h', '坊间传闻'));
+      if (rumors.length) {
+        rumors.slice().reverse().forEach(function (r) {
+          cluesPane.appendChild(clueChip('div', 'rumor-item', '· ' + (r.text || ''), 'rumor', r.text || '', r.turn));
+        });
+      } else cluesPane.appendChild(el('div', 'muted', '（尚无传闻）'));
+    }
     var facts = s.facts || [];
     var factChildren = facts.length
       ? facts.map(function (f) { return el('div', 'fact-item', '· ' + (f.text || '')); })
