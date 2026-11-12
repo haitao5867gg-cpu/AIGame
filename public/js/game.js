@@ -293,12 +293,13 @@
   }
 
   // ---- 叙事 v3：写作模式（⋯ 菜单 + 桌面标签共用，仅 v3 世界显示）----
-  var WRITING_MODES = ['fine', 'deep', 'fast'];
-  var WRITING_NAMES = { fine: '精写', deep: '深度精写', fast: '快写' };
+  var WRITING_MODES = ['fine', 'deep', 'fast', 'classic'];
+  var WRITING_NAMES = { fine: '精写', deep: '深度精写', fast: '快写', classic: '旧版' };
   var WRITING_TOASTS = {
     fine: '精写：强模型简单构思再写，第一句约 10~30 秒',
     deep: '深度精写：强模型深思后再写，第一句可能要一分钟',
     fast: '快写：不构思直接写，第一句几秒就出',
+    classic: '旧版：退回改版前的写法（一次生成正文和数值）',
   };
 
   function writingName(w) { return WRITING_NAMES[w] || WRITING_NAMES.fine; }

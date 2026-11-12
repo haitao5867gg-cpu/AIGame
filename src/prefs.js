@@ -150,8 +150,9 @@ function mergeAtmosphere(cur, patch) {
   return normalizeAtmosphere(patch, normalizeAtmosphere(cur));
 }
 
-// 叙事 v3 写作模式：fine 精写（默认，强模型简单构思）/ deep 深度精写（深思后再写）/ fast 快写（不构思）。
-const WRITING_MODES = Object.freeze(['fine', 'deep', 'fast']);
+// 叙事 v3 写作模式：fine 精写（默认，强模型简单构思）/ deep 深度精写（深思后再写）/ fast 快写（不构思）/
+// classic 旧版写法（退回改版前的一次生成，给玩家留一条退路）。
+const WRITING_MODES = Object.freeze(['fine', 'deep', 'fast', 'classic']);
 function normalizeWriting(v) {
   return WRITING_MODES.includes(v) ? v : 'fine';
 }

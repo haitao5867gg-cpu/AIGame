@@ -208,5 +208,5 @@ test('env：NARRATIVE_STYLE 只认 v1/v2/v3，STORY_MODEL 默认取 LLM_MODEL_WO
   assert.equal(cfg.STORY_MODEL, 'pro-x');
   assert.equal(cfg.STORY_LEDGER_MODEL, 'flash-x');
   assert.equal(cfg.STORY_HISTORY_BUDGET, 30000);
-  assert.equal(env.load(path.join(os.tmpdir(), 'no-such-env-file'), { NARRATIVE_STYLE: 'v9' }).NARRATIVE_STYLE, 'v2');
+  assert.equal(env.load(path.join(os.tmpdir(), 'no-such-env-file'), { NARRATIVE_STYLE: 'v9' }).NARRATIVE_STYLE, 'v3'); // 非法值回退默认 v3
 });

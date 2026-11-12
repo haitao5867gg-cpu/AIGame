@@ -16,7 +16,7 @@ const DEFAULTS = Object.freeze({
   LLM_MODEL_WORLD: DEFAULT_LLM_MODEL,
   LLM_MOCK: '0',
   // 叙事写法：v1（旧写法）/ v2（小说化写法，默认）。默认 v2，按题材追加文风段。
-  NARRATIVE_STYLE: 'v2',   // v1 / v2：单次回合调用；v3：隐藏大纲 + 写正文与记账分两步
+  NARRATIVE_STYLE: 'v3',   // v3（默认）：隐藏大纲 + 写正文与记账分两步；v1 / v2：改版前的单次回合调用
   STORY_HISTORY_BUDGET: '30000', // v3：本世前文按原文给模型的字符预算，超出的更早部分用章摘要
   STORY_MODEL: '',          // v3 写正文的模型；空 = LLM_MODEL_WORLD
   STORY_LEDGER_MODEL: '',   // v3 记账（抽数值 / 物品 / 线索）的模型；空 = LLM_MODEL

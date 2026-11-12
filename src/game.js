@@ -634,6 +634,8 @@ function createGame(cfg, dataDir) {
   // ---- 读 ----
   // 已排队后台补判题材的世界，避免重复触发（ensureGenre 完成后自动移除）。
   const pendingGenre = new Set();
+  // 叙事 v3：已排队后台规划大纲的世界。
+  const pendingOutline = new Set();
 
   // 老世界补题材：世界锁内读状态，已有合法 genre 直接返回；
   // 否则用一次很短的 LLM 调用（只给 bible.title / tone / rules 前 3 条）判断并保存，
@@ -737,6 +739,19 @@ function createGame(cfg, dataDir) {
     store.assertWorldId(worldId);
     const state = loadState(worldId);
     if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+    // 叙事 v3：老世界还没有隐藏大纲时，进世界就在后台规划（排在世界锁里），玩家读前文的工夫
+    // 大纲多半已经好了，第一回合不用再等。失败无妨，第一回合会再试。
+    if (cfg.NARRATIVE_STYLE === 'v3' && !outlineMod.normalizeOutline(state.outline) && !pendingOutline.has(worldId)
+      && !state.awaitingRebirth) {
+      pendingOutline.add(worldId);
+      store.withWorldLock(worldId, async () => {
+        const st = loadState(worldId);
+        if (!st || outlineMod.normalizeOutline(st.outline)) return;
+        let events = [];
+        try { events = store.readEvents(dataDir, worldId); } catch (_) { events = []; }
+        if (await ensureOutlineOnState(st, events, [])) store.saveWorld(dataDir, st);
+      }).catch(() => {}).finally(() => pendingOutline.delete(worldId));
+    }
     // 老世界没有 genre：后台触发一次补判并保存，不阻塞本次返回。
     if (!genres.GENRES.includes(state.genre) && !pendingGenre.has(worldId)) {
       pendingGenre.add(worldId);
@@ -985,7 +1000,9 @@ function createGame(cfg, dataDir) {
         action = `【时光推进·${timeSkip.label}】${timeSkip.plan || '按眼下的日子过下去'}`;
       }
       // 叙事 v3：先按五段任务书写纯正文（流式），再从正文里记账，最后照旧交给引擎结算。
-      if (cfg.NARRATIVE_STYLE === 'v3') {
+      let writingPref = 'fine';
+      try { writingPref = prefs.getPrefs(dataDir, context.currentPlayerId() || 'host').writing; } catch (_) { writingPref = 'fine'; }
+      if (cfg.NARRATIVE_STYLE === 'v3' && writingPref !== 'classic') {
         return takeStoryTurn(worldId, state, action, timeSkip, onDelta, hooks || {});
       }
       const rng = Math.random;

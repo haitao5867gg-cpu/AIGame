@@ -345,7 +345,7 @@ test('章分隔：chapter 为空的 v2 记录不插', () => {
   assert.equal(h.s.lastChapterShown, 0);
 });
 
-test('写作模式循环 fine→deep→fast→fine：POST /api/prefs、更新标签与三种 toast', async () => {
+test('写作模式循环 fine→deep→fast→classic→fine：POST /api/prefs、更新标签与三种 toast', async () => {
   const h = setup();
   h.setApi(function (p, o) {
     const body = JSON.parse(o.body);
@@ -355,7 +355,8 @@ test('写作模式循环 fine→deep→fast→fine：POST /api/prefs、更新标
   // 纯函数：循环顺序（含缺省按 fine 处理）
   assert.equal(h.s.nextWritingMode('fine'), 'deep');
   assert.equal(h.s.nextWritingMode('deep'), 'fast');
-  assert.equal(h.s.nextWritingMode('fast'), 'fine');
+  assert.equal(h.s.nextWritingMode('fast'), 'classic');
+  assert.equal(h.s.nextWritingMode('classic'), 'fine');
   assert.equal(h.s.nextWritingMode(undefined), 'deep');
 
   await h.s.cycleWriting(); // 精写（缺省）→ 深度精写
@@ -368,13 +369,17 @@ test('写作模式循环 fine→deep→fast→fine：POST /api/prefs、更新标
   assert.equal(JSON.parse(h.apiCalls[1].opts.body).writing, 'fast');
   assert.equal(h.s.myPrefs.writing, 'fast');
 
-  await h.s.cycleWriting(); // 快写 → 精写
-  assert.equal(JSON.parse(h.apiCalls[2].opts.body).writing, 'fine');
+  await h.s.cycleWriting(); // 快写 → 旧版
+  assert.equal(JSON.parse(h.apiCalls[2].opts.body).writing, 'classic');
+  assert.equal(h.s.myPrefs.writing, 'classic');
+
+  await h.s.cycleWriting(); // 旧版 → 精写
+  assert.equal(JSON.parse(h.apiCalls[3].opts.body).writing, 'fine');
   assert.equal(h.s.myPrefs.writing, 'fine');
 
   assert.equal(h.apiCalls[0].path, '/api/prefs');
   assert.equal(h.apiCalls[0].opts.method, 'POST');
-  assert.equal(h.apiCalls.length, 3);
+  assert.equal(h.apiCalls.length, 4);
   assert.ok(h.toasts.some(function (t) { return /深度精写：强模型深思后再写/.test(t); }));
   assert.ok(h.toasts.some(function (t) { return /快写：不构思直接写/.test(t); }));
   assert.ok(h.toasts.some(function (t) { return /精写：强模型简单构思再写/.test(t); }));

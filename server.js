@@ -458,7 +458,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
 
   // ---- 无世界 ID 的接口 ----
   if (pathname === '/api/health' && method === 'GET') {
-    return sendJson(res, 200, { ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK });
+    return sendJson(res, 200, { ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK, story: cfg.NARRATIVE_STYLE });
   }
   if (pathname === '/api/usage' && method === 'GET') {
     return sendJson(res, 200, g.usage());

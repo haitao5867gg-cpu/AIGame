@@ -24,8 +24,8 @@ function systemText(opts) {
   return sys.content;
 }
 
-test('配置默认 NARRATIVE_STYLE 为 v2', () => {
-  assert.equal(env.DEFAULTS.NARRATIVE_STYLE, 'v2');
+test('配置默认 NARRATIVE_STYLE 为 v3（2026-11-12 起小说优先写法为默认）', () => {
+  assert.equal(env.DEFAULTS.NARRATIVE_STYLE, 'v3');
 });
 
 test('默认 / v1：messages 与改动前一致（含旧写法句子）', () => {

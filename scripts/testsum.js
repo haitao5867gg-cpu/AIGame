@@ -12,7 +12,9 @@ let files = process.argv.slice(2);
 if (!files.length) {
   files = fs.readdirSync(path.join(root, 'test')).filter((f) => f.endsWith('.test.js')).map((f) => path.join('test', f));
 }
-const r = spawnSync(process.execPath, ['--test', ...files], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+// 叙事 v3 是线上默认；测试默认跑改版前的 v2 路径（测试自己需要 v3 时会显式设置）。
+const childEnv = Object.assign({}, process.env, { NARRATIVE_STYLE: process.env.NARRATIVE_STYLE || 'v2' });
+const r = spawnSync(process.execPath, ['--test', ...files], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: childEnv });
 const lines = `${r.stdout || ''}\n${r.stderr || ''}`.split('\n');
 const out = [];
 for (let i = 0; i < lines.length; i++) {

@@ -1,0 +1,38 @@
+# 叙事 v3：先当好小说
+
+2026-11-12 起的写作流程（`NARRATIVE_STYLE=v3`，默认）。目标：玩完能把全部正文导出成一本拿得出手的小说。改版前的单次回合写法（v2）仍保留：全局 `NARRATIVE_STYLE=v2`，或玩家在游戏里把「写作」切到「旧版」。
+
+## 为什么改
+
+改版前每回合给模型约 1.2 万字、30 段规则，故事本身只有 1800 字左右；一次调用既要写小说又要填 25 个 JSON 字段。结果是每回合都在埋钩子、没有主线、一句一段，并且会把玩家没读过的设定当成已知来回指（「十年后的来电」里的「刚才那条『零点到三点』」）。对比实验与样章见本地 `reports/novel-ab-20261112/`、`reports/v3-accept-20261112/`（不入库）。
+
+## 一回合怎么走（`src/game.js` 的 `takeStoryTurn`）
+
+1. **准备**：没有隐藏大纲就补一份（`ensureOutlineOnState`）；拼本世前文（`src/history.js`，本世全部可见正文，超过 `STORY_HISTORY_BUDGET` 字的更早部分用章摘要代替）；`planTurn(…, { storyMode: true })` 不开新事件、不出预兆和导演转折。
+2. **写正文**：`prompts.buildWriterMessages` 拼一份五段大白话任务书（这一节写什么 / 故事到这里 / 相关的人 / 怎么写更顺 / 收在哪里），写正文的强模型（`STORY_MODEL`，空则 `LLM_MODEL_WORLD`）只输出纯正文，`completeStream({ plainText: true })` 边写边推送 SSE `delta`；动笔前的构思只推送 `thinking { chars }`，思考内容绝不外传（可能含大纲）。
+3. **记账**：`prompts.buildLedgerMessages` 让快速模型（`STORY_LEDGER_MODEL`，空则 `LLM_MODEL`，关闭思考）只按正文抽字段（数值、专属状态、物品、线索、人物档案、插图、朗读提示、灵感建议、章节进度）。记账失败不阻断：正文照样落库，事件记录标 `story.ledger_failed`。没写时间就不推进时钟；每回合最多新埋 1 条线索。
+4. **结算**：照旧交给引擎 `resolveTurn(…, { storyMode: true })`：伏笔账本同时最多 5 条，满了拒收新的（不再自动淡去）；正文上限 2400 字，超出在句子边界收住。
+5. **收章**：记账判定本章已收住，或一章写满 7 节时，在世界锁里排在本回合之后收章：快速模型写章摘要（公开，进「章节回顾」，以后是成书的目录），强模型按玩家实际走出来的方向规划下一章章卡（私有）。撤回会连同收章一起回到回合前。
+
+## 隐藏大纲（`src/outline.js`，`state.outline`，私有）
+
+一卷的节拍（承诺 → 起因 → 三次递增危机 → 中段反转 → 最低谷 → 兑现与新钩子）+ 章卡（目标、起点、2~4 个可能节点、终点、章末问题、禁区）。章卡只写读者能感知的信号，不写作者的真相；节点是建议，玩家走偏以玩家为准。新世界建世界时生成；老世界进世界时后台补，从已发生的故事接着规划。`state.outline`、`state.threadMeta` 在 `toPublicState` 里删除；公开的只有 `state.chapter`（index / startTurn / turns）、`state.chapterTitle`、`state.chapters`（章名、回合范围、摘要）。
+
+## 读者读过 / 没读过（`prompts.factSeen`）
+
+事实账本和世界规则里的东西，正文没写过之前读者不知道。判定：引号片段原样出现，或事实的汉字二字组至少四成出现在本世前文 + 序章里，就算读过（用「十年后的来电」存档校准）。没读过的进任务书的「背景设定（读者还不知道）」，要求第一次写进正文时交代主角怎么得知；「刚才」「那条」「你记得」只能指前文真写过的东西。
+
+## 写作模式（`src/writing-mode.js`，玩家偏好 `writing`）
+
+| 模式 | 写正文 | 实测（本地） |
+|---|---|---|
+| fine 精写（默认） | 强模型，`thinking` 开 + `reasoning_effort:"low"` | 第一句 10~35 秒，整回合 35~75 秒 |
+| deep 深度精写 | 强模型，默认思考 | 第一句约 50 秒起 |
+| fast 快写 | 强模型，`thinking` 关 | 第一句 2~3 秒，整回合 20~30 秒 |
+| classic 旧版 | 走 v2 单次回合 | 同改版前 |
+
+网关不认 `thinking.budget_tokens`；每世界第一回合若要补大纲会多等一两分钟（老世界已改为进世界就在后台补）。
+
+## 测试
+
+`node scripts/testsum.js` 默认以 `NARRATIVE_STYLE=v2` 跑旧测试，v3 相关测试（`test/v3-*.test.js`、`test/frontend-v3.test.js`）自己设置 v3。真模型验收脚本在本地 `reports/v3-accept-20261112/run.js`（读 `~/.aigame_llm_key`，临时数据目录）。

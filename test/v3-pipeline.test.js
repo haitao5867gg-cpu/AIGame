@@ -235,7 +235,7 @@ test('v3 回合：章末记账给 chapter_end 时标 pendingClose；新线索记
 
 test('v2 回合不走两步（默认 NARRATIVE_STYLE）', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'game.js'), 'utf8');
-  assert.match(src, /if \(cfg\.NARRATIVE_STYLE === 'v3'\) \{\s*return takeStoryTurn/);
+  assert.match(src, /if \(cfg\.NARRATIVE_STYLE === 'v3' && writingPref !== 'classic'\) \{\s*return takeStoryTurn/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /sseEvent\(res, 'thinking', \{ chars \}\)/);
 });
