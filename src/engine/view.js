@@ -1,6 +1,7 @@
 'use strict';
 
 const { isInternalReject, computeOmen, computeDanger, cloneState } = require('./util.js');
+const { publicStats } = require('./stats.js');
 const npcs = require('../npcs.js');
 
 // ---- 对外视图：apex / Key / 私有档案绝不出现在接口返回里 ----
@@ -8,7 +9,7 @@ const npcs = require('../npcs.js');
 // 普通回合 applied 的公开白名单：即便有人误把 npc_memory / npc_updates /
 // original / internal 塞进 applied，也只放行这些已消毒的玩法字段。
 const APPLIED_PUBLIC_KEYS = Object.freeze([
-  'state_diff', 'items_add', 'items_remove', 'npc_attitude',
+  'state_diff', 'stats_diff', 'items_add', 'items_remove', 'npc_attitude',
   'persona_tags', 'persona', 'suggestions', 'narration',
 ]);
 
@@ -41,6 +42,8 @@ function toPublicState(state) {
   out.omen = computeOmen(out);
   // 濒死可感知：体魄 ≤ 2 时公开状态带 danger:true，前端据此变红闪烁并提示「伤势沉重」。
   out.danger = computeDanger(out);
+  // 世界专属状态：附当前生效警戒 alerts / 阶名 rankName；老存档缺字段输出 []。
+  out.stats = publicStats(out.stats);
   return out;
 }
 
@@ -61,6 +64,9 @@ function toPublicTurnResult(result, state) {
     ...(ts ? { timeSkip: ts } : {}),
     narration: result.narration,
     applied: toPublicApplied(result.applied),
+    stats_drift: (result.stats_drift && typeof result.stats_drift === 'object'
+      && !Array.isArray(result.stats_drift)) ? result.stats_drift : {},
+    stats_drains: Array.isArray(result.stats_drains) ? result.stats_drains : [],
     // 内部原因（如收益递减 / npc_updates 拒绝）只进内部日志，不给玩家看。
     rejected: (result.rejected || []).filter((r) => !isInternalReject(r)),
     suggestions: result.suggestions,

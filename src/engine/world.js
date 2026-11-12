@@ -3,6 +3,7 @@
 const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS } = require('./constants.js');
 const { normalizeGenre } = require('../genres.js');
 const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue, cleanItemInfo } = require('./util.js');
+const { normalizeStatsSpec } = require('./stats.js');
 const npcs = require('../npcs.js');
 
 // ---- 建世界 / 分配属性点 ----
@@ -47,11 +48,12 @@ function createWorld(spec, opts) {
   if (prologue) bible.prologue = prologue;
   else delete bible.prologue;
   const startItems = startingItems(bible);
+  const genre = normalizeGenre(s.genre);
   const world = {
     id: s.id,
     createdAt: s.createdAt == null ? now : s.createdAt,
     seed: s.seed || '',
-    genre: normalizeGenre(s.genre),
+    genre,
     bible,
     apex: Object.assign({ achievedAt: null, generation: 1 }, cloneState(s.apex || {})),
     life: 1,
@@ -88,6 +90,9 @@ function createWorld(spec, opts) {
     awaitingRebirth: false,
     // 起始物品介绍：只接受真正加入物品栏的名字，desc/type 由 cleanItemInfo 消毒。
     itemInfo: cleanItemInfo(bible.start && bible.start.items_info, startItems),
+    // 世界专属状态：bible.stats 是原始设计（原样存进 bible），这里按归一后的 genre
+    // 消毒成运行数据；缺失 / 非法时用题材兜底模板。
+    stats: normalizeStatsSpec(bible.stats, genre),
   };
   // 新世界：初始化 NPC 长期档案（按 bible.npcs 建立完整 original 基线，标记已迁移）。
   return npcs.initializeNpcMemory(world);

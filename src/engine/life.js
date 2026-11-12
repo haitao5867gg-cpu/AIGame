@@ -2,6 +2,7 @@
 
 const { ATTRS, ATTR_MIN, ATTR_MAX, ATTR_INIT, RECENT_MAX, RECENT_NARRATION_MAX, EPITAPH_MAX } = require('./constants.js');
 const { clamp, toInt, cloneState, baseItem } = require('./util.js');
+const { resetStats } = require('./stats.js');
 
 // ---- 顶点 ----
 
@@ -70,6 +71,7 @@ function rebirth(state, input) {
   s.character.marks = []; // 重生清空上一世的所有印记
   s.character.bornTurn = s.turn;
   s.awaitingRebirth = false;
+  s.stats = resetStats(s.stats); // 新一世：专属状态回到各自 start
   return { state: s, error: null };
 }
 

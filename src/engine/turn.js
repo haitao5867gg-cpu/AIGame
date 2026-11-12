@@ -1,8 +1,9 @@
 'use strict';
 
-const { ATTR_MIN, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
+const { ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
 const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, normalizeFocus, normalizeAdult, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
+const { applyStatsTurn } = require('./stats.js');
 const { planTurn, settleEvent, applyRawEffect } = require('./events.js');
 const { apexConditionMet, applyDeath } = require('./life.js');
 const npcs = require('../npcs.js');
@@ -26,6 +27,8 @@ function resolveTurn(state, input, opts) {
   const applied = validation.applied;
   const rejected = validation.rejected.slice();
   const prop = data.proposal && typeof data.proposal === 'object' ? data.proposal : {};
+  // 本回合推进的时段数：专属状态自然变化与 advanceClock 共用同一个值；时光推进不漂移。
+  const passes = timeSkip ? 0 : normalizeTimePasses(prop.time_passes);
 
   // 收益递减：普通回合每个正向 +1 以概率 p=clamp((30-v)/25, 0.1, 1) 生效（用注入的 rng）。
   // 未生效的静默丢弃并记入 rejected（内部原因，不给玩家看）。事件结算绕过此处，不受此限。
@@ -120,6 +123,15 @@ function resolveTurn(state, input, opts) {
     s.character.attrs = applyRawEffect(s.character.attrs, raw.effects);
     s.activeEvent = null;
     s.nextEventTurn = nextTurn + 7 + Math.floor(unit(rng) * 6); // turn + 7~12
+  }
+
+  // 世界专属状态：先应用本回合 diff，再施加自然变化，最后按新值结算警戒后果。
+  // 老存档 s.stats 缺失时 applyStatsTurn 返回空结果，行为与此前完全一致。
+  const sr = applyStatsTurn(s.stats, applied.stats_diff, passes);
+  s.stats = sr.stats;
+  for (const d of sr.drains) {
+    const cur = Number(s.character.attrs[d.attr]);
+    s.character.attrs[d.attr] = clamp((Number.isFinite(cur) ? cur : 0) - 1, ATTR_MIN, ATTR_MAX);
   }
 
   // 死亡判定：体魄归零或事件殒命
@@ -217,7 +229,7 @@ function resolveTurn(state, input, opts) {
     const period = PERIODS.includes(prop.landing_period) ? prop.landing_period : '清晨';
     s.clock = { day: baseDay + timeSkip.days, period };
   } else {
-    s.clock = advanceClock(s.clock, normalizeTimePasses(prop.time_passes));
+    s.clock = advanceClock(s.clock, passes);
   }
 
   // 编年史：turn % 20 == 0，摘要由 LLM_MODEL_WORLD 生成后从 data.chapterSummary 回传
@@ -311,6 +323,8 @@ function resolveTurn(state, input, opts) {
     raw: data.raw === undefined ? null : data.raw,
     proposal: data.proposal === undefined ? null : data.proposal,
     applied,
+    stats_drift: sr.drift,
+    stats_drains: sr.drains,
     rejected,
     narration: applied.narration,
     suggestions: applied.suggestions,

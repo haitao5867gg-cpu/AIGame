@@ -2,6 +2,7 @@
 
 const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, TIME_SKIP_DIFF_MIN, TIME_SKIP_DIFF_MAX, TIME_SKIP_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
 const { clamp, toInt, cleanDialogueTics } = require('./util.js');
+const { validateStatsDiff } = require('./stats.js');
 
 // ---- validateProposal：把 LLM 提议消毒成实际可应用的 diff ----
 
@@ -19,6 +20,7 @@ function validateProposal(state, proposal, opts) {
   const rejected = [];
   const applied = {
     state_diff: {},
+    stats_diff: {},
     items_add: [],
     items_remove: [],
     npc_attitude: {},
@@ -89,6 +91,11 @@ function validateProposal(state, proposal, opts) {
     }
     applied.state_diff[key] = actual;
   }
+
+  // stats_diff：世界专属状态的增减，复用 stats.js 的消毒（键白名单 / 取整 / 单回合上限 / 夹到当前值范围）。
+  const statsValidation = validateStatsDiff(state.stats, p.stats_diff, { timeSkip });
+  applied.stats_diff = statsValidation.diff;
+  for (const r of statsValidation.rejected) rejected.push(r);
 
   // items_add：每回合 ≤ 2，每个 ≤ 12 字，不重复已有物品
   const owned = Array.isArray(state.character.items) ? state.character.items : [];

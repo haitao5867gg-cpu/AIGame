@@ -8,6 +8,7 @@ const events = require('./engine/events.js');
 const life = require('./engine/life.js');
 const view = require('./engine/view.js');
 const turn = require('./engine/turn.js');
+const stats = require('./engine/stats.js');
 const npcs = require('./npcs.js');
 const eventLog = require('./event-log.js');
 
@@ -71,6 +72,19 @@ module.exports = {
   PERIODS: constants.PERIODS,
   MOVE_TO_MAX: constants.MOVE_TO_MAX,
   TIME_PASSES_DEFAULT: constants.TIME_PASSES_DEFAULT,
+  STATS_MAX: constants.STATS_MAX,
+  STATS_GAUGE_DIFF: constants.STATS_GAUGE_DIFF,
+  STATS_RANK_DIFF: constants.STATS_RANK_DIFF,
+  STATS_SKIP_GAUGE_DIFF: constants.STATS_SKIP_GAUGE_DIFF,
+  STATS_SKIP_RANK_DIFF: constants.STATS_SKIP_RANK_DIFF,
+  normalizeStatsSpec: stats.normalizeStatsSpec,
+  fallbackStats: stats.fallbackStats,
+  warnActive: stats.warnActive,
+  activeWarnings: stats.activeWarnings,
+  validateStatsDiff: stats.validateStatsDiff,
+  applyStatsTurn: stats.applyStatsTurn,
+  resetStats: stats.resetStats,
+  publicStats: stats.publicStats,
   normalizeMoveTo: util.normalizeMoveTo,
   normalizeTimePasses: util.normalizeTimePasses,
   normalizeTimeSkip: util.normalizeTimeSkip,

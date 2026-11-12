@@ -107,6 +107,13 @@ const TIME_PASSES_MIN = 0;
 const TIME_PASSES_MAX = 2;
 const TIME_PASSES_DEFAULT = 1;
 
+// 世界专属状态（state.stats）：每回合由 AI 提议增减、随时间自然变化，跌破警戒线有后果。
+const STATS_MAX = 4;                // 每个世界最多保留的专属状态数
+const STATS_GAUGE_DIFF = 30;        // gauge 单回合变化上限（普通回合）
+const STATS_RANK_DIFF = 1;          // rank 单回合变化上限（普通回合）
+const STATS_SKIP_GAUGE_DIFF = 100;  // gauge 单回合变化上限（时光推进放宽）
+const STATS_SKIP_RANK_DIFF = 2;     // rank 单回合变化上限（时光推进放宽）
+
 // 前世墓志铭：单段 ≤80 字。
 const EPITAPH_MAX = 80;
 
@@ -184,6 +191,11 @@ module.exports = {
   TIME_PASSES_MIN,
   TIME_PASSES_MAX,
   TIME_PASSES_DEFAULT,
+  STATS_MAX,
+  STATS_GAUGE_DIFF,
+  STATS_RANK_DIFF,
+  STATS_SKIP_GAUGE_DIFF,
+  STATS_SKIP_RANK_DIFF,
   EPITAPH_MAX,
   DANGER_THRESHOLD,
   DEFAULT_VOICES,
