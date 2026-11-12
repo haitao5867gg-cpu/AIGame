@@ -183,7 +183,10 @@ async function handleStreamTurn(req, res, g, id, images, dataDir) {
     return;
   }
   try {
-    const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }));
+    // 叙事 v3：写正文前模型先构思，期间推送 thinking（只有累计字数，不带思考内容）。
+    const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }), {
+      onThinking: (chars) => sseEvent(res, 'thinking', { chars }),
+    });
     // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
     triggerImages(images, dataDir, result && result.state);
     if (result) result.sceneKey = triggerScene(images, dataDir, result);

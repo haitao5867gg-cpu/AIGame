@@ -150,6 +150,12 @@ function mergeAtmosphere(cur, patch) {
   return normalizeAtmosphere(patch, normalizeAtmosphere(cur));
 }
 
+// 叙事 v3 写作模式：fine 精写（默认，强模型简单构思）/ deep 深度精写（深思后再写）/ fast 快写（不构思）。
+const WRITING_MODES = Object.freeze(['fine', 'deep', 'fast']);
+function normalizeWriting(v) {
+  return WRITING_MODES.includes(v) ? v : 'fine';
+}
+
 function getPrefs(dataDir, playerId) {
   const id = typeof playerId === 'string' && playerId ? playerId : 'host';
   const p = readAll(dataDir)[id];
@@ -157,6 +163,7 @@ function getPrefs(dataDir, playerId) {
     scenes: !(p && p.scenes === false),
     tts: normalizeTts(p && p.tts),
     atmosphere: normalizeAtmosphere(p && p.atmosphere), // GET 始终附完整归一化对象
+    writing: normalizeWriting(p && p.writing),
     adult: !!(p && p.adult === true),            // 该玩家是否自己开启了成人内容
     adultAllowed: getAdultAllowed(dataDir),      // 主人总开关是否开放
   };
@@ -181,12 +188,15 @@ function setPrefs(dataDir, playerId, patch) {
   else if (next.tts === undefined) next.tts = normalizeTts(null);
   if (hasAtmosphere) next.atmosphere = mergeAtmosphere(cur.atmosphere, patch.atmosphere);
   if (hasAdult) next.adult = patch.adult;
+  const hasWriting = !!(patch && WRITING_MODES.includes(patch.writing));
+  if (hasWriting) next.writing = patch.writing;
   all[id] = next;
   store.atomicWriteJson(prefsPath(dataDir), all);
   const out = { scenes: !(next.scenes === false) };
   if (hasTts) out.tts = normalizeTts(next.tts);
   if (hasAtmosphere) out.atmosphere = normalizeAtmosphere(next.atmosphere);
   if (hasAdult) out.adult = next.adult === true;
+  if (hasWriting) out.writing = next.writing;
   return out;
 }
 
@@ -194,4 +204,5 @@ module.exports = {
   getPrefs, setPrefs, prefsPath, normalizeTts, DEFAULT_TTS,
   normalizeAtmosphere, mergeAtmosphere, DEFAULT_ATMOSPHERE,
   getAdultAllowed, setGlobalAdultAllowed, adultModeOn,
+  WRITING_MODES, normalizeWriting,
 };

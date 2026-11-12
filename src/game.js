@@ -17,6 +17,7 @@ const genres = require('./genres.js');
 const profiles = require('./profiles.js');
 const outlineMod = require('./outline.js');
 const historyMod = require('./history.js');
+const writingMode = require('./writing-mode.js');
 
 // 正在后台总结画像的玩家（key = dataDir + playerId，避免多个 createGame 实例互相误判）。
 // 后台总结在 takeTurn 里「不 await」发起，靠 finally 从这里移除，防止同一玩家重复触发。
@@ -355,14 +356,14 @@ function createGame(cfg, dataDir) {
   const worldModel = cfg.LLM_MODEL_WORLD;
 
   // 记录每次 LLM 调用的用量，供 events.jsonl 的 usage 字段聚合。
-  async function call(purpose, model, messages, mockCtx, usages) {
-    const res = await client.complete({
+  async function call(purpose, model, messages, mockCtx, usages, extra) {
+    const res = await client.complete(Object.assign({}, extra || {}, {
       purpose,
       model,
       messages,
       responseFormat: 'json_object',
       mock: mockCtx,
-    });
+    }));
     if (usages) usages.push(res.usage);
     return res;
   }
@@ -381,10 +382,10 @@ function createGame(cfg, dataDir) {
   }
 
   // 调用 + 解析；解析失败重试 1 次，再失败则报错且不推进回合。
-  async function callParsed(purpose, model, messages, mockCtx, usages) {
+  async function callParsed(purpose, model, messages, mockCtx, usages, extra) {
     let lastContent = '';
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await call(purpose, model, messages, mockCtx, usages);
+      const res = await call(purpose, model, messages, mockCtx, usages, extra);
       lastContent = res.content;
       const parsed = prompts.parseJson(res.content);
       if (parsed) return { parsed, content: res.content };
@@ -958,7 +959,7 @@ function createGame(cfg, dataDir) {
 
   // ---- 执行一回合 ----
   // onDelta 可选：传入时主回合走流式并逐段回调叙事文本；整个过程仍在该世界互斥锁内。
-  async function takeTurn(worldId, input, onDelta) {
+  async function takeTurn(worldId, input, onDelta, hooks) {
     store.assertWorldId(worldId);
     return store.withWorldLock(worldId, async () => {
       let state = loadState(worldId);
@@ -977,6 +978,10 @@ function createGame(cfg, dataDir) {
         timeSkip = engine.normalizeTimeSkip(rawSkip);
         if (!timeSkip) throw httpError(400, '时光推进参数无效');
         action = `【时光推进·${timeSkip.label}】${timeSkip.plan || '按眼下的日子过下去'}`;
+      }
+      // 叙事 v3：先按五段任务书写纯正文（流式），再从正文里记账，最后照旧交给引擎结算。
+      if (cfg.NARRATIVE_STYLE === 'v3') {
+        return takeStoryTurn(worldId, state, action, timeSkip, onDelta, hooks || {});
       }
       const rng = Math.random;
       const now = Date.now();
@@ -1173,6 +1178,217 @@ function createGame(cfg, dataDir) {
       if (result.state) withUndoFlag(result.state, finalState, worldId);
       return result;
     });
+  }
+
+
+  // ---- 叙事 v3：写正文与记账分两步 ----
+
+  // 写正文模型偶尔会加标题、「第几节」、说明或残留 JSON：只保留正文本身。
+  function cleanProse(text) {
+    let t = String(text == null ? '' : text).replace(/\r\n/g, '\n').trim();
+    t = t.replace(/^```[a-z]*\n?/i, '').replace(/\n?```\s*$/, '');
+    const lines = t.split('\n');
+    while (lines.length && /^\s*(#{1,6}\s|第\s*[0-9一二三四五六七八九十百]+\s*[节章回]|正文[：:]|\*\*[^*]{1,30}\*\*\s*$)/.test(lines[0])) lines.shift();
+    t = lines.join('\n').trim();
+    const jsonTail = t.search(/\n\s*\{\s*"[a-z_]+"\s*:/);
+    if (jsonTail > 0) t = t.slice(0, jsonTail).trim();
+    return t.replace(/\n{3,}/g, '\n\n');
+  }
+
+  // 到期伏笔：活跃线索里预计回收章 <= 当前章的那些。
+  function dueThreadsOf(state) {
+    const meta = state.threadMeta && typeof state.threadMeta === 'object' ? state.threadMeta : {};
+    const idx = state.chapter && Number.isSafeInteger(state.chapter.index) ? state.chapter.index : 1;
+    return (Array.isArray(state.threads) ? state.threads : [])
+      .filter((t) => meta[t] && Number(meta[t].dueChapter) <= idx);
+  }
+
+  async function takeStoryTurn(worldId, state, action, timeSkip, onDelta, hooks) {
+    const rng = Math.random;
+    const now = Date.now();
+    const usages = [];
+    const playerId = context.currentPlayerId() || 'host';
+    let events = [];
+    try { events = store.readEvents(dataDir, worldId); } catch (_) { events = []; }
+    await ensureOutlineOnState(state, events, usages);
+    if (!state.chapter || !Number.isSafeInteger(state.chapter.index)) {
+      state.chapter = outlineMod.freshChapter((state.turn || 0) + 1);
+    }
+    const history = historyMod.buildStoryHistory(events, state, { budget: cfg.STORY_HISTORY_BUDGET });
+    const plan = engine.planTurn(state, { rng, timeSkip: timeSkip || undefined, storyMode: true });
+    const nextTurn = plan.nextTurn;
+    const card = outlineMod.currentCard(state);
+    const chapterIndex = state.chapter.index;
+    const chapterTurn = (Number(state.chapter.turns) || 0) + 1;
+    const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
+    let mode = 'fine';
+    try { mode = prefs.getPrefs(dataDir, playerId).writing; } catch (_) { mode = 'fine'; }
+    const wc = writingMode.writingCall(cfg, mode);
+    const dueThreads = dueThreadsOf(state);
+    const statNames = (Array.isArray(state.stats) ? state.stats : [])
+      .filter((st) => st && st.kind !== 'rank' && typeof st.name === 'string' && st.name)
+      .map((st) => st.name);
+
+    // 1) 写正文：纯文本流式，思考进度经 hooks.onThinking 往外传（思考内容本身不外传）。
+    const sr = await client.completeStream({
+      purpose: llm.PURPOSES.STORY,
+      model: wc.model,
+      extraBody: wc.extraBody,
+      plainText: true,
+      onThinking: typeof hooks.onThinking === 'function' ? hooks.onThinking : undefined,
+      messages: prompts.buildWriterMessages(state, {
+        action, history, card, chapterTurn, adult: adultPrompt,
+        timeSkip: timeSkip || undefined, plan, dueThreads,
+      }),
+      mock: { action, turn: nextTurn },
+    }, onDelta);
+    usages.push(sr.usage);
+    const prose = cleanProse(sr.content);
+    if (prose.length < engine.NARRATION_MIN) throw httpError(502, '这一节没写出来，请重试');
+
+    // 2) 记账：快速模型从正文里抽字段；失败不阻断——正文已经写好，回合照样落库。
+    const lc = writingMode.ledgerCall(cfg);
+    let ledger = null;
+    let ledgerFailed = false;
+    try {
+      const lp = await callParsed(
+        llm.PURPOSES.LEDGER, lc.model,
+        prompts.buildLedgerMessages(state, { action, prose, card, chapterTurn, timeSkip: timeSkip || undefined, plan }),
+        { turn: nextTurn, action, statNames, needEvent: plan.opening, needSettlement: plan.settling, timeSkip: timeSkip || undefined },
+        usages, { extraBody: lc.extraBody },
+      );
+      ledger = lp.parsed;
+    } catch (_) {
+      ledger = null;
+    }
+    if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) {
+      ledger = { time_passes: 1, suggestions: [] };
+      ledgerFailed = true;
+    }
+
+    // 伏笔：v3 的 threads_add 可以是 {text, due}；交给引擎的只要文本，预计回收章另记在 threadMeta。
+    const threadDue = {};
+    const threadTexts = [];
+    for (const t of Array.isArray(ledger.threads_add) ? ledger.threads_add : []) {
+      const text = typeof t === 'string' ? t : (t && typeof t.text === 'string' ? t.text : '');
+      if (!text || !text.trim()) continue;
+      threadTexts.push(text);
+      const due = t && typeof t === 'object' && Number.isFinite(Number(t.due)) ? Math.min(3, Math.max(1, Math.round(Number(t.due)))) : 2;
+      threadDue[text.trim()] = due;
+    }
+
+    const proposal = {
+      narration: prose,
+      state_diff: ledger.state_diff,
+      stats_diff: ledger.stats_diff,
+      items_add: ledger.items_add,
+      items_remove: ledger.items_remove,
+      items_info: ledger.items_info,
+      npc_attitude: ledger.npc_attitude,
+      persona_tags: ledger.persona_tags,
+      suggestions: ledger.suggestions,
+      new_facts: ledger.new_facts,
+      marks_add: ledger.marks_add,
+      marks_remove: ledger.marks_remove,
+      threads_add: threadTexts,
+      threads_resolve: ledger.threads_resolve,
+      rumor: ledger.rumor,
+      move_to: ledger.move_to,
+      time_passes: ledger.time_passes,
+      overstep: ledger.overstep,
+      scene: ledger.scene,
+      voice_hints: ledger.voice_hints,
+      focus: ledger.focus,
+      continuing: ledger.continuing,
+      adult: ledger.adult,
+      npc_updates: ledger.npc_updates,
+      landing_period: ledger.landing_period,
+    };
+    const data = { action, proposal, plan, raw: JSON.stringify(ledger) };
+    if (plan.opening && ledger.event) data.event = ledger.event;
+    if (plan.settling && ledger.event_check) data.event_check = ledger.event_check;
+
+    const resolved = engine.resolveTurn(state, data, { rng, now, storyMode: true });
+    if (resolved.invalid) throw httpError(422, resolved.error || '本回合无效，请重试');
+
+    const npcExtractionInfo = await npcExtraction.completeMemory(
+      client, turnModel, state, resolved, action, usages,
+    );
+
+    let finalState = resolved.state;
+    if (resolved.result.death) {
+      const entry = await composeEpitaph(state, resolved.result.death, resolved.result.turn, usages);
+      finalState = engine.applyEpitaph(finalState, entry);
+    }
+
+    // 章节进度与伏笔账本（私有）。
+    const ledgerChapter = ledger.chapter && typeof ledger.chapter === 'object' ? ledger.chapter : {};
+    finalState.chapter = Object.assign({}, state.chapter, { turns: chapterTurn });
+    if (ledgerChapter.chapter_end === true) finalState.chapter.pendingClose = true;
+    else delete finalState.chapter.pendingClose;
+    const prevThreads = Array.isArray(state.threads) ? state.threads : [];
+    const meta = {};
+    const oldMeta = state.threadMeta && typeof state.threadMeta === 'object' ? state.threadMeta : {};
+    for (const t of Array.isArray(finalState.threads) ? finalState.threads : []) {
+      if (oldMeta[t]) { meta[t] = oldMeta[t]; continue; }
+      if (prevThreads.includes(t)) continue;
+      const key = Object.keys(threadDue).find((k) => k === t || k.startsWith(t) || t.startsWith(k));
+      meta[t] = { plantedTurn: nextTurn, dueChapter: chapterIndex + (key ? threadDue[key] : 2) };
+    }
+    finalState.threadMeta = meta;
+
+    store.backupForUndo(dataDir, worldId);
+    store.saveWorld(dataDir, finalState);
+
+    const usageAgg = { prompt_tokens: 0, completion_tokens: 0 };
+    for (const u of usages) {
+      usageAgg.prompt_tokens += Number(u && u.prompt_tokens) || 0;
+      usageAgg.completion_tokens += Number(u && u.completion_tokens) || 0;
+    }
+    store.appendEvent(dataDir, worldId, {
+      turn: resolved.result.turn,
+      life: resolved.result.life,
+      action: resolved.result.action,
+      raw: resolved.result.raw,
+      proposal: resolved.result.proposal,
+      applied: resolved.result.applied,
+      stats_drift: resolved.result.stats_drift || {},
+      stats_drains: resolved.result.stats_drains || [],
+      rejected: resolved.result.rejected,
+      narration: resolved.result.narration,
+      event: resolved.result.event || null,
+      settlement: resolved.result.settlement || null,
+      death: resolved.result.death || null,
+      apex: resolved.result.apex || null,
+      twist: resolved.result.twist || null,
+      npc_memory: resolved.result.npc_memory || [],
+      npc_memory_extraction: npcExtractionInfo,
+      scene: resolved.result.scene || null,
+      voice_hints: resolved.result.voice_hints || [],
+      adult: resolved.result.adult === true,
+      ...(resolved.result.timeSkip ? { timeSkip: resolved.result.timeSkip } : {}),
+      story: { style: 'v3', writing: wc.mode, model: wc.model, ledger_failed: ledgerFailed },
+      chapter: { index: chapterIndex, title: (card && card.title) || '' },
+      ledger_chapter: ledgerChapter,
+      usage: usageAgg,
+      ts: resolved.result.ts,
+    });
+
+    try {
+      const applied = resolved.result.applied || {};
+      const tags = Array.isArray(applied.persona_tags) ? applied.persona_tags : [];
+      const bible = finalState.bible || {};
+      const updated = profiles.recordTurn(dataDir, playerId, {
+        tags, action, genre: finalState.genre, title: bible.title,
+        adult: resolved.result.adult === true, now,
+      });
+      maybeSummarizeProfile(playerId, updated);
+    } catch (_) { /* 画像出错绝不影响回合 */ }
+
+    const result = engine.toPublicTurnResult(resolved.result, finalState);
+    result.badges = badgesFromApplied(resolved.result.applied, resolved.result.stats_drains);
+    if (result.state) withUndoFlag(result.state, finalState, worldId);
+    return result;
   }
 
   // ---- 撤回上一步 ----

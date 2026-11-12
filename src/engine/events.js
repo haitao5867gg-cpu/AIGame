@@ -13,6 +13,29 @@ function planTurn(state, opts) {
   const options = opts || {};
   // 时光推进：复用回合流程但不排新事件 / 预兆 / 转折，安静模式一律关掉。
   // 有进行中事件时本回合照常结算（不论 startedTurn，也不顺延），让模型在这段时间里交代结局。
+  // 叙事 v3（storyMode）：章节由隐藏大纲管理，不开新事件、不出预兆、不出导演转折，
+  // 旧的 20 回合编年史也不再压缩；已有进行中的事件照常结算（老世界切到 v3 时可能有）。
+  if (options.storyMode && !options.timeSkip) {
+    const nextTurn = state.turn + 1;
+    const settling = !!state.activeEvent && state.activeEvent.startedTurn < nextTurn;
+    return {
+      nextTurn,
+      quiet: false,
+      settlePostponed: false,
+      settling,
+      opening: false,
+      theme: null,
+      omen: false,
+      omenTheme: null,
+      pendingEventTheme: null,
+      twist: null,
+      nextTwistTurn: null,
+      needEvent: false,
+      needSettlement: settling,
+      needChapter: false,
+      storyMode: true,
+    };
+  }
   if (options.timeSkip) {
     const nextTurn = state.turn + 1;
     const settling = !!state.activeEvent;
@@ -30,8 +53,9 @@ function planTurn(state, opts) {
       nextTwistTurn: null,
       needEvent: false,
       needSettlement: settling,
-      needChapter: nextTurn % 20 === 0,
+      needChapter: options.storyMode ? false : nextTurn % 20 === 0,
       timeSkip: options.timeSkip,
+      storyMode: options.storyMode === true,
     };
   }
   const rng = options.rng || Math.random;

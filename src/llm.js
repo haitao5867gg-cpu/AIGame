@@ -26,6 +26,10 @@ const PURPOSES = Object.freeze({
   STATS: 'stats',       // 老世界补设计专属状态（GET /stats 时额外调用）
   PROFILE: 'profile',   // 后台总结玩家画像（summary / traits / wants）
   OUTLINE: 'outline',   // 叙事 v3：作者自用的隐藏大纲（卷节拍表 + 章卡）
+  STORY: 'story',       // 叙事 v3：按五段任务书只写纯正文（流式）
+  LEDGER: 'ledger',     // 叙事 v3：写完正文后从正文里记账（数值 / 物品 / 线索 / 灵感…）
+  CHAPTER_CLOSE: 'chapter-close', // 叙事 v3：一章写完后的章摘要
+  CHAPTER_PLAN: 'chapter-plan',   // 叙事 v3：规划下一章的章卡
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -57,6 +61,18 @@ function parseExtraBody(raw) {
     console.warn('[llm] LLM_EXTRA_BODY 解析失败（不是合法 JSON），已忽略');
   }
   return {};
+}
+
+// 按次覆盖请求体：先全局 LLM_EXTRA_BODY，再叠 opts.extraBody（同名覆盖；值为 null 表示删掉该键）。
+function mergeExtraBody(globalBody, perCall) {
+  const out = Object.assign({}, globalBody || {});
+  if (perCall && typeof perCall === 'object' && !Array.isArray(perCall)) {
+    for (const k of Object.keys(perCall)) {
+      if (perCall[k] === null) delete out[k];
+      else out[k] = perCall[k];
+    }
+  }
+  return out;
 }
 
 // ---- 流式叙事解码器 ----
@@ -545,6 +561,41 @@ function mockItemsInfo(m) {
 // 老世界补设计专属状态：按题材给 2 个合法数值槽（名字随题材变化），
 // 让 LLM_MOCK 下 GET /stats 走真实的「模型设计 → normalizeStatsSpec 消毒 → 保存」链路。
 // 后台总结玩家画像：返回确定性的 summary / traits / wants，供 LLM_MOCK 走真实链路。
+// 叙事 v3 写正文：一段三段式的确定性假正文（含玩家行动），纯文本模式下就是全部正文。
+function mockStory(m) {
+  const action = m && m.action ? String(m.action) : '四下看看';
+  const turn = m && Number.isSafeInteger(m.turn) ? m.turn : 1;
+  return {
+    narration: [
+      `你决定${action}。雾从港口那边漫过来，钟声隔着水面传到耳边，一下，又一下。第${turn}回合，你把旧铜灯往身前提了提，灯光照出脚下湿滑的石阶。`,
+      '守夜人站在石阶尽头，提灯的手没有动。「这么晚还出来，」他说，「你要找的人，不在这条街上。」你没接话，只是看着他灯罩上那道裂缝。',
+      '远处有人吹了一声口哨，很短。守夜人的眼神往那边偏了一下，又落回你身上。你知道，他在等你先开口。',
+    ].join('\n\n'),
+  };
+}
+
+// 叙事 v3 记账：和普通回合 mock 同形，但不含 narration（正文已经写好）。
+function mockLedger(m) {
+  const out = mockTurn(m);
+  delete out.narration;
+  out.chapter = { beats_done: [], chapter_end: !!(m && m.chapterEnd) };
+  return out;
+}
+
+function mockChapterClose(m) {
+  const idx = m && Number.isSafeInteger(m.index) ? m.index : 1;
+  return {
+    title: `第${idx}章`,
+    summary: `第${idx}章里，你在灰烬港的雾里查访无字信的来历，守夜人始终盯着你，拾骨少女开出了价码。章末，钟声在半夜多敲了一下。`,
+    bridge: '钟声乱了，你决定去钟楼看看',
+  };
+}
+
+function mockChapterPlan(m) {
+  const idx = m && Number.isSafeInteger(m.index) ? m.index : 2;
+  return { title: `第${idx}章·续`, goal: '顺着钟声查下去', start: '半夜的钟声', beats: ['钟楼的门开着', '有人在更漏旁留了记号'], end: '找到被调过的更漏', question: '是谁在改钟声', avoid: [] };
+}
+
 // 叙事 v3 隐藏大纲：一份合法的卷节拍表 + 3 张章卡（确定性假数据）。
 function mockOutline() {
   return {
@@ -612,6 +663,10 @@ function mockFor(purpose, m) {
     case PURPOSES.STATS: return mockStats(m);
     case PURPOSES.PROFILE: return mockProfile();
     case PURPOSES.OUTLINE: return mockOutline();
+    case PURPOSES.STORY: return mockStory(m);
+    case PURPOSES.LEDGER: return mockLedger(m);
+    case PURPOSES.CHAPTER_CLOSE: return mockChapterClose(m);
+    case PURPOSES.CHAPTER_PLAN: return mockChapterPlan(m);
     default: return mockTurn(m);
   }
 }
@@ -781,7 +836,7 @@ function createClient(cfg, dataDir) {
       throw err;
     }
     // extraBody 的键合并进请求体；model/messages/response_format 由本层决定，不被外部覆盖。
-    const payload = Object.assign({}, extraBody, {
+    const payload = Object.assign(mergeExtraBody(extraBody, ro.extraBody), {
       model,
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
@@ -853,18 +908,23 @@ function createClient(cfg, dataDir) {
   // 流式版 httpChat：请求带 stream:true，逐条读取 SSE 的 data: 行，累积 content，
   // 并把每个 content 片段喂给叙事解码器（每有解码出的新文本回调 onDelta）。
   // 返回 { content, usage }，content 为拼接后的完整文本，交由上层照常解析/校验/落库。
-  async function httpChatStream(model, messages, responseFormat, onDelta) {
+  // ro（可选）：{ extraBody, plainText, onThinking }。plainText 时不走叙事解码器，正文片段原样回调；
+  // onThinking(累计思考字数) 在流里出现 reasoning_content 时回调（首次立即，之后最多每 800ms 一次），
+  // 思考内容本身不返回、不记录（可能含作者大纲，绝不能给玩家看）。
+  async function httpChatStream(model, messages, responseFormat, onDelta, ro) {
+    const sro = ro || {};
     if (!base) {
       const err = new Error('未配置 LLM_BASE，无法调用真实模型');
       err.status = 500;
       err.expose = true;
       throw err;
     }
-    const payload = Object.assign({}, extraBody, {
+    const payload = Object.assign(mergeExtraBody(extraBody, sro.extraBody), {
       model,
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
       stream: true,
+      stream_options: { include_usage: true },
     });
     const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
@@ -900,10 +960,14 @@ function createClient(cfg, dataDir) {
       e.expose = true;
       throw e;
     }
-    const decoder = createNarrationDecoder(onDelta);
+    const decoder = sro.plainText
+      ? { push(t) { if (typeof onDelta === 'function') onDelta(t); } }
+      : createNarrationDecoder(onDelta);
     let fullContent = '';
     let prompt_tokens = 0;
     let completion_tokens = 0;
+    let thinkChars = 0;
+    let thinkAt = 0;
     await readSSE(resp.body, (dataLine) => {
       if (!dataLine || dataLine === '[DONE]') return;
       let chunk;
@@ -914,7 +978,18 @@ function createClient(cfg, dataDir) {
         completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
       }
       const choices = chunk && chunk.choices;
-      const delta = choices && choices[0] && choices[0].delta && choices[0].delta.content;
+      const d = choices && choices[0] && choices[0].delta;
+      const reasoning = d && d.reasoning_content;
+      if (typeof reasoning === 'string' && reasoning && typeof sro.onThinking === 'function') {
+        const first = thinkChars === 0;
+        thinkChars += reasoning.length;
+        const nowMs = Date.now();
+        if (first || nowMs - thinkAt >= 800) {
+          thinkAt = nowMs;
+          try { sro.onThinking(thinkChars); } catch (_) { /* 回调出错不影响读流 */ }
+        }
+      }
+      const delta = d && d.content;
       if (typeof delta === 'string' && delta) {
         fullContent += delta;
         decoder.push(delta);
@@ -983,12 +1058,21 @@ function createClient(cfg, dataDir) {
     const messages = o.messages || [];
 
     if (mock) {
-      const content = JSON.stringify(mockFor(purpose, o.mock));
+      const mocked = mockFor(purpose, o.mock);
+      let content = JSON.stringify(mocked);
       let narration = '';
       try {
         const parsed = JSON.parse(content);
         if (typeof parsed.narration === 'string') narration = parsed.narration;
       } catch (_) { /* 无 narration 字段时不回调 */ }
+      // 纯文本模式：mock 的 narration 就是全部正文（没有 narration 字段时用整个 JSON 串）。
+      if (o.plainText) {
+        content = narration || content;
+        narration = content;
+      }
+      if (typeof o.onThinking === 'function') {
+        try { o.onThinking(1); } catch (_) { /* 忽略 */ }
+      }
       // 把假叙事切成小块，每块间隔约 30ms 回调，模拟流式。
       const size = 6;
       for (let i = 0; i < narration.length; i += size) {
@@ -1008,7 +1092,7 @@ function createClient(cfg, dataDir) {
 
     const t0 = Date.now();
     try {
-      const r = await httpChatStream(model, messages, o.responseFormat, onDelta);
+      const r = await httpChatStream(model, messages, o.plainText ? false : o.responseFormat, onDelta, o);
       const ms = Date.now() - t0;
       appendUsage({
         ts: now, model, purpose,

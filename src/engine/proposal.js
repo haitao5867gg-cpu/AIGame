@@ -1,6 +1,6 @@
 'use strict';
 
-const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, TIME_SKIP_DIFF_MIN, TIME_SKIP_DIFF_MAX, TIME_SKIP_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
+const { ATTRS, PERSONA_DIMS, ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, NPC_DIFF_MAX, DIFF_MIN, DIFF_MAX, DIFF_POSITIVE_TOTAL_MAX, TIME_SKIP_DIFF_MIN, TIME_SKIP_DIFF_MAX, TIME_SKIP_POSITIVE_TOTAL_MAX, ITEMS_ADD_MAX, ITEM_NAME_MAX, NARRATION_MIN, NARRATION_MAX, STORY_NARRATION_MAX, PERSONA_INIT, PERSONA_REGRESSION } = require('./constants.js');
 const { clamp, toInt, cleanDialogueTics } = require('./util.js');
 const { validateStatsDiff } = require('./stats.js');
 
@@ -30,11 +30,12 @@ function validateProposal(state, proposal, opts) {
     narration: '',
   };
 
-  // 叙事：10~1200 字；超出截断，过短 = 无效回合。
+  // 叙事：10~1200 字（叙事 v3 放宽到 1800）；超出截断，过短 = 无效回合。
+  const narrationMax = opts && opts.storyMode ? STORY_NARRATION_MAX : NARRATION_MAX;
   let narration = typeof p.narration === 'string' ? p.narration : '';
-  if (narration.length > NARRATION_MAX) {
-    narration = narration.slice(0, NARRATION_MAX);
-    rejected.push(`叙事超过 ${NARRATION_MAX} 字，已截断`);
+  if (narration.length > narrationMax) {
+    narration = narration.slice(0, narrationMax);
+    rejected.push(`叙事超过 ${narrationMax} 字，已截断`);
   }
   narration = cleanDialogueTics(narration);
   applied.narration = narration;

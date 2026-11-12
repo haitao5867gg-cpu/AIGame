@@ -1,6 +1,6 @@
 'use strict';
 
-const { ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
+const { ATTR_MIN, ATTR_MAX, NPC_MIN, NPC_MAX, TWIST_GAP_MIN, TWIST_GAP_SPAN, PERIODS, RECENT_MAX, RECENT_NARRATION_MAX, CHRONICLE_MAX, RUMORS_MAX, FACTS_MAX, FACTS_PER_TURN_MAX, MARKS_MAX, THREADS_MAX, STORY_THREADS_MAX, FADED_THREADS_MAX } = require('./constants.js');
 const { clamp, unit, internalReject, normalizeRumor, normalizeScene, normalizeFact, normalizeMark, normalizeThread, normalizeMoveTo, normalizeTimePasses, normalizeVoiceHints, normalizeFocus, normalizeAdult, advanceClock, cloneState, cleanItemInfo } = require('./util.js');
 const { validateProposal } = require('./proposal.js');
 const { applyStatsTurn } = require('./stats.js');
@@ -19,7 +19,8 @@ function resolveTurn(state, input, opts) {
 
   const plan = data.plan || planTurn(state, { rng });
   const timeSkip = (plan && plan.timeSkip) || null;
-  const validation = validateProposal(state, data.proposal, { timeSkip });
+  const storyMode = options.storyMode === true;
+  const validation = validateProposal(state, data.proposal, { timeSkip, storyMode });
   if (validation.error) {
     // 无效回合：不推进 turn，状态原样退回。
     return { state, result: null, invalid: true, error: validation.error, plan };
@@ -209,6 +210,11 @@ function resolveTurn(state, input, opts) {
   for (const raw of threadAdd) {
     const text = normalizeThread(raw);
     if (!text || s.threads.includes(text)) continue;
+    // 叙事 v3：伏笔账本满了就拒收新线索（先收掉旧的再埋新的），不再自动淡去最旧的。
+    if (storyMode && s.threads.length >= STORY_THREADS_MAX) {
+      rejected.push(internalReject(`伏笔账本已有 ${STORY_THREADS_MAX} 条活跃线索，拒收「${text}」`));
+      continue;
+    }
     s.threads.push(text);
     threadsChanged = true;
     if (s.threads.length > THREADS_MAX) {
