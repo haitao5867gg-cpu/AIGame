@@ -888,16 +888,9 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
 
 /* 世界底图不占布局、不接收点击；正文保持独立深底，既有场景插图保留。 */
 .world-backdrop{position:fixed;inset:0;z-index:0;pointer-events:none;background-size:cover;
-  background-position:center 55%;filter:brightness(.69) saturate(.72);transition:filter 2s ease,opacity 1.5s ease}
-.world-backdrop::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(9,14,17,.08),rgba(9,12,13,.3))}
-.world-backdrop[data-period="dawn"]{filter:brightness(.72) saturate(.66)}
-.world-backdrop[data-period="dusk"]{filter:brightness(.46) saturate(.6) sepia(.15)}
-.world-backdrop[data-period="night"]{filter:brightness(.28) saturate(.46)}
+  background-position:center 55%;transition:filter 2s ease,opacity 1.5s ease}
+.world-backdrop::after{content:'';position:absolute;inset:0}
 #app{position:relative;z-index:1}
-body.atmosphere-background .stage{background:rgba(20,19,15,.82);border-radius:10px;padding-left:18px;padding-right:18px}
-body.atmosphere-background .panel{background:rgba(32,30,23,.92);border-radius:10px}
-body.atmosphere-background .game-head{background:rgba(20,19,15,.9);border-radius:8px;padding-left:10px;padding-right:10px}
-body.atmosphere-background .g-subhead{background:rgba(20,19,15,.86);border-radius:7px;padding-left:8px;padding-right:8px}
 .atmosphere-quick{min-width:40px;min-height:40px;font-size:21px;padding:4px 9px;flex:none}
 .atmosphere-quick.atmosphere-playing{color:var(--accent-2);border-color:var(--accent-2)}
 .atmosphere-mask{position:fixed;inset:0;z-index:88;background:rgba(8,8,6,.82);display:flex;
@@ -928,9 +921,6 @@ body.atmosphere-background .g-subhead{background:rgba(20,19,15,.86);border-radiu
   .atmosphere-mask{align-items:flex-end;padding:0}
   .atmosphere-card{max-width:none;max-height:85vh;border-radius:16px 16px 0 0;padding:24px 16px calc(18px + env(safe-area-inset-bottom))}
   .atmosphere-switch input{width:44px;height:26px}
-  body.atmosphere-background .stage{background:rgba(20,19,15,.88);border-radius:0;padding-left:14px;padding-right:14px}
-  body.atmosphere-background .g-subtitle{background:rgba(20,19,15,.86);border-radius:7px;padding:4px 8px}
-  body.atmosphere-background .panel{background:var(--panel)}
   .atmosphere-quick{margin-right:0}
 }
 @media(prefers-reduced-motion:reduce){.world-backdrop{transition:none}}
@@ -954,3 +944,147 @@ body.atmosphere-background .g-subhead{background:rgba(20,19,15,.86);border-radiu
   .timeskip-pop{align-items:flex-end}
   .timeskip-card{max-height:85vh;border-radius:16px 16px 0 0;padding:22px 16px calc(18px + env(safe-area-inset-bottom))}
 }
+
+/* ===== 游戏页「场景舞台」：题材色调 + 世界底图 + 玻璃阅读面 ===== */
+/* body[data-genre] 只在游戏页存在 */
+/* 题材色：--g-tint 面板底色(rgb)、--g-tint-2 侧栏/弹层底色、--g-accent 亮强调色（暗底上用）、--g-accent-deep 深强调色（亮底上用） */
+body[data-genre]{
+  --g-tint:24,27,36; --g-tint-2:34,38,50;
+  --g-accent:#d9b36a; --g-accent-rgb:217,179,106; --g-accent-deep:#9a7426; --g-on-accent:#15120c;
+  --ink:#f3eee4; --muted:#bfb8a8; --line:rgba(255,255,255,.13); --bg-2:rgba(255,255,255,.07);
+  --bg:rgb(var(--g-tint)); --panel:rgb(var(--g-tint-2)); --accent:var(--g-accent); --accent-2:var(--g-accent);
+  background:
+    radial-gradient(90% 60% at 85% -10%,rgba(var(--g-accent-rgb),.22),transparent 70%),
+    radial-gradient(70% 50% at -10% 105%,rgba(var(--g-accent-rgb),.12),transparent 70%),
+    rgb(var(--g-tint));
+}
+body[data-genre="xuanhuan"]{--g-tint:20,32,30;--g-tint-2:30,46,43;--g-accent:#dcb86e;--g-accent-rgb:220,184,110;--g-accent-deep:#8f6a1f}
+body[data-genre="urban"]{--g-tint:20,27,40;--g-tint-2:30,40,58;--g-accent:#5fd0e0;--g-accent-rgb:95,208,224;--g-accent-deep:#127a89}
+body[data-genre="game"]{--g-tint:14,24,44;--g-tint-2:24,38,66;--g-accent:#6cb4ff;--g-accent-rgb:108,180,255;--g-accent-deep:#2563b0}
+body[data-genre="horror"]{--g-tint:30,18,22;--g-tint-2:44,27,32;--g-accent:#e0675d;--g-accent-rgb:224,103,93;--g-accent-deep:#a8352c}
+body[data-genre="cozy"]{--g-tint:42,32,25;--g-tint-2:58,45,35;--g-accent:#f2ab66;--g-accent-rgb:242,171,102;--g-accent-deep:#a85a17}
+body[data-genre="general"]{--g-tint:26,24,44;--g-tint-2:38,35,62;--g-accent:#a898ff;--g-accent-rgb:168,152,255;--g-accent-deep:#5b46cc}
+
+/* ---- 世界底图：比原来亮，按时辰调色；下半部渐隐到题材底色 ---- */
+.world-backdrop{filter:brightness(.95) saturate(1.05)}
+.world-backdrop::after{background:linear-gradient(180deg,rgba(var(--g-tint,20,19,15),.05) 0%,rgba(var(--g-tint,20,19,15),.28) 50%,rgba(var(--g-tint,20,19,15),.68) 100%)}
+.world-backdrop[data-period="dawn"]{filter:brightness(.95) saturate(1)}
+.world-backdrop[data-period="day"]{filter:brightness(1) saturate(1.05)}
+.world-backdrop[data-period="dusk"]{filter:brightness(.8) saturate(.95) sepia(.12)}
+.world-backdrop[data-period="night"]{filter:brightness(.62) saturate(.85)}
+.world-backdrop[data-art="scene"]{transform:scale(1.04)}
+
+/* ---- 顶栏、地点行：直接压在画上（浅字 + 阴影 + 玻璃胶囊），两种底色都一样 ---- */
+body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:transparent;border-bottom:0;padding-left:4px;padding-right:4px}
+body[data-genre] .game-head .link{color:#e9e3d6;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+body[data-genre] .game-head-title{font-size:22px;letter-spacing:.06em;color:#fbf6ea;text-shadow:0 2px 14px rgba(0,0,0,.6)}
+body[data-genre] .game-head-meta,body[data-genre] .g-player{color:#f3eee4;text-shadow:0 1px 8px rgba(0,0,0,.65)}
+body[data-genre] .game-head .btn.tiny,body[data-genre] .atmosphere-quick,body[data-genre] .more-btn{color:#f3eee4;background:rgba(0,0,0,.30);
+  border-color:rgba(255,255,255,.18);border-radius:999px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+body[data-genre] .g-subhead,body.atmosphere-background[data-genre] .g-subhead{background:transparent;padding:0 4px}
+body[data-genre] .g-place{font-size:13px;color:#f3eee4;background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;padding:4px 12px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+body[data-genre] .genre-tag{color:#f3eee4;background:rgba(0,0,0,.30);border-color:rgba(255,255,255,.16);border-radius:999px;padding:4px 11px;font-size:12px}
+body[data-genre] .genre-tag:hover{border-color:var(--g-accent);color:var(--g-accent)}
+body[data-genre] .event-banner{background:rgba(var(--g-tint),.82);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-radius:12px}
+
+/* ---- 阅读面（夜色）：半透明玻璃，透出底图颜色 ---- */
+body[data-genre] .stage,body.atmosphere-background[data-genre] .stage{background:rgba(var(--g-tint),.68);
+  -webkit-backdrop-filter:blur(20px) saturate(1.25);backdrop-filter:blur(20px) saturate(1.25);
+  border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:4px 18px 14px;box-shadow:0 24px 60px rgba(0,0,0,.30)}
+body[data-genre] .panel,body.atmosphere-background[data-genre] .panel{background:rgba(var(--g-tint-2),.72);
+  -webkit-backdrop-filter:blur(20px) saturate(1.25);backdrop-filter:blur(20px) saturate(1.25);
+  border:1px solid rgba(255,255,255,.10);border-radius:18px}
+body[data-genre] .narration{color:var(--ink)}
+body[data-genre] .opening{border-left-color:var(--g-accent);background:rgba(var(--g-accent-rgb),.08);border-radius:0 10px 10px 0;padding:10px 14px}
+body[data-genre] .scene-frame{border:0;border-radius:14px;box-shadow:0 14px 34px rgba(0,0,0,.35)}
+body[data-genre] .badge{border-radius:999px}
+body[data-genre] .event-card,body[data-genre] .settlement-card{border-radius:12px}
+body[data-genre] .divider{border-top-color:rgba(var(--g-accent-rgb),.35)}
+
+/* 你的行动：气泡；本回合朗读按钮同一行靠右 */
+body[data-genre] .action-line{display:flex;align-items:center;gap:10px;margin:28px 0 12px;font-size:15px;color:var(--ink)}
+.action-bubble{display:inline-flex;align-items:baseline;gap:8px;min-width:0;max-width:100%;line-height:1.6;
+  background:rgba(var(--g-accent-rgb,192,57,43),.13);border:1px solid rgba(var(--g-accent-rgb,192,57,43),.38);border-radius:14px;padding:7px 14px}
+.action-who{flex:none;font-size:12px;font-weight:600;color:var(--g-on-accent,#fff);background:var(--g-accent,var(--accent));border-radius:999px;padding:0 8px;line-height:20px}
+.action-text{min-width:0;overflow-wrap:anywhere}
+.action-line .tts-turn-head{margin-left:auto;flex:none}
+body[data-genre] .tts-read-btn{min-height:32px;padding:0 12px;font-size:13px;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
+
+/* 输入区 */
+body[data-genre] .composer{border-top:1px solid var(--line)}
+body[data-genre] .suggestion{color:var(--ink);background:rgba(var(--g-accent-rgb),.10);border-color:rgba(var(--g-accent-rgb),.32);border-radius:999px}
+body[data-genre] .suggestion:hover{background:rgba(var(--g-accent-rgb),.2);border-color:var(--g-accent)}
+body[data-genre] #action-input{background:rgba(0,0,0,.22);border-color:rgba(255,255,255,.14);border-radius:14px;color:var(--ink)}
+body[data-genre] #action-input:focus{border-color:var(--g-accent)}
+body[data-genre] .btn.primary{background:var(--g-accent);border-color:var(--g-accent);color:var(--g-on-accent);font-weight:600;border-radius:12px}
+body[data-genre] .btn.primary:hover:not(:disabled){filter:brightness(1.08);background:var(--g-accent);border-color:var(--g-accent)}
+body[data-genre] .undo-btn{border-radius:999px}
+
+/* 侧栏细节 */
+body[data-genre] .attr-bar,body[data-genre] .persona-bar{background:rgba(0,0,0,.3)}
+body[data-genre] .attr-fill{background:linear-gradient(90deg,rgba(var(--g-accent-rgb),.45),var(--g-accent))}
+body[data-genre] .rumor-item,body[data-genre] .thread-item,body[data-genre] .fact-item{background:rgba(0,0,0,.18)}
+body[data-genre] .img-fallback{color:#fbf3df;background:radial-gradient(circle at 35% 30%,rgba(var(--g-accent-rgb),.55),rgba(var(--g-tint),.92));border-color:rgba(var(--g-accent-rgb),.5)}
+body[data-genre] .img-pending{background:linear-gradient(100deg,rgba(255,255,255,.05) 30%,rgba(255,255,255,.12) 50%,rgba(255,255,255,.05) 70%);background-size:200% 100%}
+
+/* 电脑：整回合内容排成居中的一栏（行动气泡、徽章、正文左边对齐） */
+@media(min-width:860px){
+  body[data-genre] .stream{padding-left:max(8px,calc((100% - 760px)/2));padding-right:max(16px,calc((100% - 760px)/2))}
+  body[data-genre] .narration,body[data-genre] .opening{max-width:none;margin-left:0;margin-right:0;line-height:1.85}
+}
+
+/* ---- 纸页（亮色）：阅读面和侧栏换成米白纸色，文字换深色；顶栏和地点行仍压在画上保持浅字 ---- */
+body[data-genre][data-read="paper"] .stage,body[data-genre][data-read="paper"] .panel{
+  --ink:#2a251e; --muted:#6e6555; --line:rgba(70,52,30,.16); --bg-2:rgba(70,52,30,.06); --bg:#fbf8f1; --panel:#f8f3e7;
+  --accent:var(--g-accent-deep); --accent-2:var(--g-accent-deep); color:var(--ink)}
+body[data-genre][data-read="paper"] .stage,body.atmosphere-background[data-genre][data-read="paper"] .stage{background:rgba(251,248,241,.90);border-color:rgba(255,255,255,.6);box-shadow:0 24px 60px rgba(0,0,0,.25)}
+body[data-genre][data-read="paper"] .panel,body.atmosphere-background[data-genre][data-read="paper"] .panel{background:rgba(248,244,234,.92);border-color:rgba(255,255,255,.6)}
+body[data-genre][data-read="paper"] .opening{background:rgba(var(--g-accent-rgb),.12);border-left-color:var(--g-accent-deep)}
+body[data-genre][data-read="paper"] .action-bubble{background:rgba(var(--g-accent-rgb),.16);border-color:rgba(var(--g-accent-rgb),.6);color:#1f1b15}
+body[data-genre][data-read="paper"] .action-who{background:var(--g-accent-deep);color:#fff}
+body[data-genre][data-read="paper"] .tts-read-btn{background:rgba(70,52,30,.05);border-color:rgba(70,52,30,.2);color:#2a251e}
+body[data-genre][data-read="paper"] .suggestion{color:#2a251e;background:rgba(var(--g-accent-rgb),.14);border-color:rgba(var(--g-accent-rgb),.55)}
+body[data-genre][data-read="paper"] #action-input{background:#fff;border-color:rgba(70,52,30,.2);color:#2a251e}
+body[data-genre][data-read="paper"] #action-input:focus{border-color:var(--g-accent-deep)}
+body[data-genre][data-read="paper"] .btn.primary{background:var(--g-accent-deep);border-color:var(--g-accent-deep);color:#fff}
+body[data-genre][data-read="paper"] .btn.primary:hover:not(:disabled){background:var(--g-accent-deep);border-color:var(--g-accent-deep)}
+body[data-genre][data-read="paper"] .stage .btn:not(.primary),body[data-genre][data-read="paper"] .panel .btn:not(.primary),body[data-genre][data-read="paper"] .undo-btn{color:#2a251e;background:rgba(70,52,30,.04)}
+body[data-genre][data-read="paper"] .badge.up{color:#2f7a3a;border-color:rgba(47,122,58,.4);background:rgba(47,122,58,.08)}
+body[data-genre][data-read="paper"] .badge.down{color:#a8402f;border-color:rgba(168,64,47,.4);background:rgba(168,64,47,.08)}
+body[data-genre][data-read="paper"] .event-card,body[data-genre][data-read="paper"] .settlement-card{background:rgba(168,64,47,.06);border-color:rgba(168,64,47,.35)}
+body[data-genre][data-read="paper"] .attr-bar,body[data-genre][data-read="paper"] .persona-bar{background:rgba(70,52,30,.12)}
+body[data-genre][data-read="paper"] .attr-fill{background:linear-gradient(90deg,rgba(var(--g-accent-rgb),.6),var(--g-accent-deep))}
+body[data-genre][data-read="paper"] .rumor-item,body[data-genre][data-read="paper"] .thread-item,
+body[data-genre][data-read="paper"] .fact-item,body[data-genre][data-read="paper"] .item-chip{background:rgba(255,255,255,.75)}
+body[data-genre][data-read="paper"] .mark-chip{color:#8a4a1c;background:rgba(255,255,255,.75)}
+body[data-genre][data-read="paper"] .img-pending{background:linear-gradient(100deg,#ece4d2 30%,#f6f0e2 50%,#ece4d2 70%);background-size:200% 100%}
+body[data-genre][data-read="paper"] .tts-player-bar{background:rgba(255,255,255,.7)}
+body[data-genre][data-read="paper"] p.narration.tts-speaking{background:rgba(var(--g-accent-rgb),.14)}
+body[data-genre][data-read="paper"] .stream,body[data-genre][data-read="paper"] .panel{scrollbar-color:rgba(70,52,30,.3) transparent}
+
+/* 纸页漏网：图片占位块原本写死浅字深底，纸页上改为浅底深字 */
+body[data-genre][data-read="paper"] .img-fallback{color:#5b4326;background:radial-gradient(circle at 35% 30%,rgba(var(--g-accent-rgb),.30),rgba(255,255,255,.92));border-color:rgba(var(--g-accent-rgb),.45)}
+/* ---- 手机 ---- */
+@media(max-width:600px){
+  /* 手机正文整页滚动，不在滚动的大块上用 backdrop-filter（耗电、卡顿）；改为底图本身柔焦 */
+  body[data-genre] .world-backdrop{filter:blur(6px) brightness(.85);transform:scale(1.08)}
+  body[data-genre] .world-backdrop[data-period="dusk"]{filter:blur(6px) brightness(.72) sepia(.12)}
+  body[data-genre] .world-backdrop[data-period="night"]{filter:blur(6px) brightness(.55)}
+  body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:rgba(var(--g-tint),.80);
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0 -14px 6px;padding:0 10px}
+  body[data-genre] .stage,body.atmosphere-background[data-genre] .stage{background:rgba(var(--g-tint),.66);-webkit-backdrop-filter:none;backdrop-filter:none;
+    border:0;border-radius:16px;box-shadow:none;padding:2px 14px 0}
+  body[data-genre] .composer{background:rgba(var(--g-tint),.97);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);margin:8px -14px 0;padding-left:14px;padding-right:14px;border-radius:0 0 16px 16px}
+  body[data-genre] .more-btn,body[data-genre] .atmosphere-quick{border-radius:12px}
+  body[data-genre] #app{padding-top:0}
+  body[data-genre] .g-subtitle,body.atmosphere-background[data-genre] .g-subtitle{color:#f3eee4;background:transparent;padding:0 4px;text-shadow:0 1px 8px rgba(0,0,0,.65)}
+  body[data-genre] .top-chip{color:#f3eee4;background:rgba(0,0,0,.32);border-color:rgba(255,255,255,.16);border-radius:999px}
+  body[data-genre] .action-line{margin-top:22px}
+  body[data-genre] .tts-read-btn{min-height:40px}
+  body[data-genre] .panel,body.atmosphere-background[data-genre] .panel{background:rgb(var(--g-tint-2));border-radius:0;-webkit-backdrop-filter:none;backdrop-filter:none}
+  body[data-genre][data-read="paper"] .stage,body.atmosphere-background[data-genre][data-read="paper"] .stage{background:rgba(251,248,241,.93)}
+  body[data-genre][data-read="paper"] .composer{background:rgba(251,248,241,.98)}
+  body[data-genre][data-read="paper"] .panel,body.atmosphere-background[data-genre][data-read="paper"] .panel{background:#f8f3e7}
+}
+@media(prefers-reduced-motion:reduce){.world-backdrop[data-art="scene"]{transform:none}}
