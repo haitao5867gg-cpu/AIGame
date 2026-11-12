@@ -607,3 +607,76 @@ test('静态：app.css 末尾「角色卡」基础样式段', () => {
   assert.match(css, /@media\(max-width:600px\)\{[^}]*\.panel-tab\{min-height:40px\}/, '手机标签 ≥40px');
   assert.match(css, /\.attr-cell\{min-height:40px\}/, '手机属性格 ≥40px');
 });
+
+// ---- 补充断言：说明里上面用例未覆盖的结构细节 ----
+test('角色卡补充：默认名字、头像 id、伤势沉重徽章与体魄 danger 格子', () => {
+  const h = setup();
+  const st = makeState();
+  st.character.name = '';
+  h.s.renderPanel(st);
+  assert.match(h.doc.querySelector('.char-name').textContent, /无名旅人/, '名字空时兜底');
+  assert.equal(h.doc.querySelector('.char-avatar').id, 'hero-row-avatar');
+
+  const h2 = setup();
+  h2.s.renderPanel(makeState({ danger: true }));
+  assert.equal(h2.doc.querySelectorAll('.char-danger').length, 1, '伤势沉重徽章');
+  assert.match(h2.doc.querySelector('.char-danger').textContent, /伤势沉重/);
+  assert.equal(h2.doc.querySelectorAll('.attr-cell.danger').length, 1, '体魄格子加 danger');
+});
+
+test('角色页雷达补充：顶点标签带 data-attr 写「属性名 值」、danger 顶点圆点', () => {
+  const h = setup();
+  h.s.renderPanel(makeState({ danger: true }));
+  const svg = h.doc.querySelector('.attr-radar').querySelector('svg');
+  const labels = svg.querySelectorAll('.radar-label');
+  assert.equal(labels.length, 6);
+  assert.equal(svg.querySelectorAll('.radar-label[data-attr]').length, 6, '每个标签带 data-attr');
+  assert.match(labels[0].textContent, /体魄 6/, '标签写「属性名 值」');
+  assert.equal(svg.querySelectorAll('.radar-dot.danger').length, 1, 'danger 顶点小圆');
+  assert.equal(svg.querySelectorAll('.radar-grid').length, 3);
+  assert.equal(svg.querySelectorAll('.radar-axis').length, 6);
+});
+
+test('人物页 / 线索页 / 印记：保留的容器类名、三个折叠段、序章按钮', () => {
+  const h = setup();
+  h.s.renderPanel(makeState());
+  assert.ok(h.doc.getElementById('hero-row').classList.contains('npc-row'));
+  assert.ok(h.doc.getElementById('npc-list').classList.contains('npc-list'));
+  assert.equal(h.s.panelPanes.char.querySelectorAll('.mark-chip').length, 1);
+  const clues = h.s.panelPanes.clues;
+  for (const word of ['未解之谜', '坊间传闻', '前世', '已知的事', '编年史', '世界设定']) {
+    assert.match(clues.textContent, new RegExp(word), '线索页应含「' + word + '」');
+  }
+  assert.equal(clues.querySelectorAll('details').length, 3, '已知的事 / 编年史 / 世界设定折叠');
+  assert.equal(clues.querySelectorAll('button').length, 1, '序章按钮');
+});
+
+test('画像雷达补充：六轴顺序为 PERSONA、标签只有维度名、note 文案', () => {
+  const h = setup();
+  h.s.renderPanel(makeState());
+  h.s.profileData = {
+    turns: 12, dims: { 冒险: 50, 审慎: 40, 共情: 30, 权谋: 20, 坚韧: 10, 秩序: 5 },
+    traits: [], summary: 's', wants: '', ready: true,
+  };
+  h.s.renderProfilePane();
+  const pane = h.s.panelPanes.profile;
+  const svg = pane.querySelector('.profile-radar').querySelector('svg');
+  assert.deepEqual(svg.querySelectorAll('.radar-label').map(function (t) { return t.textContent; }),
+    ['冒险', '审慎', '共情', '权谋', '坚韧', '秩序']);
+  assert.equal(svg.querySelectorAll('.radar-label[data-attr]').length, 0, '画像标签不带 data-attr');
+  assert.match(pane.querySelector('.profile-note').textContent, /开新世界会自带/);
+  assert.equal(pane.querySelector('.profile-hint'), null, 'ready 不显示提示');
+});
+
+test('renderTopAttrs 补充：生效警戒带 alert/severe、rank 小标签 title 为状态名', () => {
+  const h = setup();
+  const st = makeState();
+  st.stats[0].alerts = [{ label: '透支', effect: '随时倒下', severe: true }];
+  h.s.renderTopAttrs(st);
+  const chips = h.doc.getElementById('top-attrs').querySelectorAll('.stat-chip');
+  assert.equal(chips.length, 2);
+  assert.ok(chips[0].classList.contains('alert'));
+  assert.ok(chips[0].classList.contains('severe'));
+  assert.equal(chips[1].getAttribute('title'), '境界');
+  assert.match(chips[1].textContent, /筑基/, 'rank 显示阶名');
+});
