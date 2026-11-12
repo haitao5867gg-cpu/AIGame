@@ -1523,10 +1523,10 @@
   // 发起流式回合：body 为完整请求体对象（{action} 或 {timeSkip}），
   // delta 边到边显示，返回最后的 result（与普通 /turn 响应体相同）。
   // 断流看门狗：服务器每 10 秒发一行心跳。手机切后台回来后，连接常常「看着还在、其实已死」，
-  // 这时不等系统超时：回到前台 6 秒内没收到任何字节、或连续 35 秒没动静，就主动断开，
+  // 这时不等系统超时：回到前台 12 秒内没收到任何字节、或连续 35 秒没动静，就主动断开，
   // 交给 sendAction 用同一个 clientTurnId 去取回（服务器写完了直接拿结果，不会再写一遍）。
   var STREAM_SILENCE_MS = 35000;
-  var STREAM_RESUME_MS = 6000;
+  var STREAM_RESUME_MS = 12000; // 比服务器心跳间隔（10 秒）长，活着的连接不会被误断
   async function streamTurn(body, block) {
     var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     var lastByte = Date.now();
