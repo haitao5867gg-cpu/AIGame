@@ -677,7 +677,8 @@
     var sc = Math.max(15, Number(scale) || 0);
     var cx = 100, cy = 92, R = 70;
     var svg = svgNode('svg');
-    svg.setAttribute('viewBox', '0 0 200 180');
+    // 左右各多留 34 的边距放顶点外侧的「属性名 值」标签，避免右侧标签被裁掉。
+    svg.setAttribute('viewBox', '-34 0 268 184');
     function point(i, radius) {
       var ang = -Math.PI / 2 + i * (Math.PI / 3); // 第一轴正上方，顺时针
       return [cx + radius * Math.cos(ang), cy + radius * Math.sin(ang)];
