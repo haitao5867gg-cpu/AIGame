@@ -1376,6 +1376,61 @@ function buildLedgerMessages(state, ctx) {
   ];
 }
 
+// ---- 叙事 v3：章节收尾 ----
+function chapterRecordsText(records) {
+  return (Array.isArray(records) ? records : [])
+    .map((e) => '第 ' + e.turn + ' 回合　你：' + (e.action || '（未填写）') + '\n' + (e.narration || ''))
+    .join('\n\n');
+}
+
+// 一章写完：章摘要会给玩家看（章节回顾、导出成书的目录），所以只依据正文。
+function buildChapterCloseMessages(state, records, card) {
+  const s = state || {};
+  const b = s.bible || {};
+  const idx = s.chapter && s.chapter.index ? s.chapter.index : 1;
+  const system = [
+    '你是连载小说的编辑。下面是刚写完的一章正文，读者都读过。请为这一章做收尾记录，只依据正文，不写正文里没有的东西，不剧透作者的设定。',
+    '只输出 JSON：{"title":"≤10 字的章名（可以沿用原章名，也可以按实际内容改得更贴切）","summary":"150~300 字，按发生顺序写清本章发生了什么、人物关系和局面有什么变化","bridge":"≤30 字的承接点：下一章从什么状态接着写"}',
+  ].join('\n');
+  const user = [
+    section('书', '《' + (b.title || '') + '》第 ' + idx + ' 章' + (card && card.title ? '（原章名《' + card.title + '》）' : '')),
+    section('本章正文', chapterRecordsText(records) || '（无）'),
+  ].join('\n\n');
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+// 规划下一章：从承接点接着写；读者实际走出来的方向优先，不强行拉回原计划。
+function buildNextChapterMessages(state, ctx) {
+  const s = state || {};
+  const c = ctx || {};
+  const o = s.outline || {};
+  const v = o.volume || {};
+  const nextIndex = (s.chapter && s.chapter.index ? s.chapter.index : 1) + 1;
+  const system = [
+    '你是这部互动连载小说的作者，正在规划下一章。读者扮演主角，每回合决定主角做什么。',
+    '规则：从上一章的承接点接着写；读者实际走出来的方向是真的，不要强行拉回原来的计划，原计划里的后续章卡只作参考；',
+    '卷节拍表里已经发生的拍就往下推进；该收的伏笔安排在这一章收掉；章卡只写读者能感知的信号，不写作者的内部真相；节点是建议不是必须；一章大约 4~6 回合。',
+    '只输出一张章卡 JSON：{"title":"≤10 字","goal":"本章戏剧目标","start":"起点情形","beats":["2~4 个可能的推进节点"],"end":"可能的终点","question":"章末留给读者的问题","avoid":["本章不要做的事，≤3 条"]}',
+  ].join('\n');
+  const chapters = (Array.isArray(s.chapters) ? s.chapters : [])
+    .map((ch) => '第 ' + ch.index + ' 章《' + (ch.title || '') + '》：' + (ch.summary || '') + (ch.bridge ? '（承接：' + ch.bridge + '）' : ''))
+    .join('\n');
+  const later = (Array.isArray(o.chapters) ? o.chapters : []).filter((card) => card.index >= nextIndex)
+    .map((card) => '第 ' + card.index + ' 章《' + card.title + '》：' + card.goal + '；' + (card.beats || []).join('；'))
+    .join('\n');
+  const user = [
+    section('作者笔记', ['主线：' + (o.premise || ''), '核心谜底：' + (o.core_truth || ''), '主角成长：' + (o.hero_arc || ''),
+      '卷节拍：承诺 ' + (v.promise || '') + '；起因 ' + (v.catalyst || '') + '；危机 ' + (v.crises || []).join(' / ') + '；中段反转 ' + (v.midpoint || '') + '；最低谷 ' + (v.low || '') + '；兑现 ' + (v.payoff || '') + '；钩子 ' + (v.hook || '')].join('\n')),
+    section('已经写完的章', chapters || '（无）'),
+    section('最近的正文', chapterRecordsText(c.recentRecords) || '（无）'),
+    section('还没解开的线索', (Array.isArray(s.threads) ? s.threads : []).join('；') || '无'),
+    (c.dueThreads && c.dueThreads.length) ? section('该在下一章收掉的伏笔', c.dueThreads.join('；')) : '',
+    later ? section('原计划里的后续章卡（参考）', later) : '',
+    '请规划第 ' + nextIndex + ' 章。',
+  ].filter(Boolean).join('\n\n');
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -1395,6 +1450,8 @@ module.exports = {
   buildTurnMessages,
   buildWriterMessages,
   buildLedgerMessages,
+  buildChapterCloseMessages,
+  buildNextChapterMessages,
   WRITER_RULES,
   buildOutlineMessages,
   OUTLINE_RULES,

@@ -3,6 +3,7 @@
 const { isInternalReject, computeOmen, computeDanger, cloneState } = require('./util.js');
 const { publicStats } = require('./stats.js');
 const npcs = require('../npcs.js');
+const outlineMod = require('../outline.js');
 
 // ---- 对外视图：apex / Key / 私有档案绝不出现在接口返回里 ----
 
@@ -24,6 +25,12 @@ function toPublicApplied(applied) {
 
 function toPublicState(state) {
   const out = cloneState(state || {});
+  // 叙事 v3：只公开当前章的章名（章卡其余内容是作者笔记，随 outline 一起删除）。
+  const curCard = outlineMod.currentCard(out);
+  if (out.chapter && typeof out.chapter === 'object') {
+    out.chapter = { index: out.chapter.index, startTurn: out.chapter.startTurn, turns: out.chapter.turns || 0 };
+    out.chapterTitle = curCard && curCard.title ? curCard.title : '';
+  }
   for (const key of Object.keys(out)) {
     // pendingEventTheme 是提前锁定的内部主题，绝不能以主题名暴露给玩家；
     // twist 是导演的强制转折信号，只写进 events.jsonl，绝不出现在公开状态里。

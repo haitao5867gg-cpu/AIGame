@@ -194,6 +194,9 @@ function toPublicLogRecord(rec) {
   const ts = publicTimeSkip(e.timeSkip);
   return {
     ...(ts ? { timeSkip: ts } : {}),
+    ...(e.chapter && typeof e.chapter === 'object' && Number.isSafeInteger(e.chapter.index)
+      ? { chapter: { index: e.chapter.index, title: typeof e.chapter.title === 'string' ? e.chapter.title : '' } }
+      : {}),
     ...(e.applied && Array.isArray(e.applied.suggestions)
       ? { suggestions: e.applied.suggestions.filter((x) => typeof x === 'string').slice(0, 3) }
       : {}),
@@ -1339,6 +1342,11 @@ function createGame(cfg, dataDir) {
 
     store.backupForUndo(dataDir, worldId);
     store.saveWorld(dataDir, finalState);
+    // 一章写完（记账判定收章，或本章已写满 7 节）：排在本回合之后、下一回合之前收章并规划下一章。
+    // 不 await：玩家先拿到本回合结果；同一世界的下一回合会在锁里排在收章后面。
+    if (!finalState.awaitingRebirth && (finalState.chapter.pendingClose || finalState.chapter.turns >= 7)) {
+      store.withWorldLock(worldId, () => closeChapter(worldId)).catch(() => {});
+    }
 
     const usageAgg = { prompt_tokens: 0, completion_tokens: 0 };
     for (const u of usages) {
@@ -1389,6 +1397,65 @@ function createGame(cfg, dataDir) {
     result.badges = badgesFromApplied(resolved.result.applied, resolved.result.stats_drains);
     if (result.state) withUndoFlag(result.state, finalState, worldId);
     return result;
+  }
+
+  // 收章：章摘要（快速模型，只依据正文，公开）+ 规划下一章章卡（写正文的强模型，私有）。
+  // 已在世界锁内执行（由 takeStoryTurn 排队）。任何失败都吞掉：摘要缺失也照样换章，章卡用兜底。
+  // 不写 .prev 撤回快照：撤回本回合时会回到回合开始前的状态，收章一并撤销。
+  async function closeChapter(worldId) {
+    try {
+      const state = loadState(worldId);
+      if (!state || !state.chapter || state.awaitingRebirth) return;
+      if (!(state.chapter.pendingClose || state.chapter.turns >= 7)) return;
+      const usages = [];
+      const idx = state.chapter.index;
+      const card = outlineMod.currentCard(state);
+      const events = store.readEvents(dataDir, worldId);
+      const records = visibleEventRecords(events).filter((e) => e && e.type !== 'undo'
+        && Number(e.life) === Number(state.life) && typeof e.narration === 'string' && e.narration
+        && e.turn >= state.chapter.startTurn && e.turn <= state.turn);
+      let close = null;
+      try {
+        const lc = writingMode.ledgerCall(cfg);
+        const cp = await callParsed(llm.PURPOSES.CHAPTER_CLOSE, lc.model,
+          prompts.buildChapterCloseMessages(state, records, card), { index: idx }, usages, { extraBody: lc.extraBody });
+        close = cp.parsed;
+      } catch (_) { close = null; }
+      const title = (close && typeof close.title === 'string' && close.title.trim()) ? close.title.trim().slice(0, 10)
+        : ((card && card.title) || ('第' + idx + '章'));
+      const entry = {
+        index: idx,
+        title,
+        fromTurn: state.chapter.startTurn,
+        toTurn: state.turn,
+        summary: close && typeof close.summary === 'string' ? close.summary.trim().slice(0, 400) : '',
+        bridge: close && typeof close.bridge === 'string' ? close.bridge.trim().slice(0, 40) : '',
+      };
+      state.chapters = (Array.isArray(state.chapters) ? state.chapters : []).filter((c) => c && c.index !== idx).concat([entry]);
+      // 规划下一章。
+      let nextCard = null;
+      try {
+        const wc = writingMode.writingCall(cfg, 'fine');
+        const np = await callParsed(llm.PURPOSES.CHAPTER_PLAN, wc.model,
+          prompts.buildNextChapterMessages(state, { recentRecords: records.slice(-2), dueThreads: dueThreadsOf(state) }),
+          { index: idx + 1 }, usages, { extraBody: wc.extraBody });
+        nextCard = outlineMod.normalizeChapterCard(np.parsed, idx + 1);
+      } catch (_) { nextCard = null; }
+      const outline = state.outline && typeof state.outline === 'object' ? state.outline : { chapters: [] };
+      const chapters = Array.isArray(outline.chapters) ? outline.chapters.slice() : [];
+      if (!nextCard) {
+        nextCard = chapters.find((c) => c && c.index === idx + 1)
+          || { index: idx + 1, title: '第' + (idx + 1) + '章', goal: '顺着眼下的局面继续', start: entry.bridge || '', beats: [], end: '', question: '', avoid: [] };
+      }
+      const pos = chapters.findIndex((c) => c && c.index === idx + 1);
+      if (pos >= 0) chapters[pos] = nextCard; else chapters.push(nextCard);
+      outline.chapters = chapters;
+      state.outline = outline;
+      state.chapter = { index: idx + 1, startTurn: state.turn + 1, turns: 0 };
+      store.saveWorld(dataDir, state);
+    } catch (_) {
+      // 收章失败不影响玩家：下一回合还是当前章，满 7 节会再试。
+    }
   }
 
   // ---- 撤回上一步 ----
