@@ -57,10 +57,13 @@ test('≥860px：#app 最大宽 1440px、.stream 改为 flex:1+min-height:0 且�
   assert.match(m860, /max-width:\s*44em/, '正文列约 44 汉字');
 });
 
-test('≥1200px：当前回合插图在右侧栏顶部 sticky、历史回合为 80px 小缩略图', () => {
+test('≥1200px：当前回合插图在右侧栏顶部但跟随面板滚动（不再 sticky）、历史回合为 80px 小缩略图', () => {
   assert.ok(m1200.length > 0, '应能抽出 ≥1200px 规则体');
-  assert.match(m1200, /#scene-rail\{[^}]*position:\s*sticky/, '当前回合插图 sticky 在侧栏');
-  assert.match(m1200, /#scene-rail\{[^}]*top:\s*0/, '侧栏最上方');
+  assert.match(m1200, /#scene-rail\{[^}]*display:\s*block/, '当前回合插图仍在右栏顶部显示');
+  assert.doesNotMatch(m1200, /#scene-rail\{[^}]*position:\s*sticky/, '不再 sticky，跟着面板一起滚');
+  assert.match(m1200, /#scene-rail\{[^}]*margin:\s*0 0 12px/, '保留 12px 下间距');
+  assert.match(m1200, /#scene-rail:empty\{[^}]*display:\s*none/, '空时隐藏仍保留');
+  assert.match(m1200, /#scene-rail \.scene-frame\{[^}]*max-height:\s*220px/, '插图尺寸仍保留');
   assert.match(m1200, /\.scene-current\{[^}]*display:\s*none/, '当前回合正文里不再插图');
   assert.match(m1200, /\.scene-history\{[^}]*height:\s*80px/, '历史回合缩略图高 80px');
 });

@@ -7,6 +7,9 @@
     });
     // 属性说明卡：全局点击（含手机轻点）统一处理弹卡 / 切换 / 点空白关闭。
     document.addEventListener('click', onDocumentClick);
+    // 印记 / 线索 / 传闻说明卡：点条目弹卡、点卡片外 / Escape 关闭、Enter / 空格触发。
+    document.addEventListener('click', onClueDocumentClick);
+    document.addEventListener('keydown', onClueKeyDown);
     // 点击大图查看器（再点）关闭
     $('image-viewer').addEventListener('click', closeImageViewer);
     $('identity-dice').addEventListener('click', onIdentityDice);

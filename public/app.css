@@ -773,8 +773,8 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
 
 /* ===== 宽屏（≥1200px）：当前回合插图移到右侧栏顶部，历史回合留小缩略图 ===== */
 @media(min-width:1200px){
-  /* 当前回合插图：右侧栏最上方 sticky，点击放大看原图（沿用 .scene-img 监听） */
-  #scene-rail{display:block;position:sticky;top:0;z-index:2;margin:0 0 12px}
+  /* 当前回合插图：右侧栏最上方，跟着面板一起滚动（不再 sticky），点击放大看原图（沿用 .scene-img 监听） */
+  #scene-rail{display:block;margin:0 0 12px}
   #scene-rail:empty{display:none}
   #scene-rail .scene-frame{width:100%;max-height:220px}
   /* 正文列保持整宽：当前回合不再在叙事块上方插图 */
@@ -1231,4 +1231,36 @@ body[data-genre] .g-chapter{color:#f3eee4;background:rgba(0,0,0,.34);
 @media(max-width:600px){
   .char-origin-pick{min-height:40px}
   .origin-card{min-height:40px}
+}
+
+/* ===== 印记 / 线索 / 传闻说明卡：定位与关闭方式照 #attr-tip ===== */
+.clue-tip{position:fixed;z-index:70;left:50%;top:64px;transform:translateX(-50%);
+  width:320px;max-width:88vw;background:var(--panel);border:1px solid var(--accent);
+  border-radius:10px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.55);
+  font-family:var(--sans);font-size:13px;line-height:1.7;color:var(--ink)}
+.clue-tip-name{font-size:15px;font-weight:600;color:var(--accent-2);margin-bottom:4px}
+.clue-tip-desc{color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.clue-tip-note{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
+  color:var(--muted);font-size:12px}
+.clue-tip-turn{margin-top:6px;color:var(--accent-2);font-size:12px}
+.clue-tip-jump{margin-top:8px;min-height:40px;padding:6px 12px;cursor:pointer;
+  background:var(--bg-2);color:var(--ink);border:1px solid var(--accent-2);
+  border-radius:8px;font-family:var(--sans);font-size:13px}
+.clue-tip-hint{margin-top:8px;color:var(--muted);font-size:12px}
+
+/* 可点的印记 / 线索 / 传闻：指针 + hover / focus-visible 边框高亮 */
+.mark-chip[data-clue],.thread-item[data-clue],.rumor-item[data-clue]{cursor:pointer}
+.mark-chip[data-clue]:hover,.thread-item[data-clue]:hover,.rumor-item[data-clue]:hover,
+.mark-chip[data-clue]:focus-visible,.thread-item[data-clue]:focus-visible,.rumor-item[data-clue]:focus-visible{
+  border-color:var(--accent-2);outline:2px solid var(--accent-2);outline-offset:1px}
+
+/* 跳到那一回合：目标行动行短暂静态高亮，尊重 prefers-reduced-motion 不做动画 */
+.flash-turn{outline:2px solid var(--accent-2);outline-offset:3px;
+  background:rgba(224,114,95,.14);border-radius:6px;
+  transition:background-color .3s ease,outline-color .3s ease}
+@media(prefers-reduced-motion:reduce){.flash-turn{transition:none;animation:none}}
+
+/* 手机上可点条目 ≥40px 高 */
+@media(max-width:600px){
+  .mark-chip[data-clue],.thread-item[data-clue],.rumor-item[data-clue]{min-height:40px}
 }

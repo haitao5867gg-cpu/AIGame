@@ -111,7 +111,7 @@ test('HANDOFF 第 6 节不倒退：手机整页滚动 / 16px 输入 / 朗读按�
   assert.match(m600, /\.tts-read-btn[^{]*\{[^}]*min-height\s*:\s*40px/, '朗读按钮仍 ≥40px');
   assert.match(m600, /\.game-head\s*\{[^}]*position\s*:\s*sticky/, '顶栏仍 sticky');
   assert.match(m600, /\.game-head\s*\{[^}]*flex-wrap\s*:\s*nowrap/, '顶栏仍单行');
-  assert.match(css, /#scene-rail\{[^}]*position:sticky/, '电脑当前插图仍在右侧栏顶部 sticky');
+  assert.doesNotMatch(css, /#scene-rail\{[^}]*position:sticky/, '电脑当前插图不再 sticky，跟随右面板滚动');
 });
 
 test('新段落并入文件末尾，且保留 ::after 结构、纸页漏网覆盖只作用于纸页', () => {

@@ -575,6 +575,10 @@
     // 重生生成的「新一世开场」是该世第一条叙事，回放时用开场样式显示。
     if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
+    // 回放：/log 每条都有 turn，给本回合行动行标上，供「跳到那一回合」定位。
+    if (rec.action && rec.turn != null && turnStartEl) {
+      turnStartEl.setAttribute('data-turn', String(rec.turn));
+    }
     if (rec.event) appendEventCard(rec.event);
     // 时光推进：在行动行之后、叙事之前插一条分隔，label 非字符串时不插。
     if (rec.timeSkip && typeof rec.timeSkip.label === 'string') {
@@ -1004,6 +1008,18 @@
     });
   }
 
+  // 可点的印记 / 线索 / 传闻：data-clue-* 供 #clue-tip 说明卡读取；老数据没有回合号则不标，当未知。
+  function clueChip(tag, cls, display, kind, text, turn) {
+    var n = el(tag, cls, display);
+    n.setAttribute('data-clue', '1');
+    n.setAttribute('data-clue-kind', kind);
+    n.setAttribute('data-clue-text', String(text == null ? '' : text));
+    if (turn != null && turn !== '') n.setAttribute('data-clue-turn', String(turn));
+    n.setAttribute('role', 'button');
+    n.setAttribute('tabindex', '0');
+    return n;
+  }
+
   function renderPanel(s) {
     var panel = $('panel');
     panel.textContent = '';
@@ -1018,6 +1034,10 @@
     var attrs = (s.character && s.character.attrs) || {};
     var danger = isDanger(s);
     var stats = Array.isArray(s.stats) ? s.stats : [];
+    // 公开状态新增 clueMeta：印记 / 线索文本 → 出现的回合号；老数据没有就当未知。
+    var clueMeta = s.clueMeta || {};
+    var markTurns = clueMeta.marks || {};
+    var threadTurns = clueMeta.threads || {};
 
     // ---- 角色卡 ----
     var card = el('div', 'char-card');
@@ -1102,7 +1122,9 @@
     charPane.appendChild(itemGrid);
     charPane.appendChild(el('div', 'pane-h', '身上的印记'));
     var marks = (s.character && s.character.marks) || [];
-    if (marks.length) marks.forEach(function (m) { charPane.appendChild(el('span', 'mark-chip', m)); });
+    if (marks.length) marks.forEach(function (m) {
+      charPane.appendChild(clueChip('span', 'mark-chip', m, 'mark', m, markTurns[m]));
+    });
     else charPane.appendChild(el('span', 'muted', '（尚无印记）'));
     panel.appendChild(charPane);
 
@@ -1140,13 +1162,15 @@
     var threads = s.threads || [];
     cluesPane.appendChild(el('div', 'pane-h', '未解之谜'));
     if (threads.length) {
-      threads.forEach(function (t) { cluesPane.appendChild(el('div', 'thread-item', '· ' + t)); });
+      threads.forEach(function (t) {
+        cluesPane.appendChild(clueChip('div', 'thread-item', '· ' + t, 'thread', t, threadTurns[t]));
+      });
     } else cluesPane.appendChild(el('div', 'muted', '（尚无未解之谜）'));
     var rumors = s.rumors || [];
     cluesPane.appendChild(el('div', 'pane-h', '坊间传闻'));
     if (rumors.length) {
       rumors.slice().reverse().forEach(function (r) {
-        cluesPane.appendChild(el('div', 'rumor-item', '· ' + (r.text || '')));
+        cluesPane.appendChild(clueChip('div', 'rumor-item', '· ' + (r.text || ''), 'rumor', r.text || '', r.turn));
       });
     } else cluesPane.appendChild(el('div', 'muted', '（尚无传闻）'));
     var facts = s.facts || [];
@@ -1431,6 +1455,10 @@
     var start = turnStartOr(narr.wrap);
     if (start) {
       turnStartEl = start;
+      // 新回合（含时光推进）：拿到 res.state.turn 后补到本回合那条 .action-line 上。
+      if (turnStartEl.classList && turnStartEl.classList.contains('action-line') && res.state.turn != null) {
+        turnStartEl.setAttribute('data-turn', String(res.state.turn));
+      }
       scrollToTurnStart(start);
       armTurnAlign(start);
     }

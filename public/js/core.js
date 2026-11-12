@@ -257,6 +257,133 @@ function relTime(ts, now) {
     if (action === 'hide') hideAttrTip();
   }
 
+  /* CLUE_TIP_HELPERS_START */
+  // 印记 / 线索 / 传闻说明卡：新建 #clue-tip，定位与关闭方式照 #attr-tip。
+  // kind: 'mark' | 'thread' | 'rumor'；turn 为出现的回合号，老数据没有时传 null（当未知）。
+  var CLUE_TIP_META = {
+    mark:   { title: '身上的印记', note: '会一直影响后面的剧情，直到了结' },
+    thread: { title: '未解之谜',   note: '还没解开，后面会有进展' },
+    rumor:  { title: '坊间传闻',   note: '真假难辨的风声' },
+  };
+  var CLUE_TIP_NO_TURN_HINT = '这一回合较早，往上翻翻能找到';
+  var clueTipOpen = false; // 卡片是否开着（点卡片外 / Escape 关闭）
+
+  // 纯逻辑：拼出卡片该显示的文案，不碰 DOM，便于单测。
+  function clueTipContent(kind, text, turn) {
+    var meta = CLUE_TIP_META[kind] || CLUE_TIP_META.thread;
+    var n = (turn != null && turn !== '' && Number.isFinite(Number(turn))) ? Number(turn) : null;
+    var hasTurn = n !== null;
+    return {
+      title: meta.title,
+      body: String(text == null ? '' : text),
+      note: meta.note,
+      hasTurn: hasTurn,
+      turn: n,
+      turnText: hasTurn ? '第 ' + n + ' 回合出现' : '',
+      jumpLabel: '跳到那一回合',
+    };
+  }
+
+  // 纯逻辑：按是否找到目标行动行决定跳转动作。
+  function clueJumpAction(foundLine) {
+    return foundLine ? { found: true } : { found: false, hint: CLUE_TIP_NO_TURN_HINT };
+  }
+
+  function hideClueTip() {
+    var tip = $('clue-tip');
+    if (tip) tip.hidden = true;
+    clueTipOpen = false;
+  }
+
+  function showClueTip(kind, text, turn) {
+    var tip = $('clue-tip');
+    if (!tip) return;
+    var c = clueTipContent(kind, text, turn);
+    tip.textContent = '';
+    tip.appendChild(el('div', 'clue-tip-name', c.title));
+    tip.appendChild(el('div', 'clue-tip-desc', c.body));
+    tip.appendChild(el('div', 'clue-tip-note', c.note));
+    if (c.hasTurn) {
+      tip.appendChild(el('div', 'clue-tip-turn', c.turnText));
+      var jump = el('button', 'clue-tip-jump', c.jumpLabel);
+      jump.type = 'button';
+      jump.setAttribute('data-clue-turn', String(c.turn));
+      jump.addEventListener('click', function (e) {
+        if (e.stopPropagation) e.stopPropagation();
+        jumpToClueTurn(c.turn);
+      });
+      tip.appendChild(jump);
+    }
+    tip.hidden = false;
+    clueTipOpen = true;
+  }
+
+  // 跳到某回合：在 #stream 里找 data-turn=N 的 .action-line，找到就滚过去并短暂高亮。
+  function jumpToClueTurn(turn) {
+    var tip = $('clue-tip');
+    var stream = $('stream');
+    var lines = stream ? stream.querySelectorAll('.action-line') : [];
+    var target = null;
+    for (var i = 0; i < lines.length; i++) {
+      if (String(lines[i].getAttribute('data-turn')) === String(turn)) { target = lines[i]; break; }
+    }
+    var act = clueJumpAction(!!target);
+    if (!act.found) {
+      var jump = tip && tip.querySelector('.clue-tip-jump');
+      if (jump && jump.parentNode) {
+        jump.parentNode.replaceChild(el('div', 'clue-tip-hint', act.hint), jump);
+      }
+      return;
+    }
+    // 电脑在 #stream 内滚、手机整页滚，复用 scrollToTurnStart。
+    if (typeof scrollToTurnStart === 'function') scrollToTurnStart(target);
+    target.classList.add('flash-turn');
+    setTimeout(function () { target.classList.remove('flash-turn'); }, 1500);
+    hideClueTip();
+    // 手机：跳过去后顺手收起角色面板抽屉，别挡着正文。
+    if (window.innerWidth <= 600) {
+      var panel = $('panel');
+      if (panel) panel.dataset.open = 'false';
+      syncBodyScrollLock();
+    }
+  }
+
+  // 从点击目标向上找带 data-clue 的可点条目。
+  function closestClue(node) {
+    while (node && node !== document) {
+      if (node.getAttribute && node.getAttribute('data-clue')) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  // 全局点击：点印记/线索/传闻 → 弹卡；点卡内 → 保持；点卡片外 → 关闭。
+  function onClueDocumentClick(e) {
+    var tip = $('clue-tip');
+    if (tip && tip.contains(e.target)) return;
+    var chip = closestClue(e.target);
+    if (chip) {
+      showClueTip(chip.getAttribute('data-clue-kind'),
+                  chip.getAttribute('data-clue-text'),
+                  chip.getAttribute('data-clue-turn'));
+      return;
+    }
+    if (clueTipOpen) hideClueTip();
+  }
+
+  // Enter / 空格 触发（role=button 元素），Escape 关闭。
+  function onClueKeyDown(e) {
+    if (e.key === 'Escape' || e.key === 'Esc') { hideClueTip(); return; }
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    var chip = closestClue(e.target);
+    if (!chip) return;
+    if (e.preventDefault) e.preventDefault();
+    showClueTip(chip.getAttribute('data-clue-kind'),
+                chip.getAttribute('data-clue-text'),
+                chip.getAttribute('data-clue-turn'));
+  }
+  /* CLUE_TIP_HELPERS_END */
+
   /* UNDO_HELPERS_START */
   // 纯逻辑：撤回按钮「二次确认」状态机。
   // armed=false（未确认）→ 进入确认态、不发请求；armed=true（已确认）→ 真正发起 /undo。
