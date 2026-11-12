@@ -23,6 +23,7 @@ const PURPOSES = Object.freeze({
   ITEMS_INFO: 'items-info', // 老物品补介绍（GET /items 时批量生成）
   GENRE: 'genre',       // 老世界补判题材（ensureGenre 的短调用）
   SUGGEST: 'suggest',   // 玩家点「灵感」生成下一步建议
+  STATS: 'stats',       // 老世界补设计专属状态（GET /stats 时额外调用）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -264,6 +265,29 @@ function mockWorld(m) {
         now: '此刻你在一条搁浅的船上醒来，雾里传来断续的钟声，手里那封无字信还不知要交给谁。你该先看清四周，再决定要不要向提灯走来的守夜人报出名字。',
       },
       eventThemes: ['魔族入侵', '宫廷政变', '天灾', '秘境开启', '商路断绝', '古神低语'],
+      // 开局专属状态：2 个数值槽 + 1 个等级阶梯，名字带本世界（玄幻 / 灰烬港）的味道，
+      // 让 LLM_MOCK 建出的世界也走真实设计路径（engine.createWorld 会消毒成 state.stats）。
+      stats: [
+        {
+          name: '灵力', kind: 'gauge', icon: '✦', desc: '驱使术法的余地，运功耗去、打坐回补',
+          max: 100, start: 68, drift: -2,
+          warn: [
+            { below: 30, label: '灵力不济', effect: '术法难以施展，强行运功会反噬' },
+            { below: 10, label: '灵力枯竭', effect: '经脉刺痛、提不起劲', drain: '体魄' },
+          ],
+        },
+        {
+          name: '神识', kind: 'gauge', icon: '👁', desc: '心神清明程度，撞见怪事会损耗',
+          max: 100, start: 80, drift: 0,
+          warn: [
+            { below: 25, label: '心神不宁', effect: '开始出现幻听幻视，难辨真假' },
+          ],
+        },
+        {
+          name: '境界', kind: 'rank', icon: '☯', desc: '修行层次，突破需机缘与代价',
+          ranks: ['凡人', '炼气', '筑基', '金丹', '元婴', '化神'], start: 1,
+        },
+      ],
     },
     apex: {
       title: '隐秘王冠',
@@ -434,6 +458,13 @@ function mockTurn(m) {
   }
   // 时光推进：跳跃结束时的时段，供引擎落定时钟（其余字段不变）。
   if (timeSkip) out.landing_period = '黄昏';
+  // 世界专属状态：能拿到数值槽名字时，偶数回合 +10、奇数回合 -5，让 mock 回合走
+  // 真实的 stats_diff → 引擎结算链路；拿不到（老存档 / 无数值槽）就不输出该字段。
+  const statNames = Array.isArray(m && m.statNames)
+    ? m.statNames.filter((n) => typeof n === 'string' && n) : [];
+  if (statNames.length) {
+    out.stats_diff = { [statNames[0]]: turn % 2 === 0 ? 10 : -5 };
+  }
   return out;
 }
 
@@ -508,6 +539,32 @@ function mockItemsInfo(m) {
   return out;
 }
 
+// 老世界补设计专属状态：按题材给 2 个合法数值槽（名字随题材变化），
+// 让 LLM_MOCK 下 GET /stats 走真实的「模型设计 → normalizeStatsSpec 消毒 → 保存」链路。
+function mockStats(m) {
+  const genre = (m && m.genre) || 'general';
+  const byGenre = {
+    xuanhuan: [['灵力', '✦'], ['神识', '👁']],
+    urban: [['精力', '⚡'], ['心情', '☀']],
+    game: [['能量', '⚡'], ['专注', '◎']],
+    horror: [['理智', '👁'], ['体力', '❤']],
+    cozy: [['心情', '☀'], ['体力', '❤']],
+    general: [['精力', '⚡'], ['心情', '☀']],
+  };
+  const names = byGenre[genre] || byGenre.general;
+  const g = (name, icon, start, drift, label, effect) => ({
+    name, kind: 'gauge', icon, desc: `代表${name}的当前余量，会随行动与时段变化`,
+    max: 100, start, drift,
+    warn: [{ below: 25, label, effect }],
+  });
+  return {
+    stats: [
+      g(names[0][0], names[0][1], 60, -2, '偏低', '状态偏低，行动与叙事都要体现吃力'),
+      g(names[1][0], names[1][1], 75, 0, '不稳', '状态起伏，判断容易出偏差'),
+    ],
+  };
+}
+
 function mockFor(purpose, m) {
   switch (purpose) {
     case 'npc_memory': return { npc_updates: [] };
@@ -521,6 +578,7 @@ function mockFor(purpose, m) {
     case PURPOSES.ITEMS_INFO: return mockItemsInfo(m);
     case PURPOSES.GENRE: return mockGenre(m);
     case PURPOSES.SUGGEST: return mockSuggest(m);
+    case PURPOSES.STATS: return mockStats(m);
     default: return mockTurn(m);
   }
 }

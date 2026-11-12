@@ -113,7 +113,8 @@ function chapterEventWindow(events, nextTurn, current) {
 }
 
 // 把 applied（引擎消毒后的 diff）转成给前端展示的小徽章（公开数据，不含内部字段）。
-function badgesFromApplied(applied) {
+// statsDrains 可选：回合结果 / 事件记录里的 stats_drains，用于生成警戒扣属性的 drain 徽章。
+function badgesFromApplied(applied, statsDrains) {
   const a = applied && typeof applied === 'object' ? applied : {};
   const badges = [];
   const diff = a.state_diff && typeof a.state_diff === 'object' ? a.state_diff : {};
@@ -122,6 +123,13 @@ function badgesFromApplied(applied) {
     const d = Number(diff[key]);
     if (!Number.isFinite(d) || d === 0) continue;
     badges.push({ type: 'attr', name: key, delta: d });
+  }
+  // 世界专属状态：本回合直接造成的变化（引擎已消毒、键为已有状态名）。
+  const sd = a.stats_diff && typeof a.stats_diff === 'object' ? a.stats_diff : {};
+  for (const name of Object.keys(sd)) {
+    const d = Number(sd[name]);
+    if (!Number.isFinite(d) || d === 0) continue;
+    badges.push({ type: 'stat', name, delta: d });
   }
   for (const name of Array.isArray(a.items_add) ? a.items_add : []) {
     if (typeof name === 'string' && name) badges.push({ type: 'item-add', name });
@@ -134,6 +142,16 @@ function badgesFromApplied(applied) {
     const d = Number(npc[name]);
     if (!Number.isFinite(d) || d === 0) continue;
     badges.push({ type: 'npc', name, delta: d });
+  }
+  // 生效警戒的后果：每回合扣 1 点基础属性（name 用属性名，label 用警戒状态名）。
+  for (const dr of Array.isArray(statsDrains) ? statsDrains : []) {
+    if (!dr || typeof dr !== 'object') continue;
+    const attr = dr.attr;
+    if (typeof attr !== 'string' || !engine.ATTRS.includes(attr)) continue;
+    badges.push({
+      type: 'drain', name: attr, delta: -1,
+      label: typeof dr.label === 'string' ? dr.label : '',
+    });
   }
   return badges;
 }
@@ -177,7 +195,7 @@ function toPublicLogRecord(rec) {
     narration: typeof e.narration === 'string' ? e.narration : '',
     // 重生开场是独立的一条公开叙事，前端进入新一世时按开场样式回放。
     ...(e.rebirthOpening === true ? { rebirthOpening: true } : {}),
-    badges: badgesFromApplied(e.applied),
+    badges: badgesFromApplied(e.applied, e.stats_drains),
     event: ev ? {
       theme: ev.theme, title: ev.title, desc: ev.desc, startedTurn: ev.startedTurn,
     } : null,
@@ -660,6 +678,38 @@ function createGame(cfg, dataDir) {
     });
   }
 
+  // 老世界补设计专属状态：世界锁内读状态，已有非空 state.stats 直接返回公开视图；
+  // 否则用回合模型一次调用补设计，经 normalizeStatsSpec 消毒后写入并保存。
+  // 任何异常（含 LLM 报错 / 落库失败）都不抛给调用方：最坏返回 []；世界不存在返回 null。
+  async function ensureStats(worldId) {
+    try {
+      store.assertWorldId(worldId);
+      return await store.withWorldLock(worldId, async () => {
+        const state = loadState(worldId);
+        if (!state) return null;
+        if (Array.isArray(state.stats) && state.stats.length) {
+          return engine.publicStats(state.stats);
+        }
+        let spec = null;
+        try {
+          const rp = await callParsed(
+            'stats', turnModel,
+            prompts.buildStatsMessages(state),
+            { genre: state.genre }, [],
+          );
+          spec = rp.parsed && rp.parsed.stats;
+        } catch (_) { /* LLM 报错 / 解析失败 → spec 保持 null，交给题材兜底 */ }
+        // normalizeStatsSpec(null, genre) 本身会给题材兜底，故失败路径也有合法设计。
+        const cleaned = engine.normalizeStatsSpec(spec, state.genre);
+        state.stats = cleaned;
+        try { store.saveWorld(dataDir, state); } catch (_) { /* 落库失败也不抛错 */ }
+        return engine.publicStats(cleaned);
+      });
+    } catch (_) {
+      return [];
+    }
+  }
+
   // 老物品补介绍：世界锁内找出 character.items 中缺介绍的物品，用回合模型一次批量生成，
   // 校验后写回并保存；任何失败都返回现有介绍，绝不抛错影响游戏。
   // 返回按 character.items 顺序的 [{name,desc,type}]，供 GET /items 直接带出。
@@ -854,6 +904,11 @@ function createGame(cfg, dataDir) {
       const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
 
       // 1) 主回合调用：叙事 + 提议 + （开启事件时）event / （结算事件时）event_check。
+      // 数值槽名字列表：供 LLM_MOCK 的回合夹具产出 stats_diff（真实模型不需要）。
+      const statNames = (Array.isArray(state.stats) ? state.stats : [])
+        .filter((st) => st && typeof st === 'object' && st.kind !== 'rank'
+          && typeof st.name === 'string' && st.name)
+        .map((st) => st.name);
       const turnCtx = {
         turn: nextTurn,
         action,
@@ -861,6 +916,7 @@ function createGame(cfg, dataDir) {
         needEvent: plan.opening,
         needSettlement: plan.settling,
         timeSkip: timeSkip || undefined,
+        statNames,
       };
       const tp = await callTurnParsed(
         'turn', turnModel,
@@ -875,6 +931,7 @@ function createGame(cfg, dataDir) {
       const proposal = {
         narration: out.narration,
         state_diff: out.state_diff,
+        stats_diff: out.stats_diff,
         items_add: out.items_add,
         items_remove: out.items_remove,
         items_info: out.items_info, // 新增物品介绍，引擎只接受实际加入的名字
@@ -981,6 +1038,8 @@ function createGame(cfg, dataDir) {
         raw: resolved.result.raw,
         proposal: resolved.result.proposal,
         applied: resolved.result.applied,
+        stats_drift: resolved.result.stats_drift || {},
+        stats_drains: resolved.result.stats_drains || [],
         rejected: resolved.result.rejected,
         narration: resolved.result.narration,
         event: resolved.result.event || null,
@@ -999,6 +1058,8 @@ function createGame(cfg, dataDir) {
       });
 
       const result = engine.toPublicTurnResult(resolved.result, finalState);
+      // 服务端徽章：回合结果也带出 stat / drain 徽章（前端展示是下一个任务）。
+      result.badges = badgesFromApplied(resolved.result.applied, resolved.result.stats_drains);
       if (result.state) withUndoFlag(result.state, finalState, worldId);
       return result;
     });
@@ -1104,7 +1165,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, ensurePrologue, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn, listScenes, getNpcDetail, suggestActions,
   };
 }

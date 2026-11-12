@@ -197,6 +197,7 @@ const TURN_OUTPUT_FORMAT = [
   '输出 JSON 格式（字段固定，数组可为空）：',
   '{"narration":"第二人称叙事，10~1200 字，分成 2~4 个短段落，段落间用 \\n\\n 分隔",',
   ' "state_diff":{"心智":1},',
+  ' "stats_diff":{"饱腹":15},',
   ' "items_add":[],"items_remove":[],',
   ' "items_info":{"新物品名":{"desc":"…","type":"…"}},',
   ' "overstep":false,',
@@ -222,6 +223,7 @@ const TURN_OUTPUT_FORMAT = [
   '  不要三条都在打听同一件事。',
   '- new_facts 记录本回合新确立的客观事实（≤30 字，0~2 条）：如「城门每日戌时落锁」「顾秋白是76号的人」；',
   '  已确立的事实见【已确立的事实】段落，叙事必须遵守、不得改写；没有新事实就省略该字段，不要复述旧事实。',
+  '- stats_diff 的键必须是【专属状态】里已有的名字，数值槽单回合一般 -30~+30，等级阶梯只能 ±1，没有变化就省略。',
   '- marks_add / marks_remove 每条 ≤16 字：如「被76号盯上」「欠白玫一个人情」「左臂刀伤」；',
   '  越界行为必留印记（marks_add）；已了结的印记用 marks_remove 移除，文本必须与【身上的印记】里某一条完全一致。',
   '- threads_add 每条 ≤20 字，本回合新埋下的未解之谜；threads_resolve 解开已有线索，文本必须与【未解之谜】里某一条完全一致；',
@@ -327,16 +329,31 @@ const V2_TURN_OUTPUT_FORMAT = TURN_OUTPUT_FORMAT.split(NL).flatMap((line) => {
   return [line];
 }).join(NL);
 
+// 世界专属状态的设计规则：建世界（WORLD_OUTPUT_FORMAT）与老世界补设计
+// （buildStatsMessages）共用同一份文案，避免两处规则漂移。
+const STATS_DESIGN_RULES = [
+  'bible.stats 是这个世界主角专属的 2~4 个状态值，按世界观量身设计，玩家在角色面板上看得到、会随剧情和时间变化：',
+  '· 两种：数值槽 {"name","kind":"gauge","icon","desc","max","start","drift","warn":[{"below"或"above","label","effect","drain"}]}，等级阶梯 {"name","kind":"rank","icon","desc","ranks":[…],"start"}；',
+  '· name ≤4 字，不能和六项基础属性（体魄/心智/魅力/气运/声望/资源）重名或意思重复；icon 用一个贴切的表情符号；desc ≤30 字说清它代表什么、怎么变化；',
+  '· 数值槽 max 一般 100；start 是开局值；drift 是每过一个时段（清晨/午后/黄昏/深夜）自然变化多少（饥饿口渴这类会自然下降的给 -2~-5，理智、名声这类不自然变化的给 0）；',
+  '· warn 给 1~2 条警戒线：低于（below）或高于（above）某值时的状态名 label（≤8 字）和后果 effect（≤40 字，写出对行动和叙事的具体影响）；最严重的一条可以带 drain（每回合扣 1 点的基础属性名，如饿到极点扣「体魄」、理智崩溃扣「心智」）；',
+  '· 等级阶梯给 4~10 个由低到高的阶名（如修仙境界、游戏等级、帮派地位），start 是开局所在阶的下标；',
+  '· 举例：末日求生给「饱腹」「水分」（会自然下降，归零伤身）；修仙给「境界」（阶梯）和「灵力」；恐怖给「理智」（低了出现幻觉、崩溃）；游戏系统给「等级」（阶梯）和「能量」；',
+  '· 不要设计和世界无关的通用数值，也不要超过 4 个。',
+];
+
 const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"genre":"xuanhuan|urban|game|horror|cozy|general",',
   ' "bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
   ' "start":{"place","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
-  ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},"eventThemes":[str x6]},',
+  ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},',
+ ' "stats":[{name,kind:"gauge",icon,desc,max,start,drift,warn},{name,kind:"rank",icon,desc,ranks,start}],"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
   'genre 按玩家那句话世界观和 bible 的题材判断，只取 xuanhuan / urban / game / horror / cozy / general 之一；',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
+  ...STATS_DESIGN_RULES,
   'bible.prologue 是给玩家看的「序章」，四段都要用通俗的话、不堆专有名词；首次提到的地名、人名顺带一句交代（是谁、什么地方）：',
   '  world = 这个世界是什么样的（3~4 句：时代、势力格局、力量体系、氛围）；',
   '  me = 你是谁（姓名或称呼 / 身份、出身、现在的处境、有什么本事或短板，2~3 句，用第二人称「你」）；',
@@ -426,6 +443,58 @@ function firstActEnvironment(state) {
   return { name: place.name, desc: place.desc.trim() };
 }
 
+// 回合提示词里的「专属状态」逐行文本。纯函数：自己按 below/above 判断生效警戒，
+// 不 require engine/*（保持 prompts.js 无引擎依赖、避免循环 require）。
+// state.stats 缺失 / 为空返回 ''，老存档据此整段省略。
+function statsSectionText(state) {
+  const list = state && Array.isArray(state.stats) ? state.stats : [];
+  const num = (v, def) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+  const lines = [];
+  for (const st of list) {
+    if (!st || typeof st !== 'object') continue;
+    const name = typeof st.name === 'string' ? st.name : '';
+    const icon = typeof st.icon === 'string' && st.icon ? st.icon : '◆';
+    const warns = Array.isArray(st.warn) ? st.warn : [];
+    if (st.kind === 'rank') {
+      const ranks = Array.isArray(st.ranks) ? st.ranks.filter((r) => typeof r === 'string') : [];
+      const idx = Math.max(0, Math.min(ranks.length - 1, Math.round(num(st.value, 0))));
+      const cur = ranks[idx] !== undefined ? ranks[idx] : '';
+      lines.push(`${name} ${icon}：${cur}（${ranks.join(' → ')}）`);
+      continue;
+    }
+    const max = num(st.max, 100);
+    const value = num(st.value, 0);
+    const drift = num(st.drift, 0);
+    let line = `${name} ${icon}：${value}/${max}（每个时段自然 ${drift > 0 ? '+' : ''}${drift}）`;
+    const active = warns.filter((w) => {
+      if (!w || typeof w !== 'object') return false;
+      if (typeof w.below === 'number' && Number.isFinite(w.below)) return value <= w.below;
+      if (typeof w.above === 'number' && Number.isFinite(w.above)) return value >= w.above;
+      return false;
+    });
+    if (active.length) {
+      // 多条生效时优先显示最严重的一条（带 drain），与引擎结算口径一致。
+      const w = active.find((x) => x && x.drain) || active[active.length - 1];
+      line += `；当前：${typeof w.label === 'string' ? w.label : ''}——${typeof w.effect === 'string' ? w.effect : ''}`;
+    } else if (warns.length) {
+      const w = warns.find((x) => x && typeof x === 'object') || {};
+      const bound = typeof w.below === 'number' && Number.isFinite(w.below)
+        ? `低于 ${w.below}` : (typeof w.above === 'number' && Number.isFinite(w.above) ? `高于 ${w.above}` : '');
+      line += `；警戒线：${bound}${bound ? ' ' : ''}${typeof w.label === 'string' ? w.label : ''}`;
+    }
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+
+// 「专属状态」段的配套说明：本回合造成的变化与随时间自然变化的分工。
+const STATS_TURN_NOTES = [
+  '本回合玩家的行动或遭遇直接造成的变化，用 stats_diff 写（如吃下半个面包「饱腹」+15、目睹惨状「理智」-8、修炼突破「境界」+1）；',
+  '随时间自然流逝的变化由系统自动结算，不要在 stats_diff 里重复扣；',
+  '当前生效的状态（上面「当前：…」）必须在叙事里体现后果，不能无视；',
+  '等级阶梯只在叙事里确实发生突破或跌落时才 ±1，突破要有铺垫和代价，不要轻易给。',
+].join('\n');
+
 // 时光推进（仅 plan.timeSkip 存在时）：替换「时与地（叙事一致性）」段。
 // 单项 / 合计上限与 validateProposal 保持一致：month 为 1 / 2，其余为 3 / 5。
 function timeSkipSectionText(ts) {
@@ -444,6 +513,7 @@ function timeSkipSectionText(ts) {
     '4. 已认识的人物在这段时间里按各自的性格、处境和动机过日子，有的变化明显，有的几乎没变；只写主角能看见、听到的部分，私密动机只能通过可见的举动体现，不能直接说破。每个在正文里写到变化的人物，都在 npc_updates 里记下，证据必须出自本回合正文。',
     '5. 进行中的事件与未解线索在这段时间里应当有结果或进展，正文里要交代清楚。',
     `6. 数值：state_diff 反映这段时间的积累（单项最多 +${diffMax}，正向合计最多 +${totalMax}）；可以增减物品；可以 move_to 到新地点（正文必须写明怎么到的）；new_facts 记 1~2 条这段时间确立的重要事实。`,
+    '   专属状态：这段时间里它们落地后的增减也用 stats_diff 写清楚（系统不会自动结算这段时间的自然变化，单回合上限放宽）。',
     '7. 输出 JSON 里额外给 "landing_period"：跳跃结束时的时段，只能是 清晨 / 午后 / 黄昏 / 深夜 之一。time_passes 本回合不起作用。',
     '8. 本段优先于输出格式里关于 time_passes 和『叙事与【时与地】一致』的通用要求：叙事从【时与地】的此刻出发，结尾落在跳跃结束之后的新时刻。',
   ].join('\n');
@@ -513,6 +583,13 @@ function buildTurnMessages(state, plan, action, opts) {
       '\n这些是已经落在角色身上的持久处境，本回合及之后的叙事里必须持续产生可见后果，不能写过一次就当没发生；' +
       '玩家本回合若越界（宣称不存在的神力/宝物、动粗、强闯、冒犯势力），必须用 marks_add 留下一枚新印记；' +
       '印记已了结时用 marks_remove 移除（文本须与上面某条完全一致）。'));
+  }
+
+  // 专属状态（世界专属面板）：state.stats 非空时列出当前值与生效警戒 / 阶梯，
+  // 要求本回合直接造成的变化写进 stats_diff、自然变化不重复扣。老存档无该字段整段省略。
+  const statsBody = statsSectionText(state);
+  if (statsBody) {
+    sys.push(section('专属状态（随剧情和时间变化）', statsBody + '\n' + STATS_TURN_NOTES));
   }
 
   // 未解之谜：活跃线索要推进/收束，已淡去/已解开的不要重新提起。
@@ -724,6 +801,42 @@ function buildPrologueMessages(state) {
   ];
 }
 
+// 老世界补设计专属状态：system 与建世界共用同一份 STATS_DESIGN_RULES，只输出 {"stats":[...]}；
+// user 据标题 / 基调 / 题材 / 主角 / 此刻 / 最近 2 回合给「眼下处境」，让 start 填得合理。
+// 刻意不用 worldBibleText（它会把 npcs[].want 的隐藏动机带进提示词）。
+function buildStatsMessages(state) {
+  const s = state || {};
+  const b = s.bible || {};
+  const recent = (Array.isArray(s.recent) ? s.recent : []).slice(-2);
+  let happened;
+  if (recent.length) {
+    happened = recent.map((r) => {
+      const narr = String((r && r.narration) || '').slice(-900);
+      return `#${(r && r.turn) != null ? r.turn : ''} 行动：${(r && r.action) || ''} / 叙事：${narr}`;
+    }).join('\n');
+  } else {
+    happened = (b.start && b.start.situation) || '';
+  }
+  const system = [
+    '你是「无限世界」的专属状态设计师，只输出一个 JSON 对象，不要解释文字。',
+    '为这个已经开局的旧世界补设计 2~4 个主角专属状态。',
+    ...STATS_DESIGN_RULES,
+    '输出 JSON：{"stats":[...]}，只含 stats 一个字段，不要输出其他字段。',
+    'start 填「按眼下剧情处境合理的当前值」（例如刚饿了两天就低一些），不要一律照搬开局默认值。',
+  ].join('\n');
+  const user = [
+    section('世界', `标题：${b.title || ''}\n基调：${b.tone || ''}\n题材：${s.genre || ''}`),
+    section('主角', characterText(s)),
+    section('此刻', timePlaceText(s)),
+    section('最近 2 回合', happened),
+    '请据此补设计这 2~4 个专属状态，只输出 {"stats":[...]}。',
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 老物品补介绍：回合模型一次批量给若干物品写介绍，输出 {物品名:{desc,type}}。
 function buildItemsInfoMessages(state, names) {
   const list = (Array.isArray(names) ? names : [])
@@ -926,6 +1039,8 @@ function parseJson(text) {
 module.exports = {
   buildTurnMessages,
   buildPrologueMessages,
+  buildStatsMessages,
+  statsSectionText,
   buildSuggestMessages,
   buildItemsInfoMessages,
   buildWorldMessages,

@@ -557,6 +557,23 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { prologue });
   }
 
+  // 专属状态：GET /api/worlds/:id/stats（给老世界补设计，新世界已随 bible 带出）。
+  const statsMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/stats$/);
+  if (statsMatch) {
+    if (method !== 'GET') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(statsMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
+    const stats = await g.ensureStats(id);
+    if (stats === null) return sendError(res, 404, '世界不存在');
+    return sendJson(res, 200, { stats });
+  }
+
   // 物品介绍：GET /api/worlds/:id/items（按需补生成缺失介绍，按当前物品栏顺序返回）。
   const itemsMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/items$/);
   if (itemsMatch) {
