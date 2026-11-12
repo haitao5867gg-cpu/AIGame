@@ -1180,3 +1180,33 @@ body[data-genre][data-read="paper"] .img-fallback{color:#5b4326;background:radia
   .panel-tab{min-height:40px}
   .attr-cell{min-height:40px}
 }
+
+/* ===== 叙事 v3：章节 ===== */
+
+/* 正文流里的章名分隔：居中横排，两侧细线 */
+.chapter-divider{display:flex;align-items:center;justify-content:center;gap:12px;
+  margin:28px 0 14px;text-align:center}
+.chapter-divider::before,.chapter-divider::after{content:"";flex:1;height:1px;
+  background:rgba(var(--g-accent-rgb,192,57,43),.4)}
+.chapter-no{font-family:var(--sans);font-size:11px;letter-spacing:.2em;
+  color:var(--g-accent,var(--accent));white-space:nowrap;flex:none}
+.chapter-name{font-family:var(--serif);font-size:18px;color:var(--ink);white-space:nowrap;flex:none}
+
+/* 顶栏章名：与 .g-place 同款胶囊，压在底图上是浅字（纸页态由 .stage 作用域变量切换 --ink） */
+.g-chapter{font-family:var(--sans);font-size:13px;letter-spacing:1px;white-space:nowrap}
+body[data-genre] .g-chapter{color:#f3eee4;background:rgba(0,0,0,.34);
+  border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px 12px;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+
+/* 线索页：章节回顾 */
+.chapter-recap{margin:10px 0}
+.chapter-recap-h{font-size:13px;font-weight:600;color:var(--ink)}
+.chapter-recap-h small{font-family:var(--sans);font-size:11px;font-weight:400;
+  color:var(--muted);margin-left:6px}
+.chapter-recap p{font-size:13px;line-height:1.7;color:var(--ink);margin:4px 0 0}
+
+@media(max-width:600px){
+  #g-writing{display:none}
+  .chapter-name{font-size:16px}
+  .g-chapter{white-space:nowrap;flex:none}
+}

@@ -339,6 +339,8 @@
     if (me.prefs && typeof me.prefs.adult === 'boolean') myPrefs.adult = me.prefs.adult;
     if (me.prefs && typeof me.prefs.adultAllowed === 'boolean') myPrefs.adultAllowed = me.prefs.adultAllowed;
     if (me.prefs && me.prefs.atmosphere) myPrefs.atmosphere = me.prefs.atmosphere;
+    if (me.prefs && typeof me.prefs.writing === 'string') myPrefs.writing = me.prefs.writing;
+    if (typeof renderWritingLabels === 'function') renderWritingLabels(); // /api/me 晚于 renderHeader 时补刷写作标签
     if (typeof Atmosphere !== 'undefined') Atmosphere.applyPrefs(myPrefs, me.id);
     if (typeof Tts !== 'undefined' && Tts.syncVisibility) Tts.syncVisibility(); // 朗读总开关随偏好刷新
     var label = me.host ? '主人' : ('玩家：' + me.name);

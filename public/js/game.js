@@ -77,8 +77,11 @@
   }
 
   // ---- 游戏页 ----
+  // 叙事 v3：已显示的章号，用于去重插章名分隔；clearStream 时复位为 0。
+  var lastChapterShown = 0;
   function clearStream() {
     $('stream').textContent = '';
+    lastChapterShown = 0;
   }
 
   function scrollBottom() {
@@ -235,6 +238,16 @@
     $('g-place').textContent = loc + ' · ' + formatGameDay(c.day) + ' ' + (c.period || '清晨');
     $('g-omen').hidden = !s.omen;
     $('g-danger').hidden = !s.danger; // 体魄 ≤ 2：顶部提示「伤势沉重」
+    // 叙事 v3：顶栏章名 + 写作模式入口（仅 v3 世界显示）。
+    var gc = $('g-chapter');
+    if (gc) {
+      gc.hidden = !s.chapter;
+      if (s.chapter) gc.textContent = '第 ' + s.chapter.index + ' 章' + (s.chapterTitle ? ' · ' + s.chapterTitle : '');
+    }
+    var isV3 = !!s.chapter;
+    if ($('menu-writing')) $('menu-writing').hidden = !isV3;
+    if ($('g-writing')) $('g-writing').hidden = !isV3;
+    renderWritingLabels(); // 按 myPrefs.writing 刷新两处文字
     renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
     if (typeof Atmosphere !== 'undefined') Atmosphere.enterWorld(s, atmosphereOptions);
   }
@@ -279,6 +292,43 @@
     }
   }
 
+  // ---- 叙事 v3：写作模式（⋯ 菜单 + 桌面标签共用，仅 v3 世界显示）----
+  var WRITING_MODES = ['fine', 'deep', 'fast'];
+  var WRITING_NAMES = { fine: '精写', deep: '深度精写', fast: '快写' };
+  var WRITING_TOASTS = {
+    fine: '精写：强模型简单构思再写，第一句约 10~30 秒',
+    deep: '深度精写：强模型深思后再写，第一句可能要一分钟',
+    fast: '快写：不构思直接写，第一句几秒就出',
+  };
+
+  function writingName(w) { return WRITING_NAMES[w] || WRITING_NAMES.fine; }
+
+  function renderWritingLabels() {
+    var name = writingName(myPrefs.writing);
+    if ($('menu-writing-name')) $('menu-writing-name').textContent = name;
+    if ($('g-writing')) $('g-writing').textContent = '写作·' + name;
+  }
+
+  function nextWritingMode(cur) {
+    var i = WRITING_MODES.indexOf(cur);
+    if (i < 0) i = 0; // 缺省按精写处理
+    return WRITING_MODES[(i + 1) % WRITING_MODES.length];
+  }
+
+  async function cycleWriting() {
+    var next = nextWritingMode(myPrefs.writing);
+    try {
+      var r = await api('/api/prefs', {
+        method: 'POST', body: JSON.stringify({ writing: next }),
+      });
+      myPrefs.writing = (r && r.prefs && typeof r.prefs.writing === 'string') ? r.prefs.writing : next;
+      renderWritingLabels();
+      toast(WRITING_TOASTS[myPrefs.writing] || WRITING_TOASTS.fine);
+    } catch (err) {
+      toast(err.message || '设置失败'); // 失败：文字不变
+    }
+  }
+
   function appendOpening(text) {
     $('stream').appendChild(el('p', 'opening', text));
   }
@@ -296,6 +346,31 @@
 
   function appendDivider(text) {
     $('stream').appendChild(el('div', 'divider', text));
+  }
+
+  // 叙事 v3：正文流里的章名分隔，章名为空时只显示「第 N 章」。
+  function appendChapterDivider(index, title) {
+    var box = el('div', 'chapter-divider');
+    box.appendChild(el('span', 'chapter-no', '第 ' + index + ' 章'));
+    if (title) box.appendChild(el('span', 'chapter-name', title));
+    $('stream').appendChild(box);
+  }
+
+  // 历史回放：/log 记录自带 chapter: { index, title }。
+  function showChapterFromRecord(rec) {
+    if (rec.chapter && rec.chapter.index && rec.chapter.index !== lastChapterShown) {
+      appendChapterDivider(rec.chapter.index, rec.chapter.title);
+      lastChapterShown = rec.chapter.index;
+    }
+  }
+
+  // 新回合：用当前状态（上一回合的 state）判断；收章后的新章留到下一回合再插。
+  function showChapterForTurn() {
+    if (currentState && currentState.chapter && currentState.chapter.index
+        && currentState.chapter.index !== lastChapterShown) {
+      appendChapterDivider(currentState.chapter.index, currentState.chapterTitle);
+      lastChapterShown = currentState.chapter.index;
+    }
   }
 
   // 客户端徽章：与后端 /log 的 badges 同一种结构。statsDrains 为 res.stats_drains。
@@ -450,6 +525,7 @@
   }
 
   function appendLogRecord(rec) {
+    showChapterFromRecord(rec); // 叙事 v3：换章时在行动行之前插章名分隔
     // 重生生成的「新一世开场」是该世第一条叙事，回放时用开场样式显示。
     if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
@@ -983,6 +1059,20 @@
     var cluesPane = el('section', 'panel-pane');
     cluesPane.setAttribute('data-pane', 'clues');
     panelPanes.clues = cluesPane;
+    // 叙事 v3：已写完的章，放在线索页最上面。
+    var chapters = s.chapters || [];
+    if (chapters.length) {
+      cluesPane.appendChild(el('div', 'pane-h', '章节回顾'));
+      chapters.forEach(function (ch) {
+        var box = el('div', 'chapter-recap');
+        var rh = el('div', 'chapter-recap-h',
+          '第 ' + ch.index + ' 章' + (ch.title ? ' · ' + ch.title : ''));
+        rh.appendChild(el('small', '', '第 ' + ch.fromTurn + '~' + ch.toTurn + ' 回合'));
+        box.appendChild(rh);
+        if (ch.summary) box.appendChild(el('p', '', ch.summary));
+        cluesPane.appendChild(box);
+      });
+    }
     var threads = s.threads || [];
     cluesPane.appendChild(el('div', 'pane-h', '未解之谜'));
     if (threads.length) {
@@ -1011,14 +1101,17 @@
         cluesPane.appendChild(item);
       });
     } else cluesPane.appendChild(el('div', 'muted', '（尚无前世）'));
-    var chronicle = s.chronicle || [];
-    var chChildren = chronicle.length
-      ? chronicle.map(function (c) {
-          return el('div', 'chronicle-item',
-            '第' + c.chapter + '章（' + c.fromTurn + '-' + c.toTurn + '）：' + c.summary);
-        })
-      : [el('div', 'muted', '（尚无编年史）')];
-    cluesPane.appendChild(collapsible('编年史', chChildren));
+    // 叙事 v3 用「章节回顾」代替编年史：v3 世界隐藏原编年史折叠段。
+    if (!s.chapter) {
+      var chronicle = s.chronicle || [];
+      var chChildren = chronicle.length
+        ? chronicle.map(function (c) {
+            return el('div', 'chronicle-item',
+              '第' + c.chapter + '章（' + c.fromTurn + '-' + c.toTurn + '）：' + c.summary);
+          })
+        : [el('div', 'muted', '（尚无编年史）')];
+      cluesPane.appendChild(collapsible('编年史', chChildren));
+    }
     var bible = s.bible || {};
     var wsChildren = [];
     wsChildren.push(el('div', 'world-setting', '基调：' + (bible.tone || '—')));
@@ -1152,6 +1245,12 @@
     $('pending-secs').textContent = '已等待 ' + secs + ' 秒';
   }
 
+  // 叙事 v3：只换 #pending 前面的提示文字，秒数仍由原计时器更新。
+  function setPendingLabel(text) {
+    var n = $('pending-label');
+    if (n) n.textContent = text;
+  }
+
   function setBusy(b) {
     busy = b;
     $('btn-send').disabled = b;
@@ -1160,6 +1259,7 @@
     clearInterval(pendingTimer);
     pendingTimer = null;
     if (b) {
+      setPendingLabel('世界在回应…'); // 每回合开始重置提示文字
       pendingStart = Date.now();
       updatePendingSecs(); // 立刻显示 0 秒
       pendingTimer = setInterval(updatePendingSecs, 1000);
@@ -1219,9 +1319,13 @@
     if (!res.ok || !res.body) throw new Error('流式请求失败（' + res.status + '）');
     var result = null;
     var streamError = null;
+    var gotFirstDelta = false;
     await readEventStream(res, function (event, data) {
       try {
-        if (event === 'delta') {
+        if (event === 'thinking') {
+          setPendingLabel('正在构思这一节…'); // 动笔前构思：只有累计字数、无内容
+        } else if (event === 'delta') {
+          if (!gotFirstDelta) { gotFirstDelta = true; setPendingLabel('世界在回应…'); }
           var d = JSON.parse(data);
           if (typeof d.text === 'string') appendStreamDelta(block, d.text);
         } else if (event === 'result') {
@@ -1277,6 +1381,7 @@
     setBusy(true);
     // 撤回按钮保持原状：请求进行中由 busy 守卫拦住点击，result 到来后 renderResult 再按
     // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
+    showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine(action);
     usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
     var block = beginStreamNarration();
@@ -1435,6 +1540,7 @@
     // 关闭弹层露出流式叙事：失败时弹层保持关闭、文本框内容保留以便重试。
     closeTimeSkip();
     var label = timeSkipLabel(span);
+    showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine('【时光推进·' + label + '】' + (plan || '按眼下的日子过下去'));
     usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
     var block = beginStreamNarration();
