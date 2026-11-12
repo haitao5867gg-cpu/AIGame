@@ -1264,3 +1264,52 @@ body[data-genre] .g-chapter{color:#f3eee4;background:rgba(0,0,0,.34);
 @media(max-width:600px){
   .mark-chip[data-clue],.thread-item[data-clue],.rumor-item[data-clue]{min-height:40px}
 }
+
+/* ===== 手机游玩体验（第 3 轮）：等待占位、输入区贴底、灵感图标、字号、回到最新、提示条位置 ===== */
+/* 正文还没到时，正文位置的「构思中」：一小段来回走的墨线 + 当前提示文字 */
+.narration-wait{display:flex;align-items:center;gap:10px;margin:8px 0 16px;font-family:var(--sans);
+  font-size:14px;color:var(--muted);letter-spacing:.04em}
+.narration-wait-ink{position:relative;flex:none;width:46px;height:3px;border-radius:2px;overflow:hidden;
+  background:rgba(var(--g-accent-rgb,192,57,43),.18)}
+.narration-wait-ink::after{content:'';position:absolute;top:0;bottom:0;left:0;width:40%;border-radius:2px;
+  background:var(--g-accent,var(--accent));animation:inkRun 1.4s ease-in-out infinite}
+@keyframes inkRun{0%{transform:translateX(-100%)}100%{transform:translateX(260%)}}
+@media(prefers-reduced-motion:reduce){.narration-wait-ink::after{animation:none;width:100%;opacity:.5}}
+body[data-genre][data-read="paper"] .narration-wait-ink::after{background:var(--g-accent-deep)}
+
+/* 正文字号：小 / 标准(17px) / 大 / 特大，⋯ 菜单或桌面「字号」标签切换 */
+body[data-font="s"] #stream p.narration,body[data-font="s"] #stream .opening{font-size:15px;line-height:1.9}
+body[data-font="l"] #stream p.narration,body[data-font="l"] #stream .opening{font-size:19px;line-height:1.9}
+body[data-font="xl"] #stream p.narration,body[data-font="xl"] #stream .opening{font-size:21px;line-height:1.85}
+body[data-font="l"] .action-bubble,body[data-font="xl"] .action-bubble{font-size:16px}
+
+/* 回到最新：默认藏起，只在手机上往上翻旧回合时出现 */
+.latest-btn{display:none}
+
+@media(max-width:600px){
+  /* 刚进世界正文很短时，输入区也贴在屏幕底部，不悬在半屏 */
+  #view-game .stage{min-height:calc(100vh - 150px);min-height:calc(100dvh - 150px)}
+  #view-game .stream{flex:1 0 auto}
+
+  /* 灵感按钮只留 ✦ 图标，把宽度让给输入框；构思中图标慢慢转 */
+  .composer .idea-btn{font-size:0;width:44px;min-width:44px;padding:0;display:inline-flex;
+    align-items:center;justify-content:center}
+  .composer .idea-btn::before{content:'✦';font-size:19px;line-height:1;display:inline-block}
+  .composer .idea-btn[aria-busy="true"]::before{animation:ideaSpin 1.2s linear infinite}
+  @keyframes ideaSpin{to{transform:rotate(360deg)}}
+  #btn-send{padding:0 16px}
+
+  /* 提示条放到顶栏下面，不再盖住返回 / ⋯ 按钮 */
+  .toast{top:calc(var(--head-h) + 10px + env(safe-area-inset-top));max-width:calc(100% - 32px);
+    font-size:13px;line-height:1.5;padding:9px 14px;text-align:center}
+
+  /* 回到最新：贴在输入区右上方 */
+  .latest-btn{display:inline-flex;align-items:center;position:absolute;right:12px;bottom:calc(100% + 10px);
+    min-height:40px;padding:0 16px;border-radius:999px;border:0;font-family:var(--sans);font-size:14px;
+    color:var(--g-on-accent,#fff);background:var(--g-accent,var(--accent));box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
+  .latest-btn[hidden]{display:none}
+  body[data-genre][data-read="paper"] .latest-btn{background:var(--g-accent-deep);color:#fff}
+
+  /* 去掉点按钮的 300ms 延迟和双击放大 */
+  button,.btn,a,.top-chip,.genre-pill,.origin-card,.more-menu-item,textarea{touch-action:manipulation}
+}
