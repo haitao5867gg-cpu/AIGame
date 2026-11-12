@@ -7,6 +7,12 @@
   var usageBeforeTurn = null; // 回合开始前的今日 token 总数，用来算「本回合」
   var usageLastTurn = null;
 
+  // 今日 token 合计（默认网关 + 成人模式），用来算「本回合约」：成人模式世界的回合只记在成人模式账上。
+  function usageTotalNow(d) {
+    if (!d || !d.tokens) return null;
+    return (Number(d.tokens.total) || 0) + (d.adult && d.adult.tokens ? Number(d.adult.tokens.total) || 0 : 0);
+  }
+
   function fmtWan(n) {
     n = Number(n) || 0;
     if (n < 10000) return String(n);
@@ -214,6 +220,30 @@
       + (usageLastTurn != null ? ' · 本回合约 ' + fmtWan(usageLastTurn) : '')));
     box.appendChild(sec1);
 
+    // ---- 成人模式 token（单独记账：只有成人模式世界走这个模型）----
+    var ad = d.adult;
+    if (ad && ad.tokens && (ad.configured || ad.tokens.total > 0 || (ad.cumulative && ad.cumulative.total > 0))) {
+      var at = ad.tokens;
+      var adSec = el('div', 'usage-sec');
+      adSec.appendChild(el('h4', null, '成人模式 token（单独计算）'));
+      if (at.limit > 0) {
+        var apct = Math.min(100, (at.total / at.limit) * 100);
+        adSec.appendChild(el('div', 'usage-main', '今日 ' + fmtWan(at.total) + ' / ' + fmtWan(at.limit) + '，剩 ' + fmtWan(at.remaining)));
+        var abar = el('div', 'usage-bar');
+        var afill = el('i', apct >= 100 ? 'full' : apct >= 80 ? 'warn' : '');
+        afill.style.width = apct.toFixed(1) + '%';
+        abar.appendChild(afill);
+        adSec.appendChild(abar);
+      } else {
+        adSec.appendChild(el('div', 'usage-main', '今日 ' + fmtWan(at.total) + '（不限）'));
+      }
+      var cum = ad.cumulative || {};
+      adSec.appendChild(el('div', 'usage-sub', '输入 ' + fmtWan(at.prompt) + ' · 输出 ' + fmtWan(at.completion)
+        + ' · 累计 ' + fmtWan(cum.total)));
+      if (ad.model) adSec.appendChild(el('div', 'usage-note', '模型 ' + ad.model + '，不占上面的普通额度'));
+      box.appendChild(adSec);
+    }
+
     // ---- 今日出图 ----
     var im = d.images || {};
     var by = im.byProvider || {};
@@ -252,7 +282,7 @@
         players.forEach(function (p) {
           var row = el('div', 'usage-player-row');
           row.appendChild(el('span', '', p.name));
-          row.appendChild(el('span', 'usage-mono', fmtWan(p.total)));
+          row.appendChild(el('span', 'usage-mono', fmtWan(p.total) + (p.adult > 0 ? ' · 成人 ' + fmtWan(p.adult) : '')));
           plSec.appendChild(row);
         });
       } else {
@@ -310,7 +340,7 @@
     try {
       usageData = await api('/api/usage/today');
       if (usageBeforeTurn != null && usageData.tokens) {
-        usageLastTurn = Math.max(0, usageData.tokens.total - usageBeforeTurn);
+        usageLastTurn = Math.max(0, usageTotalNow(usageData) - usageBeforeTurn);
         usageBeforeTurn = null;
       }
     } catch (_) { /* 读取失败保留上次数据 */ }
@@ -320,6 +350,7 @@
   function setUsageOpen(open) {
     var box = $('usage-pop');
     box.hidden = !open;
+    if (open && $('adult-llm-pop')) $('adult-llm-pop').hidden = true; // 两个顶栏弹层不叠在一起
     $('btn-usage').setAttribute('aria-expanded', open ? 'true' : 'false');
     clearInterval(usageTimer);
     usageTimer = null;
@@ -340,6 +371,19 @@
     if (me.prefs && typeof me.prefs.adultAllowed === 'boolean') myPrefs.adultAllowed = me.prefs.adultAllowed;
     if (me.prefs && me.prefs.atmosphere) myPrefs.atmosphere = me.prefs.atmosphere;
     if (me.prefs && typeof me.prefs.writing === 'string') myPrefs.writing = me.prefs.writing;
+    if (me.prefs && me.prefs.adultLlm && typeof me.prefs.adultLlm === 'object') {
+      myPrefs.adultLlm = me.prefs.adultLlm;
+      if (typeof renderAdultLlmLabels === 'function') renderAdultLlmLabels();
+    }
+    // 成人模式（建世界时可选）：网关配好且这位玩家可用才在新世界页显示选项。
+    if (me.adultMode && typeof me.adultMode === 'object') {
+      myPrefs.adultMode = { configured: !!me.adultMode.configured, allowed: !!me.adultMode.allowed };
+      var amRow = $('adult-mode-row');
+      if (amRow) {
+        amRow.hidden = !(myPrefs.adultMode.configured && myPrefs.adultMode.allowed);
+        if (amRow.hidden) $('adult-mode').checked = false;
+      }
+    }
     if (typeof renderWritingLabels === 'function') renderWritingLabels(); // /api/me 晚于 renderHeader 时补刷写作标签
     if (typeof Atmosphere !== 'undefined') Atmosphere.applyPrefs(myPrefs, me.id);
     if (typeof Tts !== 'undefined' && Tts.syncVisibility) Tts.syncVisibility(); // 朗读总开关随偏好刷新

@@ -17,6 +17,7 @@ const store = require('./store.js');
 const llm = require('./llm.js');
 const env = require('./env.js');
 const context = require('./context.js');
+const adultMode = require('./adult-mode.js');
 const prefs = require('./prefs.js');
 
 // GET /api/images/<file> 严格校验：只允许 <kind>-<12位16进制>.<jpg|svg>。
@@ -635,7 +636,11 @@ function createImages(cfg, opts) {
     if (typeof o.artDirector === 'function') return normalizeArt(await o.artDirector(state, messages));
     if (mock) return null;
     const client = llm.createClient(c, dataDir);
-    const out = await client.complete({ purpose: 'turn', model: llmModel, messages, responseFormat: 'json_object' });
+    // 成人模式世界的画风设定也走成人模式网关（按世界定，不看队列在谁的请求里跑）；不追加成人模式写作规则。
+    const out = await client.complete({
+      purpose: 'turn', model: llmModel, messages, responseFormat: 'json_object',
+      route: adultMode.routeOf(state), adultPolicy: false,
+    });
     let parsed = null;
     try { parsed = JSON.parse(String(out && out.content).replace(/^```(?:json)?|```$/g, '').trim()); } catch (_) { /* 落到兜底 */ }
     return normalizeArt(parsed);
@@ -736,6 +741,7 @@ function createImages(cfg, opts) {
       const client = llm.createClient(c, job.dataDir);
       const out = await client.complete({
         purpose: 'turn', model: llmModel, messages, responseFormat: false,
+        route: job.llmRoute || null, adultPolicy: false, // 成人模式世界的出图描述走成人模式网关
       });
       return cleanEnglish(out && out.content, maxWords);
     } catch (err) {
@@ -1228,6 +1234,7 @@ function createImages(cfg, opts) {
           desc,
           bibleTitle: (s.bible && s.bible.title) || '',
           bibleTone: (s.bible && s.bible.tone) || '',
+          llmRoute: adultMode.routeOf(s),
         });
       }
       if (changed) writeIndex(dataDir, idx);
@@ -1316,6 +1323,7 @@ function createImages(cfg, opts) {
       queue.push({
         dataDir, indexKey: ik, kind: 'scene', key, name: desc, style, worldId,
         desc, cast, bibleTitle,
+        llmRoute: adultMode.routeOf(s),
         place: typeof q.place === 'string' ? q.place : '',
         action: typeof q.action === 'string' ? q.action : '',
         refs,

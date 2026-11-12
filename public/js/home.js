@@ -268,6 +268,7 @@
       var tags = el('div', 'wc-tags');
       var gname = genreName(w.genre);
       if (gname) tags.appendChild(el('span', 'wc-genre', gname));
+      if (w.adultMode) tags.appendChild(el('span', 'wc-adult', '18+'));
       var statusParts = [];
       if (!w.alive) statusParts.push('已终');
       if (w.awaitingRebirth) statusParts.push('待重生');
@@ -350,8 +351,24 @@
     $('char-identity').value = pick;
   }
 
+  // 成人模式选项：/api/me 说网关配好了且这位玩家可用才显示；每次进新世界页都重置为关。
+  function syncAdultModeRow() {
+    var info = myPrefs.adultMode || {};
+    var row = $('adult-mode-row');
+    var cb = $('adult-mode');
+    if (!row || !cb) return;
+    row.hidden = !(info.configured && info.allowed);
+    cb.checked = false;
+  }
+
+  function onAdultModeToggle() {
+    var cb = $('adult-mode');
+    if (cb.checked && !window.confirm('成人模式会出现露骨的性爱和暴力描写。\n确认你已年满 18 岁？')) cb.checked = false;
+  }
+
   function showNew() {
     $('view-new').hidden = false;
+    syncAdultModeRow();
     window.scrollTo(0, 0); // 进入新世界页时回到顶部，避免停在首页的滚动位置
     var bd = $('home-backdrop');
     bd.hidden = false;
@@ -460,6 +477,13 @@
     var appearance = $('char-appearance').value.trim();
     var identity = $('char-identity').value.trim();
     var body = { seed: seed, genre: selectedGenre };
+    // 成人模式：勾选时已在 onAdultModeToggle 里确认过满 18 岁。
+    var amRow = $('adult-mode-row');
+    var amCb = $('adult-mode');
+    if (amRow && !amRow.hidden && amCb && amCb.checked) {
+      body.adultMode = true;
+      body.confirm18 = true;
+    }
     if (name) body.name = name;
     if (appearance) body.appearance = appearance;
     if (identity) body.identity = identity;

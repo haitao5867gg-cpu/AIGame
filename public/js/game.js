@@ -291,9 +291,15 @@
       if (s.chapter) gc.textContent = '第 ' + s.chapter.index + ' 章' + (s.chapterTitle ? ' · ' + s.chapterTitle : '');
     }
     var isV3 = !!s.chapter;
-    if ($('menu-writing')) $('menu-writing').hidden = !isV3;
-    if ($('g-writing')) $('g-writing').hidden = !isV3;
+    // 成人模式世界：写作模式换成「模型设置」（思考强度 / 发挥），两者都是在调写正文的参数，只留一个。
+    var isAdult = s.adultMode === true;
+    if ($('menu-writing')) $('menu-writing').hidden = !isV3 || isAdult;
+    if ($('g-writing')) $('g-writing').hidden = !isV3 || isAdult;
+    if ($('menu-adult-llm')) $('menu-adult-llm').hidden = !isAdult;
+    if ($('g-adult-llm')) $('g-adult-llm').hidden = !isAdult;
+    if (!isAdult && $('adult-llm-pop')) $('adult-llm-pop').hidden = true;
     renderWritingLabels(); // 按 myPrefs.writing 刷新两处文字
+    renderAdultLlmLabels();
     renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
     if (typeof Atmosphere !== 'undefined') Atmosphere.enterWorld(s, atmosphereOptions);
   }
@@ -373,6 +379,93 @@
       toast(WRITING_TOASTS[myPrefs.writing] || WRITING_TOASTS.fine);
     } catch (err) {
       toast(err.message || '设置失败'); // 失败：文字不变
+    }
+  }
+
+  // ---- 成人模式：写正文的模型设置（⋯ 菜单 + 桌面标签共用一个弹层，仅成人模式世界显示）----
+  // 模型固定 deepseek-v4.1-flash-uncensored；玩家可调思考强度和发挥（temperature），只影响每回合写正文。
+  var ADULT_EFFORTS = [
+    { value: 'none', label: '关', note: '不思考，最快最省' },
+    { value: 'low', label: '低', note: '默认：简单构思再写' },
+    { value: 'medium', label: '中', note: '' },
+    { value: 'high', label: '高', note: '' },
+    { value: 'max', label: '最高', note: '最慢最贵' },
+  ];
+  var ADULT_TEMPS = [
+    { value: 'steady', label: '稳', note: '少跑偏' },
+    { value: 'default', label: '默认', note: '' },
+    { value: 'free', label: '放开', note: '更敢写、更跳' },
+  ];
+
+  function adultLlmPrefs() {
+    var p = myPrefs.adultLlm || {};
+    return { effort: p.effort || 'low', temperature: p.temperature || 'default' };
+  }
+
+  function labelOf(list, value) {
+    for (var i = 0; i < list.length; i++) if (list[i].value === value) return list[i].label;
+    return list[0].label;
+  }
+
+  function renderAdultLlmLabels() {
+    var p = adultLlmPrefs();
+    var effort = labelOf(ADULT_EFFORTS, p.effort);
+    var text = '思考' + effort + (p.temperature !== 'default' ? ' · ' + labelOf(ADULT_TEMPS, p.temperature) : '');
+    if ($('menu-adult-llm-name')) $('menu-adult-llm-name').textContent = text;
+    if ($('g-adult-llm')) $('g-adult-llm').textContent = '思考·' + effort;
+  }
+
+  function adultLlmRow(title, list, current, key) {
+    var wrap = el('div', 'adult-llm-row');
+    wrap.appendChild(el('div', 'adult-llm-label', title));
+    var opts = el('div', 'adult-llm-opts');
+    list.forEach(function (o) {
+      var on = o.value === current;
+      var b = el('button', 'adult-llm-opt' + (on ? ' selected' : ''), o.label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (o.note) b.title = o.note;
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var patch = {};
+        patch[key] = o.value;
+        setAdultLlm(patch);
+      });
+      opts.appendChild(b);
+    });
+    wrap.appendChild(opts);
+    return wrap;
+  }
+
+  function renderAdultLlmPop() {
+    var pop = $('adult-llm-pop');
+    if (!pop) return;
+    var p = adultLlmPrefs();
+    pop.textContent = '';
+    pop.appendChild(el('div', 'genre-pop-title', '成人模式 · 模型设置'));
+    pop.appendChild(el('div', 'adult-llm-model', 'deepseek-v4.1-flash-uncensored'));
+    pop.appendChild(adultLlmRow('思考强度', ADULT_EFFORTS, p.effort, 'effort'));
+    pop.appendChild(adultLlmRow('发挥', ADULT_TEMPS, p.temperature, 'temperature'));
+    pop.appendChild(el('div', 'adult-llm-note', '只影响每回合写正文：思考越高第一句出来越慢、越费 token；关掉最快。下一回合生效。'));
+  }
+
+  function openAdultLlmPop() {
+    var pop = $('adult-llm-pop');
+    if (!pop) return;
+    if (!pop.hidden) { pop.hidden = true; return; }
+    renderAdultLlmPop();
+    pop.hidden = false;
+  }
+
+  async function setAdultLlm(patch) {
+    var next = Object.assign(adultLlmPrefs(), patch);
+    try {
+      var r = await api('/api/prefs', { method: 'POST', body: JSON.stringify({ adultLlm: next }) });
+      myPrefs.adultLlm = (r && r.prefs && r.prefs.adultLlm) ? r.prefs.adultLlm : next;
+      renderAdultLlmLabels();
+      renderAdultLlmPop();
+    } catch (err) {
+      toast(err.message || '设置失败');
     }
   }
 
@@ -1651,7 +1744,7 @@
     // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine(action);
-    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
+    usageBeforeTurn = usageTotalNow(usageData);
     var block = beginStreamNarration();
     try {
       var res = await streamTurn({ action: action, clientTurnId: cid }, block);
@@ -1822,7 +1915,7 @@
     var label = timeSkipLabel(span);
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine('【时光推进·' + label + '】' + (plan || '按眼下的日子过下去'));
-    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
+    usageBeforeTurn = usageTotalNow(usageData);
     var block = beginStreamNarration();
     var worldId = currentWorldId;
     var skipText = label + '·' + (plan || '');

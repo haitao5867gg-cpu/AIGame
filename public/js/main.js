@@ -91,6 +91,7 @@
     $('image-viewer').addEventListener('click', closeImageViewer);
     $('identity-dice').addEventListener('click', onIdentityDice);
     $('btn-create').addEventListener('click', createWorld);
+    if ($('adult-mode')) $('adult-mode').addEventListener('change', onAdultModeToggle);
     $('btn-send').addEventListener('click', sendAction);
     $('btn-idea').addEventListener('click', nextIdea);
     $('btn-undo').addEventListener('click', onUndoClick);
@@ -163,6 +164,7 @@
         else if (act === 'read' && typeof Atmosphere !== 'undefined') Atmosphere.cycleReading();
         else if (act === 'font') cycleReadFont();
         else if (act === 'writing') cycleWriting();
+        else if (act === 'adult-llm') openAdultLlmPop();
       });
     });
 
@@ -171,6 +173,21 @@
       e.stopPropagation();
       openTimeSkip();
     });
+
+    // ---- 成人模式模型设置：桌面标签点开弹层；点弹层 / 标签 / 菜单项之外收起 ----
+    if ($('g-adult-llm')) {
+      $('g-adult-llm').addEventListener('click', function (e) {
+        e.stopPropagation();
+        openAdultLlmPop();
+      });
+      document.addEventListener('click', function (e) {
+        var pop = $('adult-llm-pop');
+        if (pop && !pop.hidden && !pop.contains(e.target)
+            && e.target !== $('g-adult-llm') && !$('menu-adult-llm').contains(e.target)) {
+          pop.hidden = true;
+        }
+      });
+    }
 
     // ---- 文风：桌面地点行标签点击弹出选择列表；点列表 / 标签 / 菜单项之外收起 ----
     $('g-genre').addEventListener('click', function (e) {
