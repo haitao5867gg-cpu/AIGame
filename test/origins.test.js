@@ -101,7 +101,7 @@ test('选出身：成功后属性 / 物品变化；再选 409；开局后 409', 
 });
 
 test('HTTP：POST /api/worlds/:id/origin；GET 405', async () => {
-  await withServer(async (base) => {
+  await withServer(async ({ base }) => {
     const w = (await req(base, 'POST', '/api/worlds', { seed: '雾里的旧港', name: '林野' })).json;
     const ok = await req(base, 'POST', `/api/worlds/${w.id}/origin`, { index: 0 });
     assert.equal(ok.status, 200);
