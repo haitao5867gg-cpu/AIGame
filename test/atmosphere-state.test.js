@@ -46,7 +46,7 @@ test('normalizePrefs：缺省 / 非法入参一律回完整默认（首次安静
 test('normalizePrefs：合法字段原样；非法类型保留默认；原型键不当合法 mode', () => {
   assert.deepEqual(A.normalizePrefs({
     background: false, enabled: true, musicVolume: 0.5, ambienceVolume: 0, mode: 'tense',
-  }), { background: false, enabled: true, musicVolume: 0.5, ambienceVolume: 0, mode: 'tense' });
+  }), { background: false, enabled: true, musicVolume: 0.5, ambienceVolume: 0, mode: 'tense', reading: 'auto' });
 
   const allBad = A.normalizePrefs({
     background: 'true', enabled: 1, musicVolume: 'loud', ambienceVolume: {}, mode: 'constructor',
@@ -69,7 +69,7 @@ test('normalizePrefs：音量仅有限 number 夹 0..1（0 合法、NaN/Infinity
 test('normalizePrefs(raw, base)：部分 merge 保留当前值，非法字段保留当前，缺省取当前', () => {
   const cur = A.normalizePrefs({ enabled: true, mode: 'tense', musicVolume: 0.3 });
   assert.deepEqual(A.normalizePrefs({ ambienceVolume: 0.2 }, cur), {
-    background: true, enabled: true, musicVolume: 0.3, ambienceVolume: 0.2, mode: 'tense',
+    background: true, enabled: true, musicVolume: 0.3, ambienceVolume: 0.2, mode: 'tense', reading: 'auto',
   });
   // 非法部分不擦当前值
   assert.equal(A.normalizePrefs({ musicVolume: 'loud' }, cur).musicVolume, 0.3);
@@ -350,5 +350,44 @@ test('resolve：场景未知 / 非法入参保守回退，不抛错', () => {
     assert.doesNotThrow(() => { r = A.resolve(bad); }, `入参 ${JSON.stringify(bad)}`);
     assert.deepEqual(r, fallback, `入参 ${JSON.stringify(bad)}`);
     assert.deepEqual(A.resolve(bad, undefined), fallback);
+  }
+});
+
+// ---------- reading 字段与 resolveReading ----------
+
+test('normalizePrefs：reading 合法值原样；非法（字符串/数字/null/原型键）回默认或 base', () => {
+  assert.equal(A.DEFAULT_ATMOSPHERE.reading, 'auto');
+  for (const r of ['auto', 'paper', 'night']) {
+    assert.equal(A.normalizePrefs({ reading: r }).reading, r, '合法 ' + r);
+  }
+  for (const bad of ['bright', 1, null, '__proto__', 'constructor']) {
+    assert.equal(A.normalizePrefs({ reading: bad }).reading, 'auto', '非法回默认 ' + String(bad));
+    assert.equal(A.normalizePrefs({ reading: bad }, { reading: 'night' }).reading, 'night',
+      '非法回 base ' + String(bad));
+  }
+  // 缺省取 base / 部分 merge 不动 reading
+  const cur = A.normalizePrefs({ reading: 'paper', mode: 'tense' });
+  assert.equal(A.normalizePrefs({ mode: 'calm' }, cur).reading, 'paper');
+  assert.equal(A.normalizePrefs({ mode: 'calm' }, cur).mode, 'calm');
+});
+
+test('resolveReading：六种组合 + 非法 reading 按 auto（dawn/day 亮，其它暗）', () => {
+  const cases = [
+    ['auto', 'dawn', 'paper'],
+    ['auto', 'day', 'paper'],
+    ['auto', 'dusk', 'night'],
+    ['auto', 'night', 'night'],
+    ['paper', 'night', 'paper'],
+    ['night', 'day', 'night'],
+  ];
+  for (const [r, p, want] of cases) {
+    assert.equal(A.resolveReading(r, p), want, r + '+' + p);
+  }
+  for (const bad of ['bright', undefined, null, 1]) {
+    assert.equal(A.resolveReading(bad, 'dawn'), 'paper');
+    assert.equal(A.resolveReading(bad, 'day'), 'paper');
+    assert.equal(A.resolveReading(bad, 'dusk'), 'night');
+    assert.equal(A.resolveReading(bad, 'night'), 'night');
+    assert.equal(A.resolveReading(bad, 'BOGUS'), 'night', '未知时辰按夜');
   }
 });

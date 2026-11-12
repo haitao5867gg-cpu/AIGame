@@ -6,6 +6,20 @@ var Atmosphere = (function () {
   var backdrop = null, catalogFailed = false;
   var sceneArt = null, shownSrc = null, sceneToken = 0;
   var localEdits = {}, voiceState = { active: false, paused: false };
+  var READING_LABELS = { auto: '跟随时辰', paper: '纸页', night: '夜色' };
+  var READING_CYCLE = { auto: 'paper', paper: 'night', night: 'auto' };
+  var READING_HINT = { auto: '（白天亮、夜里暗）', paper: '（始终亮色）', night: '（始终暗色）' };
+  function renderReadingLabels() {
+    var label = READING_LABELS[prefs.reading] || READING_LABELS.auto;
+    var menu = document.getElementById('menu-read-name'); if (menu) menu.textContent = label;
+    var g = document.getElementById('g-read'); if (g) g.textContent = '底色·' + label;
+  }
+  function cycleReading() {
+    if (!world) return;
+    var next = READING_CYCLE[prefs.reading] || 'auto';
+    change({ reading: next }, true);
+    toast('阅读底色：' + READING_LABELS[next] + READING_HINT[next]);
+  }
   function audio() {
     if (!controller && typeof window.Audio === 'function') {
       controller = AtmosphereAudio.create({ Audio: window.Audio, AudioContext: window.AudioContext || window.webkitAudioContext || null });
@@ -64,9 +78,11 @@ var Atmosphere = (function () {
     if (scene) {
       document.body.setAttribute('data-genre', genreKey(scene.theme));
       document.body.setAttribute('data-period', scene.period);
+      document.body.setAttribute('data-read', AtmosphereState.resolveReading(prefs.reading, scene.period));
     } else {
       document.body.removeAttribute('data-genre');
       document.body.removeAttribute('data-period');
+      document.body.removeAttribute('data-read');
     }
     if (!backdrop) backdrop = document.getElementById('world-backdrop');
     var src = null, artKind = null;
@@ -104,6 +120,7 @@ var Atmosphere = (function () {
     }
     var c = audio(); if (c) { c.setPrefs(prefs); c.setScene(scene); }
     refreshStatus();
+    renderReadingLabels();
   }
   function loadCatalog(retry) {
     if (catalogPromise && !retry) return catalogPromise;
@@ -162,13 +179,14 @@ var Atmosphere = (function () {
     sceneArt = null; shownSrc = null; sceneToken++;
     document.body.removeAttribute('data-genre');
     document.body.removeAttribute('data-period');
+    document.body.removeAttribute('data-read');
     if (backdrop) { backdrop.hidden = true; backdrop.style.backgroundImage = ''; }
     document.body.classList.remove('atmosphere-background'); closeSettings(); refreshStatus();
   }
   function setVoiceState(s) { voiceState = { active: !!(s && s.active), paused: !!(s && s.paused) }; var c = audio(); if (c) c.setVoiceState(voiceState); }
   function syncFields() {
     if (!modal) return;
-    ['enabled', 'background', 'musicVolume', 'ambienceVolume', 'mode'].forEach(function (key) {
+    ['enabled', 'background', 'musicVolume', 'ambienceVolume', 'mode', 'reading'].forEach(function (key) {
       var node = document.getElementById('atmosphere-' + key); if (!node) return;
       if (node.type === 'checkbox') node.checked = prefs[key]; else node.value = String(prefs[key]);
       var out = document.getElementById('atmosphere-' + key + '-value'); if (out) out.textContent = Math.round(prefs[key] * 100) + '%';
@@ -204,6 +222,13 @@ var Atmosphere = (function () {
         if (pair[0] === 'enabled' && input.checked) { var c = audio(); if (c) c.enableFromGesture().then(refreshStatus); }
       }); row.appendChild(input); row.appendChild(document.createTextNode(pair[1])); card.appendChild(row);
     });
+    var readLabel = el('label', 'atmosphere-mode', '阅读底色'); readLabel.htmlFor = 'atmosphere-reading';
+    var readSelect = el('select'); readSelect.id = 'atmosphere-reading';
+    [['auto', '跟随时辰（白天亮、夜里暗）'], ['paper', '纸页（始终亮色）'], ['night', '夜色（始终暗色）']].forEach(function (p) {
+      var option = el('option', '', p[1]); option.value = p[0]; readSelect.appendChild(option);
+    });
+    readSelect.addEventListener('change', function () { change({ reading: readSelect.value }, true); });
+    readLabel.appendChild(readSelect); card.appendChild(readLabel);
     [['musicVolume', '音乐音量'], ['ambienceVolume', '环境音量']].forEach(function (pair) {
       var row = el('label', 'atmosphere-volume', pair[1]); row.htmlFor = 'atmosphere-' + pair[0];
       var out = el('span'); out.id = row.htmlFor + '-value'; row.appendChild(out);
@@ -258,5 +283,5 @@ var Atmosphere = (function () {
   window.addEventListener('pageshow', function () { if (controller) controller.setHidden(document.hidden === true); });
   return { applyPrefs: applyPrefs, enterWorld: enterWorld, leaveWorld: leaveWorld,
     openSettings: openSettings, closeSettings: closeSettings, setVoiceState: setVoiceState, toggle: toggle,
-    setSceneArt: setSceneArt };
+    setSceneArt: setSceneArt, cycleReading: cycleReading };
 })();

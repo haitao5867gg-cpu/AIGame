@@ -65,6 +65,7 @@
         else if (act === 'genre') openGenrePop();
         else if (act === 'logout') doLogout();
         else if (act === 'atmosphere' && typeof Atmosphere !== 'undefined') Atmosphere.openSettings();
+        else if (act === 'read' && typeof Atmosphere !== 'undefined') Atmosphere.cycleReading();
       });
     });
 
@@ -107,6 +108,7 @@
     $('g-logout').addEventListener('click', function (e) { e.preventDefault(); doLogout(); });
     if ($('btn-atmosphere')) $('btn-atmosphere').addEventListener('click', function () { Atmosphere.toggle(); });
     if ($('g-atmosphere-settings')) $('g-atmosphere-settings').addEventListener('click', function () { Atmosphere.openSettings(); });
+    if ($('g-read')) $('g-read').addEventListener('click', function () { Atmosphere.cycleReading(); });
     api('/api/me').then(renderPlayerInfo).catch(function () {});
     route();
   }

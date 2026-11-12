@@ -109,12 +109,14 @@ function mergeTts(cur, patch) {
 // ---- 世界氛围偏好（每玩家隔离，固定形状）----
 // enabled 仅是玩家意愿，不代表浏览器已解锁；缺省首次安静（enabled:false）。
 const ATMOSPHERE_MODES = Object.freeze({ auto: true, calm: true, explore: true, tense: true });
+const READING_MODES = Object.freeze({ auto: true, paper: true, night: true });
 const DEFAULT_ATMOSPHERE = Object.freeze({
   background: true,
   enabled: false,
   musicVolume: 0.16,
   ambienceVolume: 0.10,
   mode: 'auto',
+  reading: 'auto',
 });
 
 // 音量仅有限 number，夹 0..1；非法（字符串 / NaN / Infinity / 缺省）保留 fallback。
@@ -137,6 +139,8 @@ function normalizeAtmosphere(raw, base) {
     ambienceVolume: clampVolume(t.ambienceVolume, b.ambienceVolume),
     mode: typeof t.mode === 'string' && Object.prototype.hasOwnProperty.call(ATMOSPHERE_MODES, t.mode)
       ? t.mode : b.mode,
+    reading: typeof t.reading === 'string' && Object.prototype.hasOwnProperty.call(READING_MODES, t.reading)
+      ? t.reading : b.reading,
   };
 }
 

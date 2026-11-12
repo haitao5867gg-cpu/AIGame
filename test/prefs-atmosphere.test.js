@@ -52,7 +52,7 @@ test('normalizeAtmosphere / mergeAtmosphere：非法类型、音量边界、mode
   const cur = prefs.normalizeAtmosphere({ enabled: true, mode: 'tense', musicVolume: 0.4 });
   // 非法部分保留当前值，缺省取当前值
   assert.deepEqual(prefs.mergeAtmosphere(cur, { ambienceVolume: 0.2 }), {
-    background: true, enabled: true, musicVolume: 0.4, ambienceVolume: 0.2, mode: 'tense',
+    background: true, enabled: true, musicVolume: 0.4, ambienceVolume: 0.2, mode: 'tense', reading: 'auto',
   });
   assert.equal(prefs.mergeAtmosphere(cur, { musicVolume: 'loud' }).musicVolume, 0.4, '非法保留当前');
   assert.equal(prefs.mergeAtmosphere(cur, { mode: 'BOGUS' }).mode, 'tense', '非法保留当前');
@@ -70,7 +70,7 @@ test('setPrefs：部分 merge、非法保留当前、音量 0/NaN、不擦 tts/s
 
   const out = prefs.setPrefs(dir, 'pA', { atmosphere: { enabled: true, musicVolume: 0.4, mode: 'tense' } });
   assert.deepEqual(out.atmosphere, {
-    background: true, enabled: true, musicVolume: 0.4, ambienceVolume: 0.10, mode: 'tense',
+    background: true, enabled: true, musicVolume: 0.4, ambienceVolume: 0.10, mode: 'tense', reading: 'auto',
   });
   const got = prefs.getPrefs(dir, 'pA');
   assert.deepEqual(got.atmosphere, out.atmosphere, 'GET 读到同一归一化对象');
@@ -137,9 +137,43 @@ test('接口：GET /api/me 附完整默认；POST /api/prefs 仅提交 atmospher
     // 提交 atmosphere → 在原有响应附它
     r = await req(base, 'POST', '/api/prefs', { atmosphere: { mode: 'calm', musicVolume: 0.3 } });
     assert.deepEqual(r.json.prefs.atmosphere, {
-      background: true, enabled: false, musicVolume: 0.3, ambienceVolume: 0.10, mode: 'calm',
+      background: true, enabled: false, musicVolume: 0.3, ambienceVolume: 0.10, mode: 'calm', reading: 'auto',
     });
     me = await req(base, 'GET', '/api/me');
     assert.equal(me.json.prefs.atmosphere.mode, 'calm', 'GET 读到已保存值');
   });
+});
+
+test('setPrefs / normalizeAtmosphere：reading 合法值保存、非法保留、部分更新隔离、旧存档回 auto', (t) => {
+  const dir = tmpDir(); cleanup(t, dir);
+  assert.equal(prefs.DEFAULT_ATMOSPHERE.reading, 'auto');
+  assert.equal(prefs.getPrefs(dir, 'host').atmosphere.reading, 'auto', '缺省 auto');
+  // 合法值逐个生效并持久化
+  for (const r of ['auto', 'paper', 'night']) {
+    assert.equal(prefs.normalizeAtmosphere({ reading: r }).reading, r);
+    assert.equal(prefs.setPrefs(dir, 'host', { atmosphere: { reading: r } }).atmosphere.reading, r);
+    assert.equal(prefs.getPrefs(dir, 'host').atmosphere.reading, r, 'GET 读到 ' + r);
+  }
+  // 非法值（含字符串 / 数字 / null）保留原值
+  prefs.setPrefs(dir, 'host', { atmosphere: { reading: 'paper' } });
+  for (const bad of ['bright', 1, null]) {
+    assert.equal(prefs.normalizeAtmosphere({ reading: bad }, { reading: 'night' }).reading, 'night');
+    assert.equal(prefs.setPrefs(dir, 'host', { atmosphere: { reading: bad } }).atmosphere.reading, 'paper',
+      '非法 ' + String(bad) + ' 保留当前 paper');
+  }
+  // 部分更新只改 reading，不动其它字段
+  prefs.setPrefs(dir, 'host', { atmosphere: { enabled: true, musicVolume: 0.42, mode: 'tense', background: false } });
+  const out = prefs.setPrefs(dir, 'host', { atmosphere: { reading: 'night' } }).atmosphere;
+  assert.equal(out.reading, 'night');
+  assert.equal(out.enabled, true);
+  assert.equal(out.musicVolume, 0.42);
+  assert.equal(out.mode, 'tense');
+  assert.equal(out.background, false);
+  // 旧存档缺 reading → 读出 auto，且不影响其它玩家
+  const all = JSON.parse(fs.readFileSync(prefs.prefsPath(dir), 'utf8'));
+  all.legacy = { atmosphere: { mode: 'calm', musicVolume: 0.3 } };
+  fs.writeFileSync(prefs.prefsPath(dir), JSON.stringify(all));
+  assert.equal(prefs.getPrefs(dir, 'legacy').atmosphere.reading, 'auto', '旧存档缺 reading 回 auto');
+  assert.equal(prefs.getPrefs(dir, 'legacy').atmosphere.mode, 'calm');
+  assert.equal(prefs.getPrefs(dir, 'host').atmosphere.reading, 'night', '其它玩家不受影响');
 });

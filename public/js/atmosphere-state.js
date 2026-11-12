@@ -23,12 +23,14 @@ function () {
   'use strict';
 
   var MODES = { auto: true, calm: true, explore: true, tense: true };
+  var READING_MODES = { auto: true, paper: true, night: true };
   var DEFAULT_ATMOSPHERE = Object.freeze({
     background: true,
     enabled: false,
     musicVolume: 0.16,
     ambienceVolume: 0.10,
     mode: 'auto',
+    reading: 'auto',
   });
 
   function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
@@ -51,7 +53,14 @@ function () {
       musicVolume: clampVolume(t.musicVolume, b.musicVolume),
       ambienceVolume: clampVolume(t.ambienceVolume, b.ambienceVolume),
       mode: typeof t.mode === 'string' && hasOwn(MODES, t.mode) ? t.mode : b.mode,
+      reading: typeof t.reading === 'string' && hasOwn(READING_MODES, t.reading) ? t.reading : b.reading,
     };
+  }
+
+  // 阅读底色：显式 paper / night 原样返回；其余（auto / 非法）随时辰——dawn/day 亮、其它暗。
+  function resolveReading(reading, period) {
+    if (reading === 'paper' || reading === 'night') return reading;
+    return (period === 'dawn' || period === 'day') ? 'paper' : 'night';
   }
 
   // ---------- 只读、确定性分类 ----------
@@ -244,6 +253,7 @@ function () {
   return {
     normalizePrefs: normalizePrefs,
     resolve: resolve,
+    resolveReading: resolveReading,
     DEFAULT_ATMOSPHERE: DEFAULT_ATMOSPHERE,
   };
 });

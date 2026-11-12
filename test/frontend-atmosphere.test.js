@@ -165,6 +165,7 @@ test('prefs.background=false 时底图隐藏，但 body 仍设 data-genre 供整
   assert.equal(h.backdrop.style.backgroundImage, '', '不设置背景图');
   assert.equal(h.backdrop.dataset.art, '', '无来源标记');
   assert.equal(h.attrs['data-genre'], 'urban', '仍设置 data-genre');
+  assert.equal(h.attrs['data-read'], 'paper', '关掉背景也照样按底色走（day→paper）');
 });
 
 test('题材门图：未知/缺失题材用 door-general，xuanhuan 非田间用 door-xuanhuan', async () => {
@@ -195,9 +196,64 @@ test('leaveWorld 清掉场景图与 body 标记，重进世界不带旧场景图
   h.app.leaveWorld();
   assert.equal(h.attrs['data-genre'], undefined, '移除 data-genre');
   assert.equal(h.attrs['data-period'], undefined, '移除 data-period');
+  assert.equal(h.attrs['data-read'], undefined, '移除 data-read');
   assert.equal(h.backdrop.style.backgroundImage, '', '清空 backgroundImage');
   h.app.enterWorld({ id: 'w1', genre: 'urban' });
   await settled();
   assert.equal(h.backdrop.dataset.art, 'genre', '重进世界回到门图');
   assert.equal(h.backdrop.style.backgroundImage, 'url("/assets/home/door-urban-v1.jpg")', '不带旧场景图');
+});
+
+// ---------- 阅读底色（data-read） ----------
+
+test('阅读底色：跟随时辰 午后 paper / 深夜 night；手动 paper/night 覆盖时辰', () => {
+  const h = setup(); h.app.applyPrefs({}, 'host');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', clock: { period: '午后' } });
+  assert.equal(h.attrs['data-read'], 'paper', '午后 day → paper');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', clock: { period: '深夜' } });
+  assert.equal(h.attrs['data-read'], 'night', '深夜 night → night');
+  h.app.applyPrefs({ atmosphere: { reading: 'night' } }, 'host');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', clock: { period: '午后' } });
+  assert.equal(h.attrs['data-read'], 'night', 'reading=night 午后也 night');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', clock: { period: '深夜' } });
+  h.app.applyPrefs({ atmosphere: { reading: 'paper' } }, 'host');
+  assert.equal(h.attrs['data-read'], 'paper', 'reading=paper 深夜也 paper');
+});
+
+test('阅读底色：无世界时 cycleReading 不做任何事', () => {
+  const h = setup(); h.app.applyPrefs({}, 'host');
+  h.app.cycleReading(); h.tick();
+  assert.equal(h.requests.length, 0);
+  assert.ok(!h.calls.some(c => c[0] === 'toast'));
+});
+
+test('cycleReading 连调三次依次保存 paper→night→auto 并 toast（串行保存）', async () => {
+  const h = setup(); h.app.applyPrefs({}, 'host');
+  h.app.enterWorld({ id: 'w1', genre: 'urban', clock: { period: '午后' } });
+  const want = ['paper', 'night', 'auto'];
+  for (let i = 0; i < 3; i++) {
+    h.app.cycleReading();
+    h.tick();
+    assert.equal(h.requests.length, i + 1, '第 ' + (i + 1) + ' 次产生一条请求');
+    assert.deepEqual(h.requests[i].body, { atmosphere: { reading: want[i] } });
+    h.requests[i].resolve({});
+    await settled();
+  }
+  const toasts = h.calls.filter(c => c[0] === 'toast').map(c => c[1]);
+  assert.deepEqual(toasts, [
+    '阅读底色：纸页（始终亮色）',
+    '阅读底色：夜色（始终暗色）',
+    '阅读底色：跟随时辰（白天亮、夜里暗）',
+  ]);
+  assert.equal(h.context.myPrefs.atmosphere.reading, 'auto', '三次回到 auto');
+});
+
+test('阅读底色：入口与设置弹层静态检查', () => {
+  const root = path.join(__dirname, '..', 'public');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'js', 'main.js'), 'utf8');
+  assert.match(html, /id="menu-read"[^>]*data-menu="read"/, '⋯ 菜单有阅读底色项');
+  assert.match(html, /id="g-read"/, '桌面地点行有 #g-read');
+  assert.equal((main.match(/cycleReading\(\)/g) || []).length, 2, 'main.js 两处调用 cycleReading');
+  assert.match(source, /atmosphere-reading/, '设置弹层有阅读底色下拉');
 });
