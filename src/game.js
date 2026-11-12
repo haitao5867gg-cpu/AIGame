@@ -18,6 +18,7 @@ const profiles = require('./profiles.js');
 const outlineMod = require('./outline.js');
 const historyMod = require('./history.js');
 const writingMode = require('./writing-mode.js');
+const adultMode = require('./adult-mode.js');
 
 // 正在后台总结画像的玩家（key = dataDir + playerId，避免多个 createGame 实例互相误判）。
 // 后台总结在 takeTurn 里「不 await」发起，靠 finally 从这里移除，防止同一玩家重复触发。
@@ -576,6 +577,9 @@ function createGame(cfg, dataDir) {
     const givenName = (typeof data.name === 'string' && data.name.trim()) ? data.name.trim().slice(0, 12) : '';
     const givenAppearance = (typeof data.appearance === 'string' && data.appearance.trim()) ? data.appearance.trim().slice(0, 40) : '';
     const identity = (typeof data.identity === 'string' && data.identity.trim()) ? data.identity.trim().slice(0, 80) : '';
+    // 成人模式：权限 / 年龄确认 / 网关配置由 server.js 先查；这里只拦涉及未成年人的性内容。
+    const adult = data.adultMode === true;
+    if (adult) adultMode.assertSeedAllowed([seed, identity, givenName, givenAppearance]);
     const id = newWorldId();
 
     return store.withWorldLock(id, async () => {
@@ -606,6 +610,10 @@ function createGame(cfg, dataDir) {
         );
       } catch (err) {
         throw httpError(400, err && err.message ? err.message : '属性点分配非法');
+      }
+      if (adult) {
+        state.adultMode = true; // 建世界时定下，之后不再改（路由按世界 ID 缓存）
+        adultMode.assertWorldAllowed(state, bible);
       }
       // 新世界继承玩家画像：画像已成熟（turns≥10）时用 seedPersona 覆盖初始 persona。
       // 只改新世界的初始 persona，不动引擎；读取失败一律忽略，绝不影响建世界。
@@ -904,6 +912,11 @@ function createGame(cfg, dataDir) {
     return client.usageToday(Date.now(), playerId);
   }
 
+  // 成人模式单独的 token 账本（不传 playerId = 全局）。
+  function adultUsageToday(playerId) {
+    return client.adultUsageToday(Date.now(), playerId);
+  }
+
   // 收集某位已公开人物的「全部」履历：复用 getNpcHistory 的排他 eventIndex 游标逐页翻，
   // 直到 hasMore=false，绝不只取前 20/50 条。任何「声称还有记录却无法安全推进」的异常
   // （空页、hasMore 与 nextCursor 不一致、游标不前进 / 倒退循环、guard 耗尽、实收条目
@@ -1032,6 +1045,8 @@ function createGame(cfg, dataDir) {
         if (!timeSkip) throw httpError(400, '时光推进参数无效');
         action = `【时光推进·${timeSkip.label}】${timeSkip.plan || '按眼下的日子过下去'}`;
       }
+      // 成人模式：行动里出现涉及未成年人的性内容，直接拒绝、不调模型。
+      adultMode.assertInputAllowed(state, action);
       // 叙事 v3：先按五段任务书写纯正文（流式），再从正文里记账，最后照旧交给引擎结算。
       let writingPref = 'fine';
       try { writingPref = prefs.getPrefs(dataDir, context.currentPlayerId() || 'host').writing; } catch (_) { writingPref = 'fine'; }
@@ -1051,7 +1066,7 @@ function createGame(cfg, dataDir) {
 
       const usages = [];
       // 成人模式按当前请求的玩家判定：主人总开关开 且 该玩家 adult 为 true 才用「开」档。
-      const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
+      const adultPrompt = adultMode.isAdultWorld(state) || prefs.adultModeOn(dataDir, context.currentPlayerId());
 
       // 1) 主回合调用：叙事 + 提议 + （开启事件时）event / （结算事件时）event_check。
       // 数值槽名字列表：供 LLM_MOCK 的回合夹具产出 stats_diff（真实模型不需要）。
@@ -1078,6 +1093,7 @@ function createGame(cfg, dataDir) {
         turnCtx, usages, onDelta,
       );
       const out = tp.parsed;
+      adultMode.assertProseAllowed(state, out.narration);
       const proposal = {
         narration: out.narration,
         state_diff: out.state_diff,
@@ -1219,7 +1235,7 @@ function createGame(cfg, dataDir) {
           action,
           genre: finalState.genre,
           title: bible.title,
-          adult: resolved.result.adult === true,
+          adult: resolved.result.adult === true || adultMode.isAdultWorld(finalState), // 成人模式世界的行动不进跨世界画像
           now,
         });
         maybeSummarizeProfile(playerId, updated);
@@ -1322,7 +1338,7 @@ function createGame(cfg, dataDir) {
     const card = outlineMod.currentCard(state);
     const chapterIndex = state.chapter.index;
     const chapterTurn = (Number(state.chapter.turns) || 0) + 1;
-    const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
+    const adultPrompt = adultMode.isAdultWorld(state) || prefs.adultModeOn(dataDir, context.currentPlayerId());
     let mode = 'fine';
     try { mode = prefs.getPrefs(dataDir, playerId).writing; } catch (_) { mode = 'fine'; }
     const wc = writingMode.writingCall(cfg, mode);
@@ -1347,6 +1363,7 @@ function createGame(cfg, dataDir) {
     usages.push(sr.usage);
     const prose = cleanProse(sr.content);
     if (prose.length < engine.NARRATION_MIN) throw httpError(502, '这一节没写出来，请重试');
+    adultMode.assertProseAllowed(state, prose); // 成人模式：涉及未成年人的性内容不落库（前端会撤掉已流出的半成品）
 
     // 2) 记账：快速模型从正文里抽字段；失败不阻断——正文已经写好，回合照样落库。
     const lc = writingMode.ledgerCall(cfg);
@@ -1502,7 +1519,7 @@ function createGame(cfg, dataDir) {
       const bible = finalState.bible || {};
       const updated = profiles.recordTurn(dataDir, playerId, {
         tags, action, genre: finalState.genre, title: bible.title,
-        adult: resolved.result.adult === true, now,
+        adult: resolved.result.adult === true || adultMode.isAdultWorld(finalState), now,
       });
       maybeSummarizeProfile(playerId, updated);
     } catch (_) { /* 画像出错绝不影响回合 */ }
@@ -1686,7 +1703,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, chooseOrigin, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, chooseOrigin, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, adultUsageToday, getWorldLog,
     exportWorld, undoTurn, listScenes, getNpcDetail, suggestActions,
   };
 }

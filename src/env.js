@@ -25,6 +25,13 @@ const DEFAULTS = Object.freeze({
   // 每位玩家（含主人）各自的每日 token 上限；0 表示不限。与全局上限相互独立。
   LLM_PLAYER_DAILY_TOKEN_LIMIT: '1000000',
   LLM_EXTRA_BODY: '', // JSON 字符串，合并进 LLM 请求体；解析失败忽略并告警
+  // ---- 成人模式（建世界时勾选；这类世界的全部 LLM 调用改走这个网关，token 单独记账，见 src/adult-mode.js）----
+  ADULT_LLM_BASE: 'https://api.experientiallabs.ai/v1', // OpenAI Chat Completions 兼容
+  ADULT_LLM_MODEL: 'deepseek-v4.1-flash-uncensored',   // 成人模式世界所有用途都用这一个模型
+  EXPLABS_API_KEY: '',             // Experiential 的 API Key（用户自己写进 .env 或环境变量；空 = 成人模式不可用）
+  ADULT_LLM_EXTRA_BODY: '',        // 只合并进成人模式请求的 JSON（普通网关的 LLM_EXTRA_BODY 不带过去）
+  ADULT_LLM_DAILY_TOKEN_LIMIT: '2000000',        // 成人模式全局每日 token 上限；0 表示不限
+  ADULT_LLM_PLAYER_DAILY_TOKEN_LIMIT: '1000000', // 成人模式每位来客每日上限（主人不受限）；0 表示不限
   LLM_BASE_URL: '',  // LLM_BASE 的别名；gateway 图片默认复用「LLM base URL」
   PORT: '8787',
   HOST: '0.0.0.0',
@@ -80,7 +87,7 @@ const NUMERIC_KEYS = Object.freeze([
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
   'CLOUDFLARE_DAILY_NEURONS', 'CLOUDFLARE_RESERVE_FROM',
   'TTS_PLAYER_DAILY_CHARS', 'TTS_CACHE_MAX_MB', 'TTS_MONTHLY_CHARS', 'TTS_MONTHLY_STOP_AT',
-  'STORY_HISTORY_BUDGET',
+  'STORY_HISTORY_BUDGET', 'ADULT_LLM_DAILY_TOKEN_LIMIT', 'ADULT_LLM_PLAYER_DAILY_TOKEN_LIMIT',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

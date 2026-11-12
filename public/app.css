@@ -71,6 +71,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .wc-status{font-family:var(--sans);font-size:11px;letter-spacing:.15em;
   padding:3px 10px;border-radius:999px;color:#ffb9ad;
   border:1px solid rgba(224,84,63,.6);background:rgba(110,20,10,.5)}
+.wc-adult{font-family:var(--sans);font-size:11px;letter-spacing:.08em;font-weight:600;
+  padding:3px 9px;border-radius:999px;color:#fff;background:rgba(192,57,43,.85);border:1px solid rgba(255,255,255,.2)}
 .wc-recent{position:absolute;top:12px;right:12px;z-index:2;
   font-family:var(--sans);font-size:11px;letter-spacing:.1em;
   padding:3px 10px;border-radius:999px;color:#fff;
@@ -309,6 +311,13 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .identity-row{display:flex;align-items:stretch;gap:8px}
 .identity-row input{flex:1;min-width:0}
 .identity-row .btn{flex:none;white-space:nowrap}
+/* 成人模式（新世界页）：默认关，勾选前弹 18 岁确认 */
+.adult-mode-row{margin-top:10px;padding:10px 12px;border:1px solid rgba(224,84,63,.45);border-radius:10px;
+  background:rgba(110,20,10,.18)}
+.adult-mode-check{display:flex;align-items:center;gap:8px;min-height:40px;font-family:var(--sans);font-size:15px;
+  color:var(--ink);cursor:pointer}
+.adult-mode-check input{width:20px;height:20px;margin:0;accent-color:var(--accent-2)}
+.adult-mode-note{font-family:var(--sans);font-size:12px;line-height:1.6;color:var(--muted)}
 .creating{font-family:var(--sans);font-size:14px;color:var(--accent-2);margin-top:12px;letter-spacing:1px}
 .dots{animation:blink 1.1s infinite}
 @keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
@@ -362,6 +371,17 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   font-size:14px;color:var(--ink);background:transparent;border:0;border-radius:6px;padding:8px 12px}
 .genre-option:hover,.genre-option:active{background:var(--bg-2)}
 .genre-option.selected{color:var(--accent-2);font-weight:600}
+/* 成人模式模型设置弹层：两排分段按钮（思考强度 / 发挥） */
+.adult-llm-pop{min-width:260px;max-width:min(340px,calc(100vw - 32px))}
+.adult-llm-model{font-family:var(--sans);font-size:12px;color:var(--ink);padding:0 12px 6px;word-break:break-all}
+.adult-llm-row{padding:6px 12px}
+.adult-llm-label{font-family:var(--sans);font-size:12px;color:var(--muted);margin-bottom:6px}
+.adult-llm-opts{display:flex;flex-wrap:wrap;gap:6px}
+.adult-llm-opt{min-height:40px;min-width:48px;padding:6px 12px;font-family:var(--sans);font-size:14px;color:var(--ink);
+  background:var(--bg-2);border:1px solid var(--line);border-radius:8px}
+.adult-llm-opt:hover{border-color:var(--accent-2)}
+.adult-llm-opt.selected{border-color:var(--accent-2);color:var(--accent-2);font-weight:600}
+.adult-llm-note{font-family:var(--sans);font-size:12px;line-height:1.6;color:var(--muted);padding:6px 12px 4px}
 @keyframes dangerFlash{from{opacity:.42}to{opacity:1}}
 #btn-panel{display:none}
 .event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);

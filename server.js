@@ -17,6 +17,7 @@ const llmMod = require('./src/llm.js');
 const prefs = require('./src/prefs.js');
 const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
+const adultMode = require('./src/adult-mode.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -337,10 +338,22 @@ function triggerScene(images, dataDir, result) {
   }
 }
 
+// 成人模式：/api/worlds/:id/... 的请求，世界是成人模式就返回 'adult'，否则 null。
+function llmRouteOf(req, dataDir) {
+  const m = /^\/api\/worlds\/([^/?#]+)/.exec(String(req.url || ''));
+  if (!m) return null;
+  let id;
+  try { id = decodeURIComponent(m[1]); } catch (_) { return null; }
+  if (!WORLD_ID_PATTERN.test(id)) return null;
+  return adultMode.worldRoute(dataDir, id);
+}
+
 function handle(req, res, cfg, g, images, dataDir, access, runtime) {
   const player = access.playerOf(req);
-  // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家。
-  return context.run({ playerId: player ? player.id : null },
+  // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家；
+  // 成人模式世界的请求再带上 llmRoute:'adult'，这次请求里的全部 LLM 调用改走成人模式网关。
+  const llmRoute = player ? llmRouteOf(req, dataDir) : null;
+  return context.run({ playerId: player ? player.id : null, llmRoute },
     () => route(req, res, cfg, g, images, dataDir, access, player, runtime));
 }
 
@@ -398,6 +411,11 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, {
       id: player.id, name: player.name, host: !!(player && player.host),
       prefs: prefs.getPrefs(dataDir, player.id),
+      // 新世界页据此显示「成人模式」选项：网关配好了（configured）且这位玩家可以用（allowed）。
+      adultMode: {
+        configured: adultMode.isConfigured(cfg),
+        allowed: adultMode.playerAllowed(dataDir, player),
+      },
     });
   }
   if (pathname === '/api/prefs' && method === 'POST') {
@@ -458,7 +476,10 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
 
   // ---- 无世界 ID 的接口 ----
   if (pathname === '/api/health' && method === 'GET') {
-    return sendJson(res, 200, { ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK, story: cfg.NARRATIVE_STYLE });
+    return sendJson(res, 200, {
+      ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK, story: cfg.NARRATIVE_STYLE,
+      adultMode: adultMode.isConfigured(cfg), // 只报配没配好，绝不带 Key
+    });
   }
   if (pathname === '/api/usage' && method === 'GET') {
     return sendJson(res, 200, g.usage());
@@ -468,6 +489,9 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     const isHost = !!(player && player.host);
     // 来客：只看自己（按 player.id 过滤，用每人上限）；主人：保持原来的全局视图（全局上限）。
     const u = isHost ? g.usageToday() : g.usageToday(player.id);
+    // 成人模式单独记账：主人看全局，来客只看自己。
+    u.adult = isHost ? g.adultUsageToday() : g.adultUsageToday(player.id);
+    u.adult.configured = adultMode.isConfigured(cfg);
     const st = images.providerStatus();
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
@@ -488,7 +512,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
       u.global = g.usageToday().tokens;
       const names = access.playerNames();
       u.players = llmMod.summarizePlayers(store.readJsonl(store.usagePath(dataDir)), now)
-        .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total }));
+        .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total, adult: p.adult }));
       u.access = { password: access.password(), hostPassword: access.hostPassword() };
       u.playerNames = names;
       u.tunnel = { url: runtime && runtime.tunnel ? runtime.tunnel.url() : null };
@@ -516,7 +540,22 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
   }
   if (pathname === '/api/worlds' && method === 'POST') {
     const body = await readJsonBody(req);
-    const world = await g.buildWorld(body);
+    if (body && body.adultMode === true) {
+      // 成人模式：默认关；要玩家确认满 18 岁、主人开放（来客）、网关配好，三样缺一不可。
+      if (body.confirm18 !== true) return sendJson(res, 400, { error: '成人模式需要确认已年满 18 岁' });
+      if (!adultMode.playerAllowed(dataDir, player)) {
+        return sendJson(res, 403, { error: '主人还没有开放成人内容，不能建成人模式世界' });
+      }
+      if (!adultMode.isConfigured(cfg)) {
+        return sendJson(res, 503, { error: '成人模式还没配置好（服务器缺少 EXPLABS_API_KEY）' });
+      }
+      // 建世界的全部 LLM 调用（世界、大纲）都走成人模式网关。
+      const world = await context.run({ playerId: player.id, llmRoute: adultMode.ROUTE }, () => g.buildWorld(body));
+      accessMod.setOwner(dataDir, world.id, player.id);
+      triggerImages(images, dataDir, world);
+      return sendJson(res, 201, world);
+    }
+    const world = await g.buildWorld(Object.assign({}, body, { adultMode: false }));
     // 建世界成功后登记归属；无记录的老世界默认归 host。
     accessMod.setOwner(dataDir, world.id, player.id);
     // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
@@ -525,6 +564,11 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
   }
 
   // ---- 带世界 ID 的接口 ----
+  // 成人模式世界：来客只有在主人开着成人内容总开关时才能进（删除除外）。
+  if (context.currentLlmRoute() === adultMode.ROUTE && method !== 'DELETE'
+    && !adultMode.playerAllowed(dataDir, player)) {
+    return sendJson(res, 403, { error: '主人已关闭成人内容，成人模式世界暂时不能进入' });
+  }
   // 流式回合：POST /api/worlds/:id/turn/stream（text/event-stream），须在通用路由前匹配。
   const streamMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/turn\/stream$/);
   if (streamMatch) {

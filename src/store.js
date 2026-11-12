@@ -324,6 +324,7 @@ function listWorlds(dataDir) {
       period: state.clock && typeof state.clock.period === 'string'
         ? clipChars(state.clock.period, 6) : '',
       awaitingRebirth: !!state.awaitingRebirth,
+      adultMode: state.adultMode === true, // 成人模式世界：首页卡片标 18+
       excerpt: worldExcerpt(state),
     });
   }
