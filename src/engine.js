@@ -37,6 +37,7 @@ module.exports = {
   isInternalReject: util.isInternalReject,
   NARRATION_MIN: constants.NARRATION_MIN,
   NARRATION_MAX: constants.NARRATION_MAX,
+  STORY_NARRATION_MAX: constants.STORY_NARRATION_MAX,
   RECENT_MAX: constants.RECENT_MAX,
   RECENT_NARRATION_MAX: constants.RECENT_NARRATION_MAX,
   clamp: util.clamp,

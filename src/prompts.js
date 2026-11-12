@@ -1257,7 +1257,7 @@ function buildWriterMessages(state, ctx) {
   one.push('书名《' + title + '》。' + (card ? '现在写第 ' + card.index + ' 章《' + (card.title || '') + '》的第 ' + chapterTurn + ' 节。' : ''));
   if (card && card.goal) one.push('本章目标：' + card.goal);
   one.push('读者这回合的行动：' + action);
-  one.push('这一节就要写出这个行动的结果。');
+  one.push('这一节就要写出这个行动的结果。篇幅 800~1200 字，写到一个合适的停顿就收住，不要越写越长。');
   if (c.timeSkip) one.push('这一节是时间跳跃：从此刻起过去' + (c.timeSkip.label || '一段时间') + '，读者对这段时间的打算是「' + (c.timeSkip.plan || '按眼下的日子过下去') + '」。先按时间顺序概写这段日子（有代价、有挫折也有收获），再落到跳跃结束时一个具体的时刻。');
 
   // 二、故事到这里

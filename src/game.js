@@ -1197,7 +1197,15 @@ function createGame(cfg, dataDir) {
     t = lines.join('\n').trim();
     const jsonTail = t.search(/\n\s*\{\s*"[a-z_]+"\s*:/);
     if (jsonTail > 0) t = t.slice(0, jsonTail).trim();
-    return t.replace(/\n{3,}/g, '\n\n');
+    t = t.replace(/\n{3,}/g, '\n\n');
+    // 超过 v3 正文上限时在段落或句子边界收住，避免引擎在半句话处截断。
+    const max = engine.STORY_NARRATION_MAX || 2400;
+    if (t.length > max) {
+      const head = t.slice(0, max);
+      const cut = Math.max(head.lastIndexOf('\n\n'), head.lastIndexOf('。'), head.lastIndexOf('」'));
+      t = (cut > max * 0.6 ? head.slice(0, cut + 1) : head).trim();
+    }
+    return t;
   }
 
   // 到期伏笔：活跃线索里预计回收章 <= 当前章的那些。
