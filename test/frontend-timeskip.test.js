@@ -81,8 +81,8 @@ test('streamTurn 接收请求体对象，sendAction 发送 { action }', () => {
   assert.match(gameJs, /function streamTurn\(body, block\)/, 'streamTurn 参数改为 body');
   assert.match(gameJs, /JSON\.stringify\(body\)/, 'streamTurn 直接序列化请求体对象');
   const body = section(gameJs, 'async function sendAction() {', '// ---- 时光推进');
-  assert.match(body, /streamTurn\(\{ action: action \}, block\)/, 'sendAction 传 { action }');
-  assert.match(body, /JSON\.stringify\(\{ action: action \}\)/, '普通 /turn 回退同样传对象');
+  assert.match(body, /streamTurn\(\{ action: action, clientTurnId: cid \}, block\)/, 'sendAction 传 { action, clientTurnId }');
+  assert.match(body, /postTurnOnce\(worldId, \{ action: action, clientTurnId: cid \}\)/, '普通 /turn 回退带同一个 clientTurnId（取回，不重复执行）');
 });
 
 test('sendTimeSkip 发送 timeSkip 且 span 取自四个值', () => {
@@ -92,7 +92,7 @@ test('sendTimeSkip 发送 timeSkip 且 span 取自四个值', () => {
   const body = section(gameJs, 'async function sendTimeSkip(span, plan) {', '// ---- 宽屏插图镜像');
   assert.match(body, /timeSkip:\s*\{\s*span:\s*span,\s*plan:\s*plan\s*\}/, '请求体带 timeSkip');
   assert.match(body, /streamTurn\(body, block\)/, '流式请求用该对象');
-  assert.match(body, /JSON\.stringify\(body\)/, '普通 /turn 回退用同一对象');
+  assert.match(body, /postTurnOnce\(worldId, body\)/, '普通 /turn 回退用同一对象（带同一个 clientTurnId）');
   assert.match(body, /appendActionLine\('【时光推进·' \+ label/, '先写行动行');
   assert.match(body, /closeTimeSkip\(\)/, '关闭弹层');
   assert.match(body, /timeSkipPlanInput\.value = ''/, '成功才清空文本框');

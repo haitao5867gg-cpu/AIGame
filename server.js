@@ -18,6 +18,7 @@ const prefs = require('./src/prefs.js');
 const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
 const adultMode = require('./src/adult-mode.js');
+const { createIdempotency, validId: validClientId } = require('./src/idempotency.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -172,12 +173,21 @@ function sseEvent(res, event, data) {
 
 // POST /api/worlds/:id/turn/stream：多次 event: delta，最后 event: result / event: error。
 // result 的 data 与普通 /turn 的响应体完全相同（来自同一个 takeTurn）。
-async function handleStreamTurn(req, res, g, id, images, dataDir) {
+// 每 SSE_PING_MS 发一行注释心跳：模型构思 / 记账期间没有 delta 也保持连接不被代理判空闲，
+// 前端也靠它判断连接是否还活着（手机切后台回来常见「连接还在但已经死了」）。
+const SSE_PING_MS = 10000;
+async function handleStreamTurn(req, res, g, id, images, dataDir, player) {
   startEventStream(res);
+  const ping = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
+  }, SSE_PING_MS);
+  if (ping.unref) ping.unref();
+  res.on('close', () => clearInterval(ping));
   let body;
   try {
     body = await readJsonBody(req);
   } catch (err) {
+    clearInterval(ping);
     const message = err && err.expose && err.message ? err.message : '请求体不是合法 JSON';
     sseEvent(res, 'error', { error: String(message) });
     res.end();
@@ -185,19 +195,51 @@ async function handleStreamTurn(req, res, g, id, images, dataDir) {
   }
   try {
     // 叙事 v3：写正文前模型先构思，期间推送 thinking（只有累计字数，不带思考内容）。
-    const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }), {
+    const result = await runTurnOnce(g, images, dataDir, id, player, body, (text) => sseEvent(res, 'delta', { text }), {
       onThinking: (chars) => sseEvent(res, 'thinking', { chars }),
     });
-    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
-    triggerImages(images, dataDir, result && result.state);
-    if (result) result.sceneKey = triggerScene(images, dataDir, result);
     sseEvent(res, 'result', result);
     res.end();
   } catch (err) {
     const message = err && err.expose && err.message ? err.message : '服务器内部错误';
     sseEvent(res, 'error', { error: String(message) });
     res.end();
+  } finally {
+    clearInterval(ping);
   }
+}
+
+// ---- 回合防重（见 src/idempotency.js）：每个 game 实例一份，key = 玩家 + 世界 + clientTurnId ----
+const turnOnceByGame = new WeakMap();
+function turnOnceFor(g) {
+  let t = turnOnceByGame.get(g);
+  if (!t) {
+    t = createIdempotency({ ttlMs: 30 * 60 * 1000, max: 120 });
+    turnOnceByGame.set(g, t);
+  }
+  return t;
+}
+function turnKey(player, id, cid) {
+  return (player && player.id ? player.id : '') + ':' + id + ':' + cid;
+}
+
+// 执行一回合（含锁外排队出图）。带合法 clientTurnId 时同一个 ID 只执行一次：
+// 断流后重试、刷新后取回都拿同一份结果，不会把同一句行动执行两遍。
+async function runTurnOnce(g, images, dataDir, id, player, body, onDelta, hooks) {
+  const input = Object.assign({}, body);
+  const cid = input.clientTurnId;
+  delete input.clientTurnId;
+  delete input.attachOnly;
+  const exec = async () => {
+    const result = await g.takeTurn(id, input, onDelta, hooks);
+    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
+    triggerImages(images, dataDir, result && result.state);
+    if (result) result.sceneKey = triggerScene(images, dataDir, result);
+    return result;
+  };
+  if (!validClientId(cid)) return exec();
+  const r = await turnOnceFor(g).run(turnKey(player, id, cid), exec);
+  return r.value;
 }
 
 // ---- 氛围素材（public/assets/atmosphere）：目录级缓存 + 音频单段 Range ----
@@ -582,7 +624,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
     // 校验归属必须在开流（startEventStream）之前，越权直接返回 404 JSON。
     if (!requireOwner(res, dataDir, id, player)) return;
-    return handleStreamTurn(req, res, g, id, images, dataDir);
+    return handleStreamTurn(req, res, g, id, images, dataDir, player);
   }
 
   // 导出：GET /api/worlds/:id/export（打包 state + events 的 JSON 附件）。
@@ -824,10 +866,14 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     }
     if (sub === 'turn' && method === 'POST') {
       const body = await readJsonBody(req);
-      const result = await g.takeTurn(id, body);
-      // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
-      triggerImages(images, dataDir, result && result.state);
-      if (result) result.sceneKey = triggerScene(images, dataDir, result);
+      // 只取回（刷新页面后找回上一回合）：认识这个 ID 就等它 / 返回它，不认识 404，绝不执行。
+      if (body && body.attachOnly === true) {
+        if (!validClientId(body.clientTurnId)) return sendError(res, 400, 'clientTurnId 无效');
+        const found = await turnOnceFor(g).attach(turnKey(player, id, body.clientTurnId));
+        if (found === undefined) return sendJson(res, 404, { error: '没有找到这一回合', code: 'turn_unknown' });
+        return sendJson(res, 200, found);
+      }
+      const result = await runTurnOnce(g, images, dataDir, id, player, body, undefined, undefined);
       return sendJson(res, 200, result);
     }
     if (sub === 'rebirth' && method === 'POST') {

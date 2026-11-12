@@ -316,10 +316,11 @@ test('createWorld：请求体不含 alloc，空名字/形象/身份不传，带 
   const h = setup(['core.js', 'home.js']);
   h.doc.getElementById('seed').value = '蒸汽朋克长安';
   await h.s.createWorld();
-  assert.equal(h.apiCalls.length, 1);
-  assert.equal(h.apiCalls[0].path, '/api/worlds');
-  assert.equal(h.apiCalls[0].opts.method, 'POST');
-  const body = JSON.parse(h.apiCalls[0].opts.body);
+  // 先 GET 一次世界列表（断网后据此找回新建的世界），再 POST 建世界。
+  const posts = () => h.apiCalls.filter((c) => c.opts.method === 'POST');
+  assert.equal(posts().length, 1);
+  assert.equal(posts()[0].path, '/api/worlds');
+  const body = JSON.parse(posts()[0].opts.body);
   assert.equal(body.seed, '蒸汽朋克长安');
   assert.ok('genre' in body);
   assert.equal('alloc' in body, false, '请求体不得含 alloc');
@@ -333,7 +334,7 @@ test('createWorld：请求体不含 alloc，空名字/形象/身份不传，带 
   h.doc.getElementById('char-appearance').value = ' 灰袍 ';
   h.doc.getElementById('char-identity').value = ' 欠债的退伍兵 ';
   await h.s.createWorld();
-  const body2 = JSON.parse(h.apiCalls[1].opts.body);
+  const body2 = JSON.parse(posts()[1].opts.body);
   assert.equal(body2.name, '阿岚', '名字 trim');
   assert.equal(body2.appearance, '灰袍', '形象 trim');
   assert.equal(body2.identity, '欠债的退伍兵', '身份 trim');

@@ -1,4 +1,81 @@
 'use strict';
+  // ---- 正文字号（每台设备各自记住；手机上看小说最常调的就是它）----
+  var READ_FONTS = [
+    { v: 'm', name: '标准' },
+    { v: 'l', name: '大' },
+    { v: 'xl', name: '特大' },
+    { v: 's', name: '小' },
+  ];
+  function loadReadFont() {
+    try { return localStorage.getItem('readFont') || 'm'; } catch (_) { return 'm'; }
+  }
+  function readFontName(v) {
+    for (var i = 0; i < READ_FONTS.length; i++) if (READ_FONTS[i].v === v) return READ_FONTS[i].name;
+    return '标准';
+  }
+  function applyReadFont(v) {
+    if (!READ_FONTS.some(function (f) { return f.v === v; })) v = 'm';
+    if (v === 'm') delete document.body.dataset.font;
+    else document.body.dataset.font = v;
+    var name = readFontName(v);
+    if ($('menu-font-name')) $('menu-font-name').textContent = name;
+    if ($('g-font')) $('g-font').textContent = '字号·' + name;
+  }
+  // 换字号时保持正在读的那一段不跳走。
+  function cycleReadFont() {
+    var cur = loadReadFont();
+    var idx = 0;
+    for (var i = 0; i < READ_FONTS.length; i++) if (READ_FONTS[i].v === cur) idx = i;
+    var next = READ_FONTS[(idx + 1) % READ_FONTS.length].v;
+    var anchor = null;
+    var anchorTop = 0;
+    var headH = 56;
+    var paras = document.querySelectorAll('#stream p.narration, #stream .opening');
+    for (var j = 0; j < paras.length; j++) {
+      var r = paras[j].getBoundingClientRect();
+      if (r.bottom > headH) { anchor = paras[j]; anchorTop = r.top; break; }
+    }
+    try { localStorage.setItem('readFont', next); } catch (_) {}
+    applyReadFont(next);
+    if (anchor && window.innerWidth <= 600) window.scrollBy(0, anchor.getBoundingClientRect().top - anchorTop);
+    toast('正文字号：' + readFontName(next));
+  }
+
+  // ---- 手机：往上翻旧回合时，输入框上方出现「↓ 回到最新」，点一下回到最新一回合开头 ----
+  function initLatestButton() {
+    var btn = $('btn-latest');
+    if (!btn) return;
+    var ticking = false;
+    function update() {
+      ticking = false;
+      if (window.innerWidth > 600 || $('view-game').hidden) { btn.hidden = true; return; }
+      var t = typeof lastTurnStart === 'function' ? lastTurnStart() : null;
+      btn.hidden = !(t && t.getBoundingClientRect().top > window.innerHeight * 1.6);
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) { ticking = true; requestAnimationFrame(update); }
+    }, { passive: true });
+    window.addEventListener('hashchange', function () { btn.hidden = true; });
+    btn.addEventListener('click', function () {
+      btn.hidden = true;
+      var t = lastTurnStart();
+      if (t) scrollToTurnStart(t);
+    });
+  }
+
+  // ---- 浏览器顶栏 / 状态栏颜色跟着题材底色走（iOS Safari、安卓 Chrome）----
+  function initThemeColor() {
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta || typeof MutationObserver === 'undefined') return;
+    function sync() {
+      var c = '';
+      try { c = window.getComputedStyle(document.body).backgroundColor; } catch (_) {}
+      meta.setAttribute('content', c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent' ? c : '#14130f');
+    }
+    new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['data-genre', 'data-read'] });
+    sync();
+  }
+
   // ---- 事件绑定 ----
   function boot() {
     initHome();
@@ -44,8 +121,16 @@
         nextIdea();
         return;
       }
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // 输入法正在选词 / 上屏（中文拼音按回车出英文字母）时的回车不是发送。
+        if (e.isComposing || e.keyCode === 229) return;
+        e.preventDefault(); sendAction();
+      }
     });
+    // 触屏设备没有 Shift+Enter，占位提示换成短的（键盘右下角已是「发送」键）。
+    if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+      $('action-input').setAttribute('placeholder', '你要做什么？写下来，点发送');
+    }
     window.addEventListener('hashchange', route);
 
     // ---- 手机端 ⋯ 菜单：收起「用量 / 角色面板 / 导出 / 退出」 ----
@@ -77,6 +162,7 @@
         else if (act === 'logout') doLogout();
         else if (act === 'atmosphere' && typeof Atmosphere !== 'undefined') Atmosphere.openSettings();
         else if (act === 'read' && typeof Atmosphere !== 'undefined') Atmosphere.cycleReading();
+        else if (act === 'font') cycleReadFont();
         else if (act === 'writing') cycleWriting();
         else if (act === 'adult-llm') openAdultLlmPop();
       });
@@ -138,6 +224,10 @@
     if ($('g-atmosphere-settings')) $('g-atmosphere-settings').addEventListener('click', function () { Atmosphere.openSettings(); });
     if ($('g-read')) $('g-read').addEventListener('click', function () { Atmosphere.cycleReading(); });
     if ($('g-writing')) $('g-writing').addEventListener('click', function () { cycleWriting(); });
+    if ($('g-font')) $('g-font').addEventListener('click', function () { cycleReadFont(); });
+    applyReadFont(loadReadFont());
+    initLatestButton();
+    initThemeColor();
     api('/api/me').then(renderPlayerInfo).catch(function () {});
     route();
   }

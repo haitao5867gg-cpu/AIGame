@@ -422,9 +422,52 @@
     });
   }
 
-  function setCreating(b) {
+  // 建世界要几十秒：显示已等秒数，手机上不至于以为卡死；等待期间保持亮屏（锁屏会掐断请求）。
+  var creatingTimer = null;
+  var creatingWake = null;
+  function setCreating(b, label) {
     $('creating').hidden = !b;
     $('btn-create').disabled = b;
+    clearInterval(creatingTimer);
+    creatingTimer = null;
+    if (creatingWake) { try { creatingWake.release().catch(function () {}); } catch (_) {} creatingWake = null; }
+    if (!b) return;
+    var box = $('creating');
+    var start = Date.now();
+    var text = label || '世界正在成形';
+    function tick() {
+      var secs = Math.floor((Date.now() - start) / 1000);
+      box.textContent = text + '… 已等 ' + secs + ' 秒' + (secs >= 8 ? '（通常要半分钟到一分钟，可以先去做别的）' : '');
+    }
+    tick();
+    creatingTimer = setInterval(tick, 1000);
+    try {
+      if (navigator.wakeLock && !document.hidden) {
+        navigator.wakeLock.request('screen').then(function (s) {
+          if (!creatingTimer) { s.release().catch(function () {}); return; }
+          creatingWake = s;
+        }).catch(function () {});
+      }
+    } catch (_) {}
+  }
+
+  // 建世界时网络断了（切后台 / 锁屏 / 换网络）：世界多半还在服务器上照常生成。
+  // 隔几秒查一次世界列表，出现建之前没有的新世界就直接进去，最多找 3 分钟。
+  async function findNewWorld(beforeIds) {
+    var known = {};
+    beforeIds.forEach(function (id) { known[id] = true; });
+    var deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      await new Promise(function (r) { setTimeout(r, 5000); });
+      if (location.hash !== '#/new') return null; // 玩家已经离开新世界页
+      try {
+        var list = await api('/api/worlds');
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && list[i].id && !known[list[i].id]) return list[i].id;
+        }
+      } catch (_) { /* 网络还没恢复，继续等 */ }
+    }
+    return null;
   }
 
   async function createWorld() {
@@ -445,6 +488,10 @@
     if (appearance) body.appearance = appearance;
     if (identity) body.identity = identity;
     setCreating(true);
+    var beforeIds = null;
+    try {
+      beforeIds = (await api('/api/worlds')).map(function (w) { return w.id; });
+    } catch (_) { beforeIds = null; }
     try {
       var w = await api('/api/worlds', {
         method: 'POST',
@@ -452,7 +499,13 @@
       });
       location.hash = '#/w/' + w.id;
     } catch (err) {
-      toast(err.message);
+      var found = null;
+      if (err && err.network && beforeIds) {
+        setCreating(true, '连接断了，世界可能还在成形，正在找回');
+        found = await findNewWorld(beforeIds);
+      }
+      if (found) location.hash = '#/w/' + found;
+      else toast(err.message);
     } finally {
       setCreating(false);
     }

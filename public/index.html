@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#14130f">
+<meta name="apple-mobile-web-app-title" content="无限世界">
+<meta name="format-detection" content="telephone=no">
 <title>无限世界</title>
 <link rel="stylesheet" href="/app.css">
 </head>
@@ -103,6 +106,7 @@
         <button type="button" id="menu-genre" class="more-menu-item" data-menu="genre">文风：<span id="menu-genre-name">识别中</span></button>
         <button type="button" class="more-menu-item" data-menu="atmosphere">氛围设置</button>
         <button type="button" id="menu-read" class="more-menu-item" data-menu="read">阅读底色：<span id="menu-read-name">跟随时辰</span></button>
+        <button type="button" id="menu-font" class="more-menu-item" data-menu="font">正文字号：<span id="menu-font-name">标准</span></button>
         <button type="button" id="menu-writing" class="more-menu-item" data-menu="writing" hidden>写作：<span id="menu-writing-name">精写</span></button>
         <button type="button" id="menu-adult-llm" class="more-menu-item" data-menu="adult-llm" hidden>模型设置：<span id="menu-adult-llm-name">思考低</span></button>
         <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
@@ -122,6 +126,7 @@
         <button type="button" id="g-timeskip" class="genre-tag">时光推进</button>
         <button type="button" id="g-genre" class="genre-tag">文风·识别中</button>
         <button type="button" id="g-read" class="genre-tag" aria-label="切换阅读底色">底色·跟随时辰</button>
+        <button type="button" id="g-font" class="genre-tag" aria-label="切换正文字号">字号·标准</button>
         <button type="button" id="g-writing" class="genre-tag" aria-label="切换写作模式" hidden>写作·精写</button>
         <button type="button" id="g-adult-llm" class="genre-tag" aria-label="成人模式模型设置" hidden>思考·低</button>
         <button type="button" id="g-atmosphere-settings" class="genre-tag" aria-label="打开氛围设置">氛围设置</button>
@@ -134,8 +139,9 @@
         <div id="stream" class="stream"></div>
         <button id="btn-undo" class="undo-btn" hidden>↶ 撤回这一步</button>
         <div class="composer">
+          <button type="button" id="btn-latest" class="latest-btn" hidden>↓ 回到最新</button>
           <div class="composer-row">
-            <textarea id="action-input" rows="2" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
+            <textarea id="action-input" rows="2" enterkeyhint="send" autocomplete="off" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
             <button type="button" id="btn-idea" class="btn idea-btn" aria-label="让 AI 根据当前场景想一个下一步" title="没主意？让 AI 根据当前场景想一个下一步，不满意再点一次">✦ 灵感</button>
             <button id="btn-send" class="btn primary">发送</button>
           </div>
