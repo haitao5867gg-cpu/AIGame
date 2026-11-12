@@ -174,9 +174,17 @@ function relTime(ts, now) {
 
   // ---- 网络 ----
   async function api(pathname, opts) {
-    var res = await fetch(pathname, Object.assign(
-      { headers: { 'Content-Type': 'application/json' } }, opts || {},
-    ));
+    var res;
+    try {
+      res = await fetch(pathname, Object.assign(
+        { headers: { 'Content-Type': 'application/json' } }, opts || {},
+      ));
+    } catch (e) {
+      // 手机切后台 / 换网络时 fetch 直接抛 TypeError（Safari「Load failed」），换成看得懂的中文。
+      var ne = new Error('网络断了，请检查网络后再试');
+      ne.network = true;
+      throw ne;
+    }
     var text = await res.text();
     var data = null;
     try { data = JSON.parse(text); } catch (_) { data = text; }
