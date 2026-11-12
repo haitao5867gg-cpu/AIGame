@@ -553,11 +553,18 @@ function createGame(cfg, dataDir) {
   // 修仙金手指（作者笔记）：只留约定字段，逐项截断。
   function sanitizeEdge(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+    // 超长就在上限内最后一个标点处收住，不在半句话处截断。
+    const str = (v, n) => {
+      const t = typeof v === 'string' ? v.trim() : '';
+      if (t.length <= n) return t;
+      const head = t.slice(0, n);
+      const cut = Math.max(head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('，'), head.lastIndexOf('！'), head.lastIndexOf('？'));
+      return (cut >= n / 2 ? head.slice(0, cut) : head).replace(/[，；、]$/, '');
+    };
     const name = str(raw.name, 12);
     if (!name) return null;
-    const rules = (Array.isArray(raw.rules) ? raw.rules : []).map((r) => str(r, 40)).filter(Boolean).slice(0, 4);
-    return { name, look: str(raw.look, 60), rules, cost: str(raw.cost, 40), secret: str(raw.secret, 40) };
+    const rules = (Array.isArray(raw.rules) ? raw.rules : []).map((r) => str(r, 60)).filter(Boolean).slice(0, 4);
+    return { name, look: str(raw.look, 80), rules, cost: str(raw.cost, 60), secret: str(raw.secret, 60) };
   }
 
   // ---- 建世界 ----
@@ -1253,6 +1260,21 @@ function createGame(cfg, dataDir) {
     return t;
   }
 
+  // 记账的 clock_end（正文结尾的时段 + 晚了几天）→ 新时钟和推进的时段数。非法或倒退返回 null。
+  function clockEndOf(clock, raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const periods = ['清晨', '午后', '黄昏', '深夜'];
+    const end = periods.indexOf(raw.period);
+    if (end < 0) return null;
+    const day = clock && Number.isSafeInteger(clock.day) && clock.day >= 1 ? clock.day : 1;
+    const start = Math.max(0, periods.indexOf(clock && clock.period));
+    let later = Number.isSafeInteger(Number(raw.days_later)) ? Math.max(0, Math.min(3, Number(raw.days_later))) : 0;
+    if (later === 0 && end < start) later = 1; // 时段往回走只能是到了第二天
+    const passes = later * 4 + end - start;
+    if (passes < 0) return null;
+    return { clock: { day: day + later, period: periods[end] }, passes: Math.min(2, passes) };
+  }
+
   // 修仙：压扬计数（连着吃亏几节，供写手「该扬一次了」的提醒）和金手指进度（露过面没有、摸清了哪几条）。
   // 都是私有作者笔记；主角死了就随这一世清掉。
   function applyXianxiaLedger(prev, next, ledger, died) {
@@ -1357,6 +1379,7 @@ function createGame(cfg, dataDir) {
       threadDue[text.trim()] = due;
     }
 
+    const clockEnd = timeSkip ? null : clockEndOf(state.clock, ledger.clock_end);
     const proposal = {
       narration: prose,
       state_diff: ledger.state_diff,
@@ -1375,7 +1398,8 @@ function createGame(cfg, dataDir) {
       rumor: undefined, // v3：坊间传闻先关掉（玩家反馈要记的太多）
       move_to: ledger.move_to,
       // v3：记账没写时间就按「没过多久」处理（引擎缺省是推进一个时段，会让时钟比正文跑得快）。
-      time_passes: ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes,
+      time_passes: clockEnd ? clockEnd.passes
+        : (ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes),
       overstep: ledger.overstep,
       scene: ledger.scene,
       voice_hints: ledger.voice_hints,
@@ -1427,6 +1451,8 @@ function createGame(cfg, dataDir) {
     }
     finalState.markMeta = markMeta;
     applyXianxiaLedger(state, finalState, ledger, !!resolved.result.death);
+    // 记账给了正文结尾的时段：时钟按它落（引擎一回合最多推两个时段，跨一夜会落不准）。
+    if (clockEnd && !resolved.result.death) finalState.clock = clockEnd.clock;
 
     store.backupForUndo(dataDir, worldId);
     store.saveWorld(dataDir, finalState);

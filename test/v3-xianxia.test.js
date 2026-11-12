@@ -277,3 +277,44 @@ test('整回合（mock）：非修仙世界不生成金手指、不记压扬', a
   assert.equal(st.pressure, undefined);
   assert.equal(st.edgeProgress, undefined);
 });
+
+test('建世界提示：主角还没入门时境界阶梯从「凡人」起；记账要求破层和灵力变化写进 stats_diff', () => {
+  const [sys] = prompts.buildWorldMessages('山村少年拜入仙门', {});
+  assert.match(sys.content, /最前面加一阶「凡人」/);
+  const [ls] = prompts.buildLedgerMessages(state('xuanhuan'), { action: '修炼', prose: '正文' });
+  assert.match(ls.content, /从凡人引气入体到练气一层/);
+  assert.match(ls.content, /灵力/);
+});
+
+test('整回合（mock）：时钟按记账的 clock_end 落，跨夜进到第二天；金手指超长字段在标点处收住', async (t) => {
+  let ledgerOut = { suggestions: ['a', 'b', 'c'], clock_end: { period: '深夜', days_later: 0 } };
+  const { g, readState } = makeGame(t, {
+    complete: async (o, real) => {
+      if (o.purpose === 'world') {
+        const r = await real();
+        const parsed = JSON.parse(r.content);
+        parsed.edge = Object.assign({}, EDGE, { cost: '每次激发后，你会陷入一阵无法控制的恍惚，且事后脚印会留下极淡的青色荧光，持续半个时辰才散，旁人细看就能发觉，所以每回用完都得找个没人的地方躲上一阵' });
+        return Object.assign({}, r, { content: JSON.stringify(parsed) });
+      }
+      if (o.purpose === 'ledger') return { content: JSON.stringify(ledgerOut), usage: { prompt_tokens: 1, completion_tokens: 1 } };
+      return real();
+    },
+  });
+  const w = await g.buildWorld({ seed: '山村少年被选进修仙门派', name: '林远', genre: 'xuanhuan' });
+  let st = readState(w.id);
+  assert.ok(st.edge.cost.length <= 60);
+  assert.match(st.edge.cost, /旁人细看就能发觉$/);
+  const day0 = st.clock.day;
+  const p0 = st.clock.period;
+  await g.takeTurn(w.id, { action: '一直干到天黑' });
+  st = readState(w.id);
+  assert.deepEqual(st.clock, { day: day0, period: '深夜' }, '从' + p0 + '直接落到深夜');
+  ledgerOut = { suggestions: ['a', 'b', 'c'], clock_end: { period: '清晨', days_later: 0 } };
+  await g.takeTurn(w.id, { action: '睡到天亮' });
+  st = readState(w.id);
+  assert.deepEqual(st.clock, { day: day0 + 1, period: '清晨' }, '时段往回走就是第二天');
+  ledgerOut = { suggestions: ['a', 'b', 'c'], clock_end: { period: '乱写' } };
+  await g.takeTurn(w.id, { action: '走' });
+  st = readState(w.id);
+  assert.deepEqual(st.clock, { day: day0 + 1, period: '清晨' }, '非法 clock_end 不动时钟');
+});
