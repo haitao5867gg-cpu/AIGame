@@ -132,7 +132,8 @@ test('前端：濒死可感知（顶部「伤势沉重」、体魄条变红闪�
   assert.ok(/isDanger\(/.test(html), '应有濒死判定');
   assert.ok(/\.attr-fill\.danger\{/.test(html), '体魄条变红样式');
   assert.ok(/@keyframes dangerFlash/.test(html), '应闪烁');
-  assert.ok(/attr-fill danger/.test(html), '体魄 fill 应用 danger 类');
+  assert.ok(/attr-cell danger/.test(html), '体魄 attr-cell 应用 danger 类');
+  assert.ok(/radar-dot danger/.test(html), '体魄雷达顶点应用 danger 圆点');
   assert.ok(/top-chip danger-chip/.test(html));
   assert.ok(/death-cause/.test(html), '死亡遮罩应有死因样式');
   assert.ok(/死因 · /.test(html));

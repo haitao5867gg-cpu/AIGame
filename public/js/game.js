@@ -1,6 +1,19 @@
 'use strict';
   // 当前正在渲染回合的朗读提示（voice_hints），供整回合朗读按段落取音色 / 情绪 / 节奏。
   var currentVoiceHints = [];
+  // ---- 角色卡 / 玩家画像（共享全局作用域）----
+  var PANEL_TABS = [
+    { key: 'char', label: '角色' },
+    { key: 'people', label: '人物' },
+    { key: 'clues', label: '线索' },
+    { key: 'profile', label: '画像' },
+  ];
+  var panelTabButtons = [];   // 当前 renderPanel 生成的四个标签按钮
+  var panelPanes = {};        // key -> .panel-pane 节点
+  var profileData = null;     // /api/profile 返回的 profile
+  var profileResetArmed = false;   // 重置画像二次确认态
+  var profileResetTimer = null;
+  var profileResetBtn = null;
   // 导出世界：GET 附件接口，用临时 <a download> 触发下载，不跳转页面。
   function exportWorld(id) {
     var a = document.createElement('a');
@@ -163,6 +176,20 @@
       if (sit) appendOpening(sit);
       (log || []).forEach(appendLogRecord);
       renderPanel(state);
+      // 老世界 state.stats 为空：后台补设计，回来后写回并重画（先显示占位文案）。
+      if (!Array.isArray(state.stats) || state.stats.length === 0) {
+        api('/api/worlds/' + encodeURIComponent(id) + '/stats')
+          .then(function (data) {
+            if (id !== currentWorldId || !currentState) return; // 已切走别世界，丢弃过期响应
+            if (data && Array.isArray(data.stats)) {
+              currentState.stats = data.stats;
+              renderPanel(currentState);
+              renderTopAttrs(currentState);
+            }
+          })
+          .catch(function () {});
+      }
+      fetchProfile(); // 跨世界玩家画像（失败静默）
       renderEventBanner(state.activeEvent);
       resetIdeas(atmosphereLastLog && atmosphereLastLog.suggestions);
       setUndoVisible(!!state.undoAvailable);
@@ -271,8 +298,8 @@
     $('stream').appendChild(el('div', 'divider', text));
   }
 
-  // 客户端徽章：与后端 /log 的 badges 同一种结构。
-  function badgesFromApplied(applied) {
+  // 客户端徽章：与后端 /log 的 badges 同一种结构。statsDrains 为 res.stats_drains。
+  function badgesFromApplied(applied, statsDrains) {
     var a = applied || {};
     var out = [];
     var diff = a.state_diff || {};
@@ -280,12 +307,23 @@
       var d = Number(diff[k]);
       if (d) out.push({ type: 'attr', name: k, delta: d });
     });
+    // 世界专属状态：本回合直接造成的变化（自然变化 drift 太碎，不出徽章）。
+    var sd = a.stats_diff || {};
+    Object.keys(sd).forEach(function (k) {
+      var d = Number(sd[k]);
+      if (d) out.push({ type: 'stat', name: k, delta: d });
+    });
     (a.items_add || []).forEach(function (n) { out.push({ type: 'item-add', name: n }); });
     (a.items_remove || []).forEach(function (n) { out.push({ type: 'item-remove', name: n }); });
     var npc = a.npc_attitude || {};
     Object.keys(npc).forEach(function (n) {
       var d = Number(npc[n]);
       if (d) out.push({ type: 'npc', name: n, delta: d });
+    });
+    // 生效警戒的后果：每回合扣 1 点基础属性（name 为属性名、label 为警戒名）。
+    (Array.isArray(statsDrains) ? statsDrains : []).forEach(function (dr) {
+      if (!dr || typeof dr !== 'object') return;
+      out.push({ type: 'drain', name: dr.attr, delta: -1, label: dr.label || '' });
     });
     return out;
   }
@@ -296,6 +334,13 @@
       var up = b.delta > 0;
       s.className = 'badge ' + (up ? 'up' : 'down');
       s.textContent = b.name + ' ' + (up ? '+' + b.delta : '−' + Math.abs(b.delta));
+    } else if (b.type === 'stat') {
+      var stUp = b.delta > 0;
+      s.className = 'badge stat ' + (stUp ? 'up' : 'down');
+      s.textContent = b.name + ' ' + (stUp ? '+' + b.delta : '−' + Math.abs(b.delta));
+    } else if (b.type === 'drain') {
+      s.className = 'badge down drain';
+      s.textContent = b.name + ' −' + Math.abs(b.delta || 1) + ' · ' + (b.label || '');
     } else if (b.type === 'item-add') {
       s.className = 'badge up';
       s.textContent = '获得 · ' + b.name;
@@ -542,6 +587,266 @@
   }
   /* IDEA_HELPERS_END */
 
+  // ---- 六边形雷达：角色卡基础属性 / 玩家画像共用 ----
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgNode(tag, cls) {
+    var n = document.createElementNS(SVG_NS, tag);
+    if (cls) n.setAttribute('class', cls);
+    return n;
+  }
+  // axes 六轴名、values 对应数值、scale 满值半径对应的数值（下限 15）。
+  // opts: { withValue, dangerIndex, dataAttr }
+  function radarSvg(axes, values, scale, opts) {
+    opts = opts || {};
+    var sc = Math.max(15, Number(scale) || 0);
+    var cx = 100, cy = 92, R = 70;
+    var svg = svgNode('svg');
+    svg.setAttribute('viewBox', '0 0 200 180');
+    function point(i, radius) {
+      var ang = -Math.PI / 2 + i * (Math.PI / 3); // 第一轴正上方，顺时针
+      return [cx + radius * Math.cos(ang), cy + radius * Math.sin(ang)];
+    }
+    function polyPoints(radiusFn) {
+      var pts = [];
+      for (var i = 0; i < 6; i++) {
+        var p = point(i, radiusFn(i));
+        pts.push(p[0].toFixed(2) + ',' + p[1].toFixed(2));
+      }
+      return pts.join(' ');
+    }
+    // 三层同心六边形网格：33% / 66% / 100%
+    [0.33, 0.66, 1].forEach(function (lv) {
+      var g = svgNode('polygon', 'radar-grid');
+      g.setAttribute('points', polyPoints(function () { return R * lv; }));
+      svg.appendChild(g);
+    });
+    // 六条轴线
+    for (var a = 0; a < 6; a++) {
+      var ep = point(a, R);
+      var line = svgNode('line', 'radar-axis');
+      line.setAttribute('x1', String(cx));
+      line.setAttribute('y1', String(cy));
+      line.setAttribute('x2', ep[0].toFixed(2));
+      line.setAttribute('y2', ep[1].toFixed(2));
+      svg.appendChild(line);
+    }
+    // 数值多边形：每轴半径 = 70 * min(1, v / scale)
+    var radii = [];
+    for (var k = 0; k < 6; k++) {
+      var v = Number(values[k]) || 0;
+      radii.push(R * Math.min(1, Math.max(0, v) / sc));
+    }
+    var shape = svgNode('polygon', 'radar-shape');
+    shape.setAttribute('points', polyPoints(function (i) { return radii[i]; }));
+    svg.appendChild(shape);
+    // 顶点外侧标签（字号由 CSS 控制）
+    for (var t = 0; t < 6; t++) {
+      var lp = point(t, R + 14);
+      var text = svgNode('text', 'radar-label');
+      text.setAttribute('x', lp[0].toFixed(2));
+      text.setAttribute('y', lp[1].toFixed(2));
+      text.setAttribute('text-anchor', lp[0] < cx - 4 ? 'end' : (lp[0] > cx + 4 ? 'start' : 'middle'));
+      if (opts.dataAttr) text.setAttribute('data-attr', axes[t]);
+      text.textContent = opts.withValue ? (axes[t] + ' ' + values[t]) : axes[t];
+      svg.appendChild(text);
+    }
+    // 体魄 danger 顶点小圆
+    if (opts.dangerIndex != null && opts.dangerIndex >= 0 && opts.dangerIndex < 6) {
+      var dp = point(opts.dangerIndex, radii[opts.dangerIndex]);
+      var dot = svgNode('circle', 'radar-dot danger');
+      dot.setAttribute('cx', dp[0].toFixed(2));
+      dot.setAttribute('cy', dp[1].toFixed(2));
+      dot.setAttribute('r', '3');
+      svg.appendChild(dot);
+    }
+    return svg;
+  }
+
+  // ---- 世界专属状态：gauge / rank 两种 .stat ----
+  function makeStatNode(st) {
+    if (!st || typeof st !== 'object') return el('div', 'stat');
+    var desc = typeof st.desc === 'string' ? st.desc : '';
+    var icon = typeof st.icon === 'string' ? st.icon : '';
+    var name = typeof st.name === 'string' ? st.name : '';
+    if (st.kind === 'rank') {
+      var rankWrap = el('div', 'stat stat-rank');
+      rankWrap.setAttribute('title', desc);
+      var rankTop = el('div', 'stat-top');
+      rankTop.appendChild(el('span', 'stat-icon', icon));
+      rankTop.appendChild(el('span', 'stat-name', name));
+      rankTop.appendChild(el('span', 'stat-val', typeof st.rankName === 'string' ? st.rankName : ''));
+      rankWrap.appendChild(rankTop);
+      var ranks = Array.isArray(st.ranks) ? st.ranks : [];
+      var vi = Math.max(0, Math.min(ranks.length - 1, Math.round(Number(st.value) || 0)));
+      var steps = el('div', 'rank-steps');
+      ranks.forEach(function (r, i) {
+        var cls = 'rank-step';
+        if (i < vi) cls += ' done';
+        if (i === vi) cls += ' current';
+        var step = el('span', cls);
+        step.setAttribute('title', r);
+        steps.appendChild(step);
+      });
+      rankWrap.appendChild(steps);
+      return rankWrap;
+    }
+    // gauge
+    var max = Number(st.max) > 0 ? Number(st.max) : 100;
+    var value = Math.max(0, Math.min(max, Number(st.value) || 0));
+    var alerts = Array.isArray(st.alerts) ? st.alerts : [];
+    var severe = alerts.some(function (a) { return a && a.severe; });
+    var cls = 'stat stat-gauge' + (alerts.length ? ' alert' : '') + (severe ? ' severe' : '');
+    var node = el('div', cls);
+    node.setAttribute('title', desc);
+    var top = el('div', 'stat-top');
+    top.appendChild(el('span', 'stat-icon', icon));
+    top.appendChild(el('span', 'stat-name', name));
+    var valSpan = el('span', 'stat-val', String(value));
+    valSpan.appendChild(el('small', '', '/' + max));
+    top.appendChild(valSpan);
+    node.appendChild(top);
+    var bar = el('div', 'stat-bar');
+    var fill = el('i');
+    fill.style.width = (value / max * 100) + '%';
+    bar.appendChild(fill);
+    // 「非 drain 警戒线」：每条不带 drain 的 warn，在其 below/above 值处画一个刻度。
+    (Array.isArray(st.warn) ? st.warn : []).forEach(function (w) {
+      if (!w || typeof w !== 'object' || w.drain) return;
+      var th = w.below != null ? w.below : w.above;
+      var n = Number(th);
+      if (!isFinite(n)) return;
+      var pct = Math.max(0, Math.min(100, (n / max) * 100));
+      var tick = el('b', 'stat-tick');
+      tick.style.left = pct + '%';
+      bar.appendChild(tick);
+    });
+    node.appendChild(bar);
+    alerts.forEach(function (a) {
+      if (!a) return;
+      node.appendChild(el('div', 'stat-alert', '⚠ ' + (a.label || '') + '：' + (a.effect || '')));
+    });
+    return node;
+  }
+
+  function renderStatList(box, stats) {
+    if (!box) return;
+    box.textContent = '';
+    var list = Array.isArray(stats) ? stats : [];
+    if (!list.length) {
+      box.appendChild(el('div', 'muted', '正在为这个世界设计专属状态…'));
+      return;
+    }
+    list.forEach(function (st) { box.appendChild(makeStatNode(st)); });
+  }
+
+  // ---- 角色卡头像：契约与 images.js 的 renderHero 一致，从 imageState.hero 取图 ----
+  function renderCharAvatar() {
+    var box = null;
+    if (document.querySelector) box = document.querySelector('.char-avatar');
+    if (!box) box = $('hero-row-avatar');
+    if (!box) return;
+    box.textContent = '';
+    box.appendChild(makeImageVisual('你', imageState.hero, 'char-avatar-img', false));
+  }
+
+  // ---- 标签切换：只改显示、不重画；当前标签记在 localStorage 'panelTab' ----
+  function readPanelTab() {
+    try {
+      var v = localStorage.getItem('panelTab');
+      for (var i = 0; i < PANEL_TABS.length; i++) {
+        if (PANEL_TABS[i].key === v) return v;
+      }
+    } catch (_) {}
+    return 'char';
+  }
+
+  function activatePanelTab(key) {
+    if (!panelPanes[key]) key = 'char';
+    for (var i = 0; i < panelTabButtons.length; i++) {
+      var b = panelTabButtons[i];
+      b.setAttribute('aria-selected', b.getAttribute('data-tab') === key ? 'true' : 'false');
+    }
+    Object.keys(panelPanes).forEach(function (k) {
+      if (panelPanes[k] && panelPanes[k].classList) {
+        panelPanes[k].classList.toggle('active', k === key);
+      }
+    });
+    try { localStorage.setItem('panelTab', key); } catch (_) {}
+  }
+
+  // ---- 跨世界玩家画像 ----
+  function fetchProfile() {
+    api('/api/profile')
+      .then(function (data) {
+        if (data && data.profile) {
+          profileData = data.profile;
+          renderProfilePane();
+        }
+      })
+      .catch(function () {});
+  }
+
+  function renderProfilePane() {
+    var pane = panelPanes.profile;
+    if (!pane) return;
+    pane.textContent = '';
+    var p = profileData || {};
+    var turns = Number(p.turns) || 0;
+    var dims = (p.dims && typeof p.dims === 'object') ? p.dims : {};
+    var traits = Array.isArray(p.traits) ? p.traits : [];
+    var head = el('div', 'profile-head');
+    head.appendChild(el('div', 'profile-title', '你的玩家画像'));
+    head.appendChild(el('div', 'profile-sub', '跨所有世界 · 已玩 ' + turns + ' 回合'));
+    pane.appendChild(head);
+    if (!p.ready) {
+      pane.appendChild(el('div', 'profile-hint',
+        '再玩 ' + Math.max(0, 10 - turns) + ' 回合，画像会更准'));
+    }
+    var values = PERSONA.map(function (d) { return Number(dims[d]) || 0; });
+    var radarWrap = el('div', 'profile-radar persona-radar');
+    radarWrap.appendChild(radarSvg(PERSONA, values, 100, { withValue: false, dataAttr: false }));
+    pane.appendChild(radarWrap);
+    if (traits.length) {
+      var tw = el('div', 'profile-traits');
+      traits.forEach(function (t) { tw.appendChild(el('span', 'trait-chip', t)); });
+      pane.appendChild(tw);
+    }
+    pane.appendChild(el('p', 'profile-summary',
+      p.summary || '再多玩几回合，AI 会总结你是什么样的玩家。'));
+    if (p.wants) pane.appendChild(el('p', 'profile-wants', '你偏爱的剧情：' + p.wants));
+    pane.appendChild(el('p', 'profile-note muted',
+      '画像只根据你亲手写下的行动生成，开新世界会自带；「灵感」会参考它。'));
+    var btn = el('button', 'btn tiny profile-reset', profileResetArmed ? '确认重置？' : '重置画像');
+    btn.type = 'button';
+    btn.addEventListener('click', onProfileResetClick);
+    pane.appendChild(btn);
+    profileResetBtn = btn;
+  }
+
+  // 两步确认：第一次点变「确认重置？」4 秒内再点才 DELETE；4 秒不点恢复原文字。
+  function onProfileResetClick() {
+    if (!profileResetArmed) {
+      profileResetArmed = true;
+      if (profileResetBtn) profileResetBtn.textContent = '确认重置？';
+      clearTimeout(profileResetTimer);
+      profileResetTimer = setTimeout(function () {
+        profileResetArmed = false;
+        if (profileResetBtn) profileResetBtn.textContent = '重置画像';
+      }, 4000);
+      return;
+    }
+    clearTimeout(profileResetTimer);
+    profileResetArmed = false;
+    if (profileResetBtn) profileResetBtn.textContent = '重置画像';
+    api('/api/profile', { method: 'DELETE' })
+      .then(function (data) {
+        profileData = (data && data.profile) ? data.profile : null;
+        toast('画像已重置');
+        renderProfilePane();
+      })
+      .catch(function () {});
+  }
+
   function collapsible(title, children) {
     var d = el('details', 'panel-section');
     var sum = el('summary', 'panel-h', title);
@@ -553,6 +858,19 @@
   function renderTopAttrs(s) {
     var box = $('top-attrs');
     box.textContent = '';
+    // 专属状态小标签排在属性小标签前面
+    var stats = (s && Array.isArray(s.stats)) ? s.stats : [];
+    stats.forEach(function (st) {
+      if (!st) return;
+      var alerts = Array.isArray(st.alerts) ? st.alerts : [];
+      var severe = alerts.some(function (a) { return a && a.severe; });
+      var cls = 'top-chip stat-chip' + (alerts.length ? ' alert' : '') + (severe ? ' severe' : '');
+      var text = (st.icon || '') + ' ' + (st.kind === 'rank'
+        ? (st.rankName || '') : (st.value != null ? st.value : ''));
+      var chip = el('span', cls, text);
+      chip.setAttribute('title', st.name || '');
+      box.appendChild(chip);
+    });
     var attrs = (s.character && s.character.attrs) || {};
     var danger = isDanger(s);
     ATTRS.forEach(function (a) {
@@ -566,117 +884,133 @@
   function renderPanel(s) {
     var panel = $('panel');
     panel.textContent = '';
-    panel.appendChild(el('h3', 'panel-title', '角色面板'));
     // 手机抽屉顶部关闭 ×（桌面隐藏，见 .sheet-close 默认 display:none）
     panel.appendChild(sheetCloseButton(function () {
       panel.dataset.open = 'false';
       syncBodyScrollLock();
     }));
 
+    panelTabButtons = [];
+    panelPanes = {};
     var attrs = (s.character && s.character.attrs) || {};
     var danger = isDanger(s);
-    var attrSec = el('div', 'panel-section');
-    attrSec.appendChild(el('h4', 'panel-h', '属性'));
-    ATTRS.forEach(function (a) {
-      var v = Number(attrs[a]) || 0;
-      var row = el('div', 'attr-row');
-      row.setAttribute('data-attr', a); // 侧面板属性行：点击弹说明卡
-      row.appendChild(el('span', 'attr-name', a));
-      var bar = el('div', 'attr-bar');
-      var fill = el('div', 'attr-fill');
-      if (a === '体魄' && danger) fill.className = 'attr-fill danger'; // 变红并闪烁
-      fill.style.width = Math.min(100, (v / 40) * 100) + '%';
-      bar.appendChild(fill);
-      row.appendChild(bar);
-      row.appendChild(el('span', 'attr-val', String(v)));
-      attrSec.appendChild(row);
-    });
-    panel.appendChild(attrSec);
+    var stats = Array.isArray(s.stats) ? s.stats : [];
 
-    // 随身物品：小卡片网格（64px 方图在上，物品名在下）。
-    var itemsSec = el('div', 'panel-section');
-    itemsSec.appendChild(el('h4', 'panel-h', '随身物品'));
+    // ---- 角色卡 ----
+    var card = el('div', 'char-card');
+    var avatar = el('div', 'char-avatar');
+    avatar.id = 'hero-row-avatar';
+    card.appendChild(avatar);
+    var meta = el('div', 'char-meta');
+    meta.appendChild(el('div', 'char-name', (s.character && s.character.name) || '无名旅人'));
+    meta.appendChild(el('div', 'char-sub', '第 ' + (s.life || 0) + ' 世 · 第 ' + (s.turn || 0) + ' 回合'));
+    var badges = el('div', 'char-badges');
+    stats.forEach(function (st) {
+      if (st && st.kind === 'rank') {
+        badges.appendChild(el('span', 'char-rank', (st.icon || '') + ' ' + (st.rankName || '')));
+      }
+    });
+    if (danger) badges.appendChild(el('span', 'char-danger', '伤势沉重'));
+    meta.appendChild(badges);
+    card.appendChild(meta);
+    panel.appendChild(card);
+
+    // ---- 四个标签 ----
+    var tabsNav = el('nav', 'panel-tabs');
+    tabsNav.setAttribute('role', 'tablist');
+    PANEL_TABS.forEach(function (t) {
+      var b = el('button', 'panel-tab', t.label);
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', 'false');
+      b.setAttribute('data-tab', t.key);
+      b.addEventListener('click', function () { activatePanelTab(t.key); });
+      tabsNav.appendChild(b);
+      panelTabButtons.push(b);
+    });
+    panel.appendChild(tabsNav);
+
+    // ---- 角色页 ----
+    var charPane = el('section', 'panel-pane');
+    charPane.setAttribute('data-pane', 'char');
+    panelPanes.char = charPane;
+    charPane.appendChild(el('div', 'pane-h', '状态'));
+    var statList = el('div', 'stat-list');
+    statList.id = 'stat-list';
+    renderStatList(statList, stats);
+    charPane.appendChild(statList);
+    charPane.appendChild(el('div', 'pane-h', '基础属性'));
+    var attrVals = ATTRS.map(function (a) { return Number(attrs[a]) || 0; });
+    var attrScale = Math.max(15, Math.max.apply(null, attrVals) + 2);
+    var attrRadar = el('div', 'attr-radar');
+    attrRadar.appendChild(radarSvg(ATTRS, attrVals, attrScale, {
+      withValue: true, dataAttr: true, dangerIndex: danger ? 0 : null,
+    }));
+    charPane.appendChild(attrRadar);
+    var attrGrid = el('div', 'attr-grid');
+    ATTRS.forEach(function (a) {
+      var row = el('div', a === '体魄' && danger ? 'attr-cell danger' : 'attr-cell');
+      row.setAttribute('data-attr', a); // 保留点击弹说明卡
+      row.appendChild(el('span', 'attr-cell-name', a));
+      row.appendChild(el('span', 'attr-cell-val', String(Number(attrs[a]) || 0)));
+      attrGrid.appendChild(row);
+    });
+    charPane.appendChild(attrGrid);
+    charPane.appendChild(el('div', 'pane-h', '背包'));
     var itemGrid = el('div', 'item-grid');
     itemGrid.id = 'item-grid';
-    itemsSec.appendChild(itemGrid);
-    panel.appendChild(itemsSec);
+    charPane.appendChild(itemGrid);
+    charPane.appendChild(el('div', 'pane-h', '身上的印记'));
+    var marks = (s.character && s.character.marks) || [];
+    if (marks.length) marks.forEach(function (m) { charPane.appendChild(el('span', 'mark-chip', m)); });
+    else charPane.appendChild(el('span', 'muted', '（尚无印记）'));
+    panel.appendChild(charPane);
 
+    // ---- 人物页 ----
+    var peoplePane = el('section', 'panel-pane');
+    peoplePane.setAttribute('data-pane', 'people');
+    panelPanes.people = peoplePane;
+    var heroRow = el('div', 'npc-row');
+    heroRow.id = 'hero-row';
+    peoplePane.appendChild(heroRow);
+    peoplePane.appendChild(el('div', 'pane-h', '认识的人'));
+    var npcList = el('div', 'npc-list');
+    npcList.id = 'npc-list';
+    peoplePane.appendChild(npcList);
+    panel.appendChild(peoplePane);
+
+    // ---- 线索页 ----
+    var cluesPane = el('section', 'panel-pane');
+    cluesPane.setAttribute('data-pane', 'clues');
+    panelPanes.clues = cluesPane;
+    var threads = s.threads || [];
+    cluesPane.appendChild(el('div', 'pane-h', '未解之谜'));
+    if (threads.length) {
+      threads.forEach(function (t) { cluesPane.appendChild(el('div', 'thread-item', '· ' + t)); });
+    } else cluesPane.appendChild(el('div', 'muted', '（尚无未解之谜）'));
     var rumors = s.rumors || [];
-    var rumorSec = el('div', 'panel-section');
-    rumorSec.appendChild(el('h4', 'panel-h', '坊间传闻'));
+    cluesPane.appendChild(el('div', 'pane-h', '坊间传闻'));
     if (rumors.length) {
       rumors.slice().reverse().forEach(function (r) {
-        rumorSec.appendChild(el('div', 'rumor-item', '· ' + (r.text || '')));
+        cluesPane.appendChild(el('div', 'rumor-item', '· ' + (r.text || '')));
       });
-    } else rumorSec.appendChild(el('div', 'muted', '（尚无传闻）'));
-    panel.appendChild(rumorSec);
-
-    var marks = (s.character && s.character.marks) || [];
-    var markSec = el('div', 'panel-section');
-    markSec.appendChild(el('h4', 'panel-h', '身上的印记'));
-    if (marks.length) marks.forEach(function (m) { markSec.appendChild(el('span', 'mark-chip', m)); });
-    else markSec.appendChild(el('span', 'muted', '（尚无印记）'));
-    panel.appendChild(markSec);
-
-    var threads = s.threads || [];
-    var threadSec = el('div', 'panel-section');
-    threadSec.appendChild(el('h4', 'panel-h', '未解之谜'));
-    if (threads.length) {
-      threads.forEach(function (t) { threadSec.appendChild(el('div', 'thread-item', '· ' + t)); });
-    } else threadSec.appendChild(el('div', 'muted', '（尚无未解之谜）'));
-    panel.appendChild(threadSec);
-
+    } else cluesPane.appendChild(el('div', 'muted', '（尚无传闻）'));
     var facts = s.facts || [];
     var factChildren = facts.length
       ? facts.map(function (f) { return el('div', 'fact-item', '· ' + (f.text || '')); })
       : [el('div', 'muted', '（尚无已确立的事实）')];
-    panel.appendChild(collapsible('已知的事', factChildren));
-
-    // 主角形象：40px 圆形头像 + 「你」，放在「认识的人」上方（图由 public/js/images.js 填）。
-    var heroSec = el('div', 'panel-section');
-    var heroRow = el('div', 'npc-row');
-    heroRow.id = 'hero-row';
-    heroSec.appendChild(heroRow);
-    panel.appendChild(heroSec);
-
-    // 认识的人：每行前 40px 圆形头像 + 名字 + 态度。
-    var npcSec = el('div', 'panel-section');
-    npcSec.appendChild(el('h4', 'panel-h', '认识的人'));
-    var npcList = el('div', 'npc-list');
-    npcList.id = 'npc-list';
-    npcSec.appendChild(npcList);
-    panel.appendChild(npcSec);
-
-    var persona = s.persona || {};
-    var personaSec = el('div', 'panel-section');
-    personaSec.appendChild(el('h4', 'panel-h', '性格画像'));
-    PERSONA.forEach(function (d) {
-      var v = Math.max(0, Math.min(100, Number(persona[d]) || 0));
-      var row = el('div', 'persona-row');
-      row.appendChild(el('span', 'persona-name', d));
-      var bar = el('div', 'persona-bar');
-      var fill = el('div', 'persona-fill');
-      fill.style.width = v + '%';
-      bar.appendChild(fill);
-      row.appendChild(bar);
-      personaSec.appendChild(row);
-    });
-    panel.appendChild(personaSec);
-
+    cluesPane.appendChild(collapsible('已知的事', factChildren));
     var past = s.pastLives || [];
-    var pastSec = el('div', 'panel-section');
-    pastSec.appendChild(el('h4', 'panel-h', '前世'));
+    cluesPane.appendChild(el('div', 'pane-h', '前世'));
     if (past.length) {
       past.slice().reverse().forEach(function (pl) {
         var item = el('div', 'past-life-item');
         item.appendChild(el('div', 'past-life-head',
           '第' + pl.life + '世 · ' + (pl.name || '无名') + ' · ' + (pl.turns || 0) + ' 回合'));
         item.appendChild(el('div', 'past-life-epitaph', pl.epitaph || ''));
-        pastSec.appendChild(item);
+        cluesPane.appendChild(item);
       });
-    } else pastSec.appendChild(el('div', 'muted', '（尚无前世）'));
-    panel.appendChild(pastSec);
-
+    } else cluesPane.appendChild(el('div', 'muted', '（尚无前世）'));
     var chronicle = s.chronicle || [];
     var chChildren = chronicle.length
       ? chronicle.map(function (c) {
@@ -684,8 +1018,7 @@
             '第' + c.chapter + '章（' + c.fromTurn + '-' + c.toTurn + '）：' + c.summary);
         })
       : [el('div', 'muted', '（尚无编年史）')];
-    panel.appendChild(collapsible('编年史', chChildren));
-
+    cluesPane.appendChild(collapsible('编年史', chChildren));
     var bible = s.bible || {};
     var wsChildren = [];
     wsChildren.push(el('div', 'world-setting', '基调：' + (bible.tone || '—')));
@@ -729,13 +1062,22 @@
         toast('序章暂时生成不了，稍后再试');
       }
     });
-    panel.appendChild(prologueBtn);
+    cluesPane.appendChild(prologueBtn);
+    cluesPane.appendChild(collapsible('世界设定', wsChildren));
+    panel.appendChild(cluesPane);
 
-    panel.appendChild(collapsible('世界设定', wsChildren));
+    // ---- 画像页 ----
+    var profilePane = el('section', 'panel-pane');
+    profilePane.setAttribute('data-pane', 'profile');
+    panelPanes.profile = profilePane;
+    panel.appendChild(profilePane);
 
+    renderProfilePane();
     renderTopAttrs(s);
     renderImages(); // 用当前 /images 状态填充物品卡片与 NPC 头像
     syncSceneRail(); // 宽屏：把当前回合插图镜像到右侧栏顶部（见 app.css ≥1200px）
+    renderCharAvatar();
+    activatePanelTab(readPanelTab());
   }
 
   function showDeath(state, death) {
@@ -907,9 +1249,10 @@
     if (res.timeSkip && typeof res.timeSkip.label === 'string') {
       appendDivider('—— ' + res.timeSkip.label + '后 ——');
     }
-    var narr = appendNarration(res.narration, badgesFromApplied(res.applied), sceneId);
+    var narr = appendNarration(res.narration, badgesFromApplied(res.applied, res.stats_drains), sceneId);
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
+    fetchProfile(); // 每回合刷新跨世界玩家画像（失败静默）
     renderEventBanner(res.state.activeEvent);
     resetIdeas(res.suggestions);
     setUndoVisible(!!res.state.undoAvailable);

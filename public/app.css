@@ -1096,3 +1096,87 @@ body[data-genre][data-read="paper"] .img-fallback{color:#5b4326;background:radia
   body[data-genre][data-read="paper"] .panel,body.atmosphere-background[data-genre][data-read="paper"] .panel{background:#f8f3e7}
 }
 @media(prefers-reduced-motion:reduce){.world-backdrop[data-art="scene"]{transform:none}}
+
+/* ===== 角色卡（结构基础样式，视觉稿待定） ===== */
+/* 只保证「能用、不乱」，精细视觉由下一个任务的设计稿统一处理。 */
+.panel-tabs{display:flex;gap:4px;margin:0 0 12px}
+.panel-tab{flex:1 1 0;min-width:0;padding:6px 4px;font-family:var(--sans);font-size:12px;
+  color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:8px;
+  cursor:pointer;text-align:center}
+.panel-tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent);background:var(--bg-2)}
+.panel-pane{display:none}
+.panel-pane.active{display:block}
+.pane-h{font-family:var(--sans);font-size:12px;color:var(--muted);margin:12px 0 6px;
+  padding-bottom:4px;border-bottom:1px solid var(--line)}
+
+/* 角色卡 */
+.char-card{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.char-avatar,.char-avatar-img{width:64px;height:64px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.char-avatar{background:var(--bg);border:1px solid var(--line);overflow:hidden;
+  display:flex;align-items:center;justify-content:center}
+.char-meta{min-width:0}
+.char-name{font-family:var(--serif);font-size:18px;color:var(--ink)}
+.char-sub{font-family:var(--sans);font-size:12px;color:var(--muted);margin-top:2px}
+.char-badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.char-rank,.char-danger{font-family:var(--sans);font-size:11px;padding:1px 8px;border-radius:999px;
+  border:1px solid var(--line);background:var(--bg);color:var(--accent-2)}
+.char-danger{color:#ffd7cf;border-color:rgba(224,57,43,.75);background:rgba(192,57,43,.22)}
+
+/* 专属状态 */
+.stat-list{display:flex;flex-direction:column;gap:10px}
+.stat{font-family:var(--sans);font-size:12px}
+.stat-top{display:flex;align-items:baseline;gap:6px;margin-bottom:4px}
+.stat-icon{color:var(--accent-2)}
+.stat-name{flex:1;min-width:0;color:var(--ink)}
+.stat-val small{color:var(--muted);font-size:10px}
+.stat-bar{position:relative;height:8px;border-radius:4px;background:var(--bg);
+  border:1px solid var(--line);overflow:visible}
+.stat-bar>i{display:block;height:100%;border-radius:4px;background:var(--accent-2)}
+.stat-tick{position:absolute;top:-2px;width:2px;height:12px;background:var(--muted);opacity:.6}
+.stat.alert>.stat-top .stat-val{color:var(--accent-2)}
+.stat.severe>.stat-bar>i{background:#e0392b}
+.stat-alert{font-size:11px;color:var(--accent-2);margin-top:4px;line-height:1.5}
+.rank-steps{display:flex;gap:4px;margin-top:4px}
+.rank-step{flex:1;height:8px;border-radius:2px;background:var(--bg);border:1px solid var(--line)}
+.rank-step.done{background:var(--accent-2)}
+.rank-step.current{background:var(--accent);border-color:var(--accent)}
+
+/* 基础属性雷达 + 格子 */
+.attr-radar,.profile-radar{max-width:240px;margin:8px auto}
+.attr-radar svg,.profile-radar svg{width:100%;height:auto;display:block}
+.radar-grid,.radar-axis{stroke:currentColor;fill:none;opacity:.35}
+.radar-shape{fill:currentColor;fill-opacity:.18;stroke:currentColor;stroke-opacity:.8}
+.radar-label{font-family:var(--sans);font-size:10px;fill:currentColor}
+.radar-dot{fill:currentColor}
+.radar-dot.danger{fill:#e0392b}
+.radar-label[data-attr],.attr-cell[data-attr]{cursor:pointer}
+.attr-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.attr-cell{display:flex;align-items:center;justify-content:space-between;gap:4px;
+  font-family:var(--sans);font-size:12px;padding:6px 8px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg)}
+.attr-cell.danger{color:#ffd7cf;border-color:rgba(224,57,43,.75)}
+.attr-cell-name{color:var(--muted)}
+.attr-cell-val{color:var(--ink);font-weight:600}
+
+/* 背包空格子 */
+.item-slot-empty{width:64px;height:64px;border-radius:10px;border:1px dashed var(--line);
+  box-sizing:border-box;opacity:.55}
+
+/* 画像页 */
+.profile-head{margin-bottom:8px}
+.profile-title{font-family:var(--serif);font-size:16px;color:var(--ink)}
+.profile-sub,.profile-note{font-family:var(--sans);font-size:11px;color:var(--muted);margin-top:2px}
+.profile-hint{font-family:var(--sans);font-size:12px;color:var(--accent-2);
+  background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:8px 0}
+.persona-radar{color:var(--accent-2)}
+.profile-traits{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.trait-chip{font-family:var(--sans);font-size:12px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.profile-summary,.profile-wants{font-size:13px;color:var(--ink);line-height:1.7;margin:8px 0}
+.profile-wants{font-family:var(--sans);font-size:12px;color:var(--muted)}
+.profile-reset{margin-top:8px}
+
+@media(max-width:600px){
+  .panel-tab{min-height:40px}
+  .attr-cell{min-height:40px}
+}

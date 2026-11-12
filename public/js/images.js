@@ -73,7 +73,7 @@
     if (!box) return;
     box.textContent = '';
     var items = (currentState && currentState.character && currentState.character.items) || [];
-    if (!items.length) { box.appendChild(el('span', 'muted', '（无）')); return; }
+    if (!items.length) box.appendChild(el('span', 'muted', '（无）'));
     items.forEach(function (name) {
       var card = el('div', 'item-card');
       // 物品卡片点击打开介绍卡；缩略图不再单独看大图（大图在卡片里点仍可看原图）。
@@ -82,6 +82,12 @@
       card.addEventListener('click', function () { showItemCard(name); });
       box.appendChild(card);
     });
+    // 背包空格子：物品不足 6 个时补到 6 格，让背包看起来像格子。
+    for (var i = items.length; i < 6; i++) {
+      var slot = el('div', 'item-slot-empty');
+      slot.setAttribute('aria-hidden', 'true');
+      box.appendChild(slot);
+    }
   }
 
   function renderNpcList() {
@@ -256,6 +262,7 @@
   function renderImages() {
     renderItemGrid();
     renderHero();
+    if (typeof renderCharAvatar === 'function') renderCharAvatar();
     renderNpcList();
     renderScenes();
     // 图片就绪（含轮询）只刷新已打开档案卡的头像，不重建卡片 / 列表 / 历史。
