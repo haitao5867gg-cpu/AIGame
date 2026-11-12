@@ -257,7 +257,11 @@
   }
 
   function appendActionLine(action) {
-    var line = el('p', 'action-line', '› 你：' + action);
+    var line = el('p', 'action-line');
+    var bubble = el('span', 'action-bubble');
+    bubble.appendChild(el('span', 'action-who', '你'));
+    bubble.appendChild(el('span', 'action-text', action));
+    line.appendChild(bubble);
     $('stream').appendChild(line);
     turnStartEl = line;             // 记住本回合起点
     scrollToTurnStart(line);        // 停在这条行动行，露出下面的「世界在回应…」
@@ -347,7 +351,8 @@
     return { paras: paras, hints: currentVoiceHints, wrap: wrap, turn: turn };
   }
 
-  // 整回合朗读：叙事块顶部右侧只放一个「▶ 朗读」按钮，历史回合同样有。
+  // 整回合朗读：只放一个「▶ 朗读」按钮，优先放进本回合行动行（气泡右侧、同一行），
+  // 找不到行动行时（重生开场 / 序章后的第一段 / 行动行已有按钮）仍放在叙事块最前面。
   // 返回的 turn 交给 Tts.autoRead / 播放队列，按段落顺序读完整回合。
   function attachTurnButton(wrap, paras, hints) {
     if (typeof Tts === 'undefined') return null;
@@ -355,7 +360,24 @@
     var b = Tts.makeTurnButton(turn);
     var head = el('div', 'tts-turn-head');
     head.appendChild(b);
-    wrap.insertBefore(head, wrap.firstChild);
+
+    // 从 wrap 往前找本回合行动行：跳过事件卡 / 分隔，遇行动行即目标，其余元素或到头就停止。
+    var inline = false;
+    var node = wrap.previousElementSibling;
+    while (node) {
+      if (node.classList.contains('event-card') || node.classList.contains('divider')) {
+        node = node.previousElementSibling;
+        continue;
+      }
+      if (node.classList.contains('action-line') && !node.querySelector('.tts-turn-head')) {
+        node.appendChild(head);                    // 追加到 .action-bubble 之后
+        wrap.setAttribute('data-tts-inline', '1');
+        inline = true;
+      }
+      break;                                       // 非跳过元素一律停止搜索
+    }
+    if (!inline) wrap.insertBefore(head, wrap.firstChild);
+
     turn.btn = b;
     return turn;
   }

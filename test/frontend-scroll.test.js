@@ -82,3 +82,12 @@ test('前端滚动：public/js 无新增 innerHTML', () => {
     assert.ok(!/\.innerHTML/.test(read('js/' + f)), f + ' 不得出现 .innerHTML');
   }
 });
+
+test('行动行仍是回合起点：新气泡结构保留 .action-line 类与起点定位', () => {
+  assert.ok(!/› 你：/.test(actBody), '行动行不再有「› 你：」前缀');
+  assert.ok(actBody.includes("el('p', 'action-line')"), '仍是 p.action-line（回合起点类名不变）');
+  assert.ok(/action-bubble/.test(actBody) && /action-who/.test(actBody) && /action-text/.test(actBody), '气泡三段结构');
+  assert.match(actBody, /turnStartEl\s*=\s*line/, '仍记住本回合起点');
+  assert.match(actBody, /scrollToTurnStart\(line\)/, '仍定位到行动行');
+  assert.match(gameJs, /querySelectorAll\('\.action-line'\)/, 'lastTurnStart 仍按 .action-line 找最新回合');
+});

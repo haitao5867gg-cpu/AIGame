@@ -389,3 +389,11 @@ test('前端：用量面板主人专属区（朋友访问 / 复制 / 隧道 / �
   assert.ok(/\.usage-mono\{[^}]*word-break:break-all/.test(html), '等宽文本应换行');
   assert.ok(/\.usage-friend-row\{[^}]*flex-wrap:wrap/.test(html), '朋友访问行应换行');
 });
+
+test('行动行气泡结构 + 朗读按钮内联（源码级）', () => {
+  assert.ok(!/› 你：/.test(html), '正文不再出现「› 你：」前缀');
+  assert.ok(/action-bubble/.test(html) && /action-who/.test(html) && /action-text/.test(html), '气泡三段结构');
+  assert.ok(/data-tts-inline/.test(html), '按钮内联标记');
+  assert.ok(/appendActionLine\(rec\.action\)/.test(html) && /appendActionLine\(action\)/.test(html),
+    '历史回放与新回合都走 appendActionLine（两条路径的行动行结构统一）');
+});

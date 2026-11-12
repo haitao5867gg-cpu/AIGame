@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..', 'public');
 function read(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
@@ -97,4 +98,248 @@ test('public/js 无新增 innerHTML 赋值', () => {
     assert.ok(!/\.innerHTML/.test(read('js/' + f)), f + ' 不得出现 .innerHTML');
   }
   assert.ok(!/innerHTML/.test(ttsJs), 'tts.js 完全不出现 innerHTML');
+});
+
+// ---- 行动气泡 + 朗读按钮内联：用 vm + 最小假 DOM 真实执行 public/js 里的函数 ----
+// 抽出 core.js 的 $ / el 与 game.js 的 appendActionLine / attachTurnButton，
+// 在假 DOM 里执行，验证生成的 DOM 结构和按钮挂载位置（不只是读源码字符串）。
+function section(src, fromStr, toStr) {
+  const i = src.indexOf(fromStr);
+  assert.ok(i >= 0, '应能定位 ' + fromStr);
+  const j = src.indexOf(toStr, i + fromStr.length);
+  assert.ok(j > i, '应能定位 ' + toStr);
+  return src.slice(i, j);
+}
+const coreJs = read('js/core.js');
+const coreSrc = section(coreJs, 'function $(id) {', 'function formatGameDay(day) {');
+const actionSrc = section(gameJs, 'function appendActionLine(action) {', 'function appendDivider(text) {');
+const turnSrc = section(gameJs, 'function attachTurnButton(wrap, paras, hints) {', 'function appendEventCard(ev) {');
+
+class FakeNode {
+  constructor(tag) {
+    this.tagName = String(tag || 'div').toUpperCase();
+    this.className = '';
+    this.childNodes = [];
+    this.parentNode = null;
+    this.attributes = {};
+    this._text = '';
+  }
+  get classList() {
+    const self = this;
+    const parts = () => self.className.split(/\s+/).filter(Boolean);
+    return {
+      contains(c) { return parts().includes(c); },
+      add(c) { if (!parts().includes(c)) self.className = parts().concat(c).join(' '); },
+    };
+  }
+  get textContent() {
+    let s = this._text;
+    for (const c of this.childNodes) s += c.textContent;
+    return s;
+  }
+  set textContent(v) {
+    for (const c of this.childNodes) c.parentNode = null;
+    this.childNodes = [];
+    this._text = (v == null ? '' : String(v));
+  }
+  appendChild(c) {
+    if (c.parentNode) c.parentNode.removeChild(c);
+    this.childNodes.push(c);
+    c.parentNode = this;
+    return c;
+  }
+  removeChild(c) {
+    const i = this.childNodes.indexOf(c);
+    if (i >= 0) this.childNodes.splice(i, 1);
+    c.parentNode = null;
+    return c;
+  }
+  insertBefore(c, ref) {
+    if (c.parentNode) c.parentNode.removeChild(c);
+    const i = ref ? this.childNodes.indexOf(ref) : -1;
+    if (i >= 0) this.childNodes.splice(i, 0, c);
+    else this.childNodes.push(c);
+    c.parentNode = this;
+    return c;
+  }
+  get firstChild() { return this.childNodes[0] || null; }
+  get previousElementSibling() {
+    if (!this.parentNode) return null;
+    const arr = this.parentNode.childNodes;
+    const i = arr.indexOf(this);
+    return i > 0 ? arr[i - 1] : null;
+  }
+  setAttribute(k, v) { this.attributes[k] = String(v); }
+  getAttribute(k) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+  }
+  querySelector(sel) { return this._find(sel)[0] || null; }
+  querySelectorAll(sel) { return this._find(sel); }
+  _find(sel) {
+    const sels = sel.split(',').map((s) => s.trim());
+    const match = (n) => sels.some((s) => {
+      if (s[0] === '.') return n.classList.contains(s.slice(1));
+      if (s[0] === '#') return n.getAttribute('id') === s.slice(1);
+      return n.tagName === s.toUpperCase();
+    });
+    const out = [];
+    (function walk(n) {
+      for (const c of n.childNodes) {
+        if (match(c)) out.push(c);
+        walk(c);
+      }
+    })(this);
+    return out;
+  }
+}
+
+function makeEnv() {
+  const byId = {};
+  const doc = {
+    createElement(tag) { return new FakeNode(tag); },
+    getElementById(id) { return byId[id] || null; },
+  };
+  const stream = new FakeNode('div');
+  byId['stream'] = stream;
+  const sandbox = {
+    document: doc,
+    turnStartEl: null,
+    scrollToTurnStart() {},
+    Tts: {
+      makeTurnButton() {
+        const b = doc.createElement('button');
+        b.className = 'tts-read-btn';
+        return b;
+      },
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(coreSrc + '\n' + actionSrc + '\n' + turnSrc, sandbox);
+  return {
+    doc, stream,
+    api: {
+      el: sandbox.el,
+      appendActionLine: sandbox.appendActionLine,
+      attachTurnButton: sandbox.attachTurnButton,
+    },
+  };
+}
+function mk(env, tag, cls, text) { return env.api.el(tag, cls, text); }
+function headCount(node) { return node.querySelectorAll('.tts-turn-head').length; }
+
+test('行动行：action-line > action-bubble > action-who「你」+ action-text（真实 DOM）', () => {
+  const env = makeEnv();
+  env.api.appendActionLine('我走向城门');
+  const lines = env.stream.querySelectorAll('.action-line');
+  assert.equal(lines.length, 1, '每回合恰好一个 .action-line');
+  const line = lines[0];
+  assert.equal(line.tagName, 'P', '行动行仍是 p.action-line（回合起点类名不变）');
+  const bubble = line.querySelector('.action-bubble');
+  assert.ok(bubble, '有 .action-bubble');
+  assert.equal(bubble.parentNode, line, '.action-bubble 是行动行直接子节点');
+  const who = bubble.querySelector('.action-who');
+  const text = bubble.querySelector('.action-text');
+  assert.ok(who && text, '气泡含 action-who 与 action-text');
+  assert.equal(who.textContent, '你');
+  assert.equal(text.textContent, '我走向城门');
+  assert.equal(line.textContent, '你我走向城门', '文字只剩「你」+ 行动，不再有「› 你：」前缀');
+  assert.ok(!/›/.test(line.textContent) && !line.textContent.includes('你：'), '无旧前缀');
+});
+
+test('时光推进行动文字原样放进 action-text', () => {
+  const env = makeEnv();
+  const s = '【时光推进·一年】按眼下的日子过下去';
+  env.api.appendActionLine(s);
+  assert.equal(env.stream.querySelector('.action-text').textContent, s);
+});
+
+test('game.js 源码不再有「› 你：」，改用 el/textContent 构建气泡', () => {
+  assert.ok(!gameJs.includes('› 你：'), '源码去掉前缀文字');
+  assert.ok(gameJs.includes("el('span', 'action-who', '你')"), 'action-who 文案');
+  assert.ok(gameJs.includes("el('span', 'action-text', action)"), 'action-text 用 el/textContent');
+  assert.ok(!/\.innerHTML/.test(gameJs), '不拼 innerHTML');
+});
+
+test('attachTurnButton 源码：往前找行动行并内联按钮，保留找不到时的回退', () => {
+  const body = section(gameJs, 'function attachTurnButton(wrap, paras, hints) {', 'function appendEventCard(ev) {');
+  assert.ok(/previousElementSibling/.test(body), '从 wrap 往前找');
+  assert.ok(/event-card/.test(body) && /divider/.test(body), '跳过事件卡 / 分隔');
+  assert.ok(/action-line/.test(body), '以 .action-line 为目标');
+  assert.ok(/tts-turn-head/.test(body), '判断行动行是否已有按钮');
+  assert.ok(/data-tts-inline/.test(body), '内联时打标记');
+  assert.ok(/insertBefore\(head, wrap\.firstChild\)/.test(body), '没找到时仍插到 wrap 最前面');
+  assert.ok(!/\.innerHTML/.test(body), '不拼 innerHTML');
+});
+
+test('attachTurnButton：前一个兄弟是 .action-line → 按钮进行动行、wrap 标 data-tts-inline', () => {
+  const env = makeEnv();
+  env.api.appendActionLine('走向城门');
+  const wrap = mk(env, 'div', 'narration-block');
+  wrap.appendChild(mk(env, 'p', 'narration', '段一'));
+  env.stream.appendChild(wrap);
+  const turn = env.api.attachTurnButton(wrap, ['段一'], []);
+  const line = env.stream.querySelector('.action-line');
+  assert.equal(headCount(line), 1, '按钮进行动行');
+  assert.equal(headCount(wrap), 0, 'wrap 内不再放按钮');
+  assert.equal(wrap.getAttribute('data-tts-inline'), '1', 'wrap 标记内联');
+  assert.ok(wrap.firstChild && !wrap.firstChild.classList.contains('tts-turn-head'), 'wrap 首子元素不是按钮');
+  assert.ok(line.childNodes[line.childNodes.length - 1].classList.contains('tts-turn-head'), '按钮在 .action-bubble 之后追加');
+  assert.ok(line.querySelector('.action-bubble'), '气泡仍在');
+  assert.equal(turn.btn.className, 'tts-read-btn', 'turn.btn 仍是新建按钮');
+  assert.equal(turn.wrap, wrap, 'turn.wrap 不变');
+});
+
+test('attachTurnButton：隔着 .event-card / .divider 也能找到行动行', () => {
+  const env = makeEnv();
+  env.api.appendActionLine('走向城门');
+  env.stream.appendChild(mk(env, 'div', 'event-card'));
+  env.stream.appendChild(mk(env, 'div', 'divider'));
+  const wrap = mk(env, 'div', 'narration-block');
+  wrap.appendChild(mk(env, 'p', 'narration', '段一'));
+  env.stream.appendChild(wrap);
+  env.api.attachTurnButton(wrap, ['段一'], []);
+  const line = env.stream.querySelector('.action-line');
+  assert.equal(headCount(line), 1, '跳过卡片/分隔后按钮仍进行动行');
+  assert.equal(wrap.getAttribute('data-tts-inline'), '1');
+  assert.equal(headCount(wrap), 0);
+});
+
+test('attachTurnButton：前面是 .narration-block → 按钮在 wrap 第一个子元素', () => {
+  const env = makeEnv();
+  env.stream.appendChild(mk(env, 'div', 'narration-block'));
+  const wrap = mk(env, 'div', 'narration-block');
+  wrap.appendChild(mk(env, 'p', 'narration', '段一'));
+  env.stream.appendChild(wrap);
+  env.api.attachTurnButton(wrap, ['段一'], []);
+  assert.equal(headCount(wrap), 1, '按钮回到 wrap');
+  assert.ok(wrap.firstChild.classList.contains('tts-turn-head'), '是 wrap 第一个子元素');
+  assert.equal(wrap.getAttribute('data-tts-inline'), null, '不打内联标记');
+});
+
+test('attachTurnButton：没有前置兄弟（重生开场/序章后第一段）→ 按钮在 wrap 第一个子元素', () => {
+  const env = makeEnv();
+  const wrap = mk(env, 'div', 'narration-block');
+  wrap.appendChild(mk(env, 'p', 'narration', '开场'));
+  env.stream.appendChild(wrap);
+  env.api.attachTurnButton(wrap, ['开场'], []);
+  assert.equal(headCount(wrap), 1);
+  assert.ok(wrap.firstChild.classList.contains('tts-turn-head'));
+  assert.equal(wrap.getAttribute('data-tts-inline'), null);
+});
+
+test('attachTurnButton：行动行已有按钮时不重复放（行动行仍只有一个）', () => {
+  const env = makeEnv();
+  env.api.appendActionLine('走向城门');
+  const line = env.stream.querySelector('.action-line');
+  const existing = mk(env, 'div', 'tts-turn-head');
+  existing.appendChild(mk(env, 'button', 'tts-read-btn'));
+  line.appendChild(existing);
+  const wrap = mk(env, 'div', 'narration-block');
+  wrap.appendChild(mk(env, 'p', 'narration', '段一'));
+  env.stream.appendChild(wrap);
+  env.api.attachTurnButton(wrap, ['段一'], []);
+  assert.equal(headCount(line), 1, '行动行按钮数不变，不重复放');
+  assert.equal(headCount(wrap), 1, '回退到 wrap 第一个子元素');
+  assert.ok(wrap.firstChild.classList.contains('tts-turn-head'));
+  assert.equal(wrap.getAttribute('data-tts-inline'), null);
 });
