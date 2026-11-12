@@ -100,8 +100,8 @@ const THREAD_TEXT_MAX = 20;
 const THREADS_MAX = 6;
 // 叙事 v3（storyMode）：伏笔账本同时活跃最多 5 条，满了拒收新线索、不再自动淡去最旧的。
 const STORY_THREADS_MAX = 5;
-// 叙事 v3 正文 700~1200 字，深度模式偶尔更长；storyMode 下截断上限放宽到 1800。
-const STORY_NARRATION_MAX = 1800;
+// 叙事 v3 正文 700~1200 字，深度模式偶尔更长；storyMode 下截断上限放宽到 2400。
+const STORY_NARRATION_MAX = 2400;
 const FADED_THREADS_MAX = 20;
 
 // 地点与时间：时段依次循环，深夜之后进入次日清晨；单回合推进 0~2 个时段。

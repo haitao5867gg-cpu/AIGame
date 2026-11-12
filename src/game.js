@@ -614,10 +614,12 @@ function createGame(cfg, dataDir) {
       const history = isNew ? null : historyMod.buildStoryHistory(events, state, {
         budget: cfg.STORY_HISTORY_BUDGET,
       });
+      // 大纲用写正文的强模型、低强度思考（深度思考要等好几分钟，建世界等不起）。
+      const wc = writingMode.writingCall(cfg, 'fine');
       const op = await callParsed(
-        'outline', cfg.STORY_MODEL || worldModel,
+        'outline', wc.model,
         prompts.buildOutlineMessages(state, { history }),
-        { title: state.bible && state.bible.title }, usages || [],
+        { title: state.bible && state.bible.title }, usages || [], { extraBody: wc.extraBody },
       );
       const outline = outlineMod.normalizeOutline(op.parsed);
       if (!outline) return false;
@@ -1293,11 +1295,12 @@ function createGame(cfg, dataDir) {
       new_facts: ledger.new_facts,
       marks_add: ledger.marks_add,
       marks_remove: ledger.marks_remove,
-      threads_add: threadTexts,
+      threads_add: threadTexts.slice(0, 1), // v3：每回合最多新埋 1 条线索
       threads_resolve: ledger.threads_resolve,
       rumor: ledger.rumor,
       move_to: ledger.move_to,
-      time_passes: ledger.time_passes,
+      // v3：记账没写时间就按「没过多久」处理（引擎缺省是推进一个时段，会让时钟比正文跑得快）。
+      time_passes: ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes,
       overstep: ledger.overstep,
       scene: ledger.scene,
       voice_hints: ledger.voice_hints,

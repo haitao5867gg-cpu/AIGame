@@ -138,7 +138,7 @@ test('planTurn storyMode：不开事件 / 不预兆 / 不转折 / 不压编年�
   assert.equal(engine.planTurn(s, { storyMode: true }).settling, true);
 });
 
-test('resolveTurn storyMode：伏笔满 5 条拒收新线索、不淡去；正文上限放宽到 1800', () => {
+test('resolveTurn storyMode：伏笔满 5 条拒收新线索、不淡去；正文上限放宽到 2400', () => {
   const s = engine.createWorld({ id: 'wtest', bible: { start: { place: '甲' } } }, { rng: () => 0.5, now: 1 });
   s.threads = ['一', '二', '三', '四', '五'];
   const plan = engine.planTurn(s, { storyMode: true });
@@ -238,4 +238,17 @@ test('v2 回合不走两步（默认 NARRATIVE_STYLE）', () => {
   assert.match(src, /if \(cfg\.NARRATIVE_STYLE === 'v3'\) \{\s*return takeStoryTurn/);
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /sseEvent\(res, 'thinking', \{ chars \}\)/);
+});
+
+test('v3 回合：记账没写时间就不推进时钟；每回合最多新埋 1 条线索', async (t) => {
+  const { g, dataDir } = makeGame(t, { complete: (o, real) => {
+    if (o.purpose !== 'ledger') return real();
+    return Promise.resolve({ content: JSON.stringify({ suggestions: ['a', 'b', 'c'], threads_add: ['线索甲', '线索乙', { text: '线索丙', due: 1 }] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  } });
+  const w = await g.buildWorld({ seed: '雾里的旧港', name: '旅人' });
+  const before = JSON.parse(fs.readFileSync(path.join(dataDir, 'worlds', w.id, 'state.json'), 'utf8')).clock;
+  await g.takeTurn(w.id, { action: '走' });
+  const st = JSON.parse(fs.readFileSync(path.join(dataDir, 'worlds', w.id, 'state.json'), 'utf8'));
+  assert.deepEqual(st.clock, before);
+  assert.deepEqual(st.threads, ['线索甲']);
 });
