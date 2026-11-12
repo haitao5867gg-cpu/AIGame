@@ -1,6 +1,18 @@
 # 世界氛围
 
-玄幻世界用灵田样板（背景 + 三首器乐）；其他题材（都市、游戏系统、恐怖悬疑、休闲日常、通用）各有三首配乐，暂无背景图，保持中性界面；未识别题材按通用处理。
+玄幻世界用灵田样板（背景 + 三首器乐）；其他题材（都市、游戏系统、恐怖悬疑、休闲日常、通用）各有三首配乐；未识别题材按通用处理。
+
+## 底图与阅读底色（2026-11-12 游戏页改版）
+
+每个世界都有底图，按优先级三选一（`atmosphere.js` 的 `applyScene`，`#world-backdrop[data-art]` 记录来源）：
+
+1. `catalog`：目录里的场景底图（目前只有玄幻灵田的田间室外）。
+2. `scene`：本世界当前这一世最近一张已出好的场景插图（`images.js` 的 `latestSceneArt` → `Atmosphere.setSceneArt`，只收 `/api/images/scene-<12位hex>.jpg|png`；加载失败退回题材图）。
+3. `genre`：首页题材门图 `/assets/home/door-<题材>-v1.jpg`。
+
+进入世界后 body 上有 `data-genre`（xuanhuan/urban/game/horror/cozy/general）、`data-period`（dawn/day/dusk/night）、`data-read`（paper/night），离开世界全部移除；`app.css` 末尾「场景舞台」一段据此给整页上题材色调、玻璃阅读面和两种底色。关掉「显示世界背景」只隐藏底图，题材色调和阅读底色照旧。
+
+阅读底色是玩家偏好 `atmosphere.reading`：`auto` 跟随时辰（清晨/午后为纸页亮色，黄昏/深夜为夜色），`paper` 始终亮色，`night` 始终暗色。入口：桌面地点行「底色·…」、手机「⋯ → 阅读底色」点一下循环切换，氛围设置里有下拉。纸页只把阅读面（`.stage`）和侧栏（`.panel`）换成浅底深字；顶栏、地点行、事件横幅压在底图上，两种底色都保持浅字。手机上不在整页滚动的大块上用 `backdrop-filter`，改为底图本身柔焦。
 
 ## 玩家操作
 
@@ -30,7 +42,7 @@
 
 播放器用代次与通道令牌忽略过期播放 Promise/切歌计时器。静音、离开、账号切换和销毁都会暂停或清理相应资源；隐藏页面不新加载音频。设置弹层有滚动锁、焦点约束、Escape 关闭及关闭后焦点恢复。
 
-偏好形状：`{background:true, enabled:false, musicVolume:0.16, ambienceVolume:0.10, mode:'auto'}`。服务端只接收合法字段，有限数值夹在 0..1，部分修改保留其他偏好/其他玩家。前端串行保存合并补丁；API 返回 `{prefs:{atmosphere:...}}`，旧响应不能覆盖新编辑或另一个玩家。
+偏好形状：`{background:true, enabled:false, musicVolume:0.16, ambienceVolume:0.10, mode:'auto', reading:'auto'}`。服务端只接收合法字段，有限数值夹在 0..1，部分修改保留其他偏好/其他玩家。前端串行保存合并补丁；API 返回 `{prefs:{atmosphere:...}}`，旧响应不能覆盖新编辑或另一个玩家。
 
 ## 素材与传输
 
