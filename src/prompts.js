@@ -1170,6 +1170,212 @@ function splitFacts(facts, visibleText) {
   return { seen, unseen };
 }
 
+// ---- 叙事 v3：写正文（五段任务书）与记账（从正文里抽字段） ----
+// 写正文的模型只看作者身份 + 写作准则（system）和一份大白话任务书（user），只输出纯正文；
+// 数值、物品、线索、档案这些能由程序校验的东西，交给写完之后的记账调用。措辞为本项目自写。
+const WRITER_RULES = [
+  '1. 用第二人称「你」写主角。每节 700~1200 字，写成连贯的场景：有动作、有对话、有主角的心思和判断。',
+  '2. 读者这回合的行动，这一节就写出结果，并把主角做了什么写进正文里——不看读者的输入也能读懂。世界和人物按各自的情理和意愿回应；不顺利只能是因为情理，不能故意刁难。不替主角做读者没说的重大决定。',
+  '3. 一节只推进一件主要的事。优先推进、回收已经出现过的伏笔；新的悬念每节最多一个。',
+  '4. 信息只能通过主角的眼睛、耳朵和推理得到。作者笔记（大纲、设定、人物的隐秘想法）读者看不到，第一次写进正文时要让主角当场经历或得知；「刚才」「那条」「你记得」这类回指只能指前文真写过的东西。',
+  '5. 时间、地点、天气和前文连贯；这一节过了多久，要在正文里交代。',
+  '6. 每个人物说话有自己的腔调（见【三、相关的人】），台词像真人说话：有停顿、打岔、答非所问，不像辩论。',
+  '7. 去掉 AI 腔：段尾不补感悟或总结；少用「缓缓、淡淡、微微、不禁、仿佛」这类副词和比喻；不同人物的反应要不同，别都「瞳孔一缩、心中一凛」；情绪用动作和细节表现，不贴标签；写完一个画面不再补一句解释它的意思；环境描写为情节服务，别每节都写雨、烟、霓虹。',
+  '8. 节奏有快有慢：有的段落一句话，有的段落十几句；紧张时句子短，平静时可以舒展。段落之间空一行。',
+  '9. 结尾停在一个自然的、需要主角拿主意或让人想往下读的时刻；不出选择题，不做总结，不把冲突全部解决。',
+  '10. 只输出正文：不要标题、不要「第几节」、不要说明文字、不要 JSON。',
+].join('\n');
+
+const FOCUS_TIPS = {
+  social: '这一节以人物来往为主：多写对话和对方的反应，让每个人的立场和算盘从话里透出来。',
+  private: '这是主角的私人时间：放慢节奏，写感受和细节，不要引入外人打断。',
+  rest: '这是休息的时刻：放慢节奏，写身体和心境的变化，不要引入外人打断。',
+  intimate: '这是亲密的时刻：按【亲密关系】的规则写，不要引入外人打断。',
+  action: '这一节以行动为主：动作和空间关系写清楚，节奏快一些。',
+  explore: '这一节以探索为主：写主角看见、听见、摸到的东西，一步一步发现。',
+  travel: '这一节在路上：交代怎么去、路上见闻，到了就停在新的场景里。',
+};
+
+function npcVoiceLines(state, names) {
+  const npcs = (state && state.bible && Array.isArray(state.bible.npcs)) ? state.bible.npcs : [];
+  const att = (state && state.npcAttitude) || {};
+  return npcs
+    .filter((n) => n && n.name && (!names || names.includes(n.name)))
+    .map((n) => '- ' + n.name + '：说话' + (n.voice || '（当场确立一种和别人不同的腔调）') +
+      (Object.prototype.hasOwnProperty.call(att, n.name) ? '；对主角的态度 ' + att[n.name] : ''));
+}
+
+function presentNpcNames(state, action, history) {
+  const npcs = (state && state.bible && Array.isArray(state.bible.npcs)) ? state.bible.npcs : [];
+  const recentText = String((history && history.text) || '').slice(-3000) + String(action || '');
+  return npcs.map((n) => n && n.name).filter((name) => name && recentText.includes(name));
+}
+
+function protagonistHints(state) {
+  const hints = [];
+  const c = (state && state.character) || {};
+  const body = c.attrs && Number(c.attrs['体魄']);
+  if (Number.isFinite(body) && body <= 2) hints.push('主角伤势沉重（体魄 ' + body + '），行动吃力，正文里要写出来。');
+  for (const st of Array.isArray(state && state.stats) ? state.stats : []) {
+    if (!st || st.kind === 'rank') continue;
+    const warns = Array.isArray(st.warn) ? st.warn : [];
+    const v = Number(st.value);
+    for (const w of warns) {
+      const on = (typeof w.below === 'number' && v <= w.below) || (typeof w.above === 'number' && v >= w.above);
+      if (on) hints.push('主角此刻' + w.label + '（' + st.name + ' ' + v + '/' + (st.max || 100) + '）：' + (w.effect || '') + '，正文里要体现。');
+    }
+  }
+  const marks = Array.isArray(c.marks) ? c.marks : [];
+  if (marks.length) hints.push('主角身上的处境还在起作用：' + marks.join('；') + '。');
+  return hints;
+}
+
+// ctx = { action, history, card, outline, chapterTurn, adult, timeSkip, plan, dueThreads }
+function buildWriterMessages(state, ctx) {
+  const s = state || {};
+  const c = ctx || {};
+  const b = s.bible || {};
+  const hero = (s.character && s.character.name) || '主角';
+  const title = b.title || '无题';
+  const genreStyle = GENRE_STYLES[normalizeGenre(s.genre)] || '';
+  const system = [
+    '你是连载小说《' + title + '》的作者。一位读者扮演主角' + hero + '，每回合告诉你主角想做什么，你接着写下一节正文。这部书写完会整理成一本小说给别人读，所以每一节都要经得起当小说读。',
+    '【写作准则】',
+    WRITER_RULES,
+    '【亲密关系】',
+    INTIMACY_COMMON + '\n' + (c.adult ? INTIMACY_ADULT_ON : INTIMACY_ADULT_OFF),
+    genreStyle ? String(genreStyle).slice(0, 400) : '',
+  ].filter(Boolean).join('\n');
+
+  const card = c.card || null;
+  const chapterTurn = Number.isSafeInteger(c.chapterTurn) && c.chapterTurn >= 1 ? c.chapterTurn : 1;
+  const action = String(c.action == null ? '' : c.action) || '（读者没有写，顺着眼下的局面自然往下写）';
+  const where = timePlaceText(s);
+
+  // 一、这一节要写什么
+  const one = [];
+  one.push('书名《' + title + '》。' + (card ? '现在写第 ' + card.index + ' 章《' + (card.title || '') + '》的第 ' + chapterTurn + ' 节。' : ''));
+  if (card && card.goal) one.push('本章目标：' + card.goal);
+  one.push('读者这回合的行动：' + action);
+  one.push('这一节就要写出这个行动的结果。');
+  if (c.timeSkip) one.push('这一节是时间跳跃：从此刻起过去' + (c.timeSkip.label || '一段时间') + '，读者对这段时间的打算是「' + (c.timeSkip.plan || '按眼下的日子过下去') + '」。先按时间顺序概写这段日子（有代价、有挫折也有收获），再落到跳跃结束时一个具体的时刻。');
+
+  // 二、故事到这里
+  const two = [];
+  if (card) {
+    const route = [];
+    if (card.start) route.push('起点：' + card.start);
+    if (card.beats && card.beats.length) route.push('可能的推进：' + card.beats.join('；'));
+    if (card.end) route.push('可能的终点：' + card.end);
+    if (card.question) route.push('章末留给读者的问题：' + card.question);
+    if (card.avoid && card.avoid.length) route.push('本章不要：' + card.avoid.join('；'));
+    two.push('本章可能的走向（建议，不是必须；读者走偏了以读者为准）：\n' + route.join('\n'));
+  }
+  const due = Array.isArray(c.dueThreads) ? c.dueThreads : [];
+  const threads = (Array.isArray(s.threads) ? s.threads : []).filter((t) => !due.includes(t));
+  if (due.length) two.push('该在这一章收掉的伏笔：' + due.join('；'));
+  if (threads.length) two.push('还没解开的线索：' + threads.join('；'));
+  const visible = String((c.history && c.history.text) || '') + '\n' + Object.values(b.prologue || {}).join('\n');
+  const facts = splitFacts(s.facts, visible);
+  if (facts.seen.length) two.push('读者已经知道的事：' + facts.seen.join('；'));
+  if (facts.unseen.length) two.push('背景设定（读者还不知道，第一次写进正文时要交代主角怎么得知）：' + facts.unseen.join('；'));
+  if (Array.isArray(b.rules) && b.rules.length) two.push('世界规则（真实成立，但正文没写过之前读者不知道）：' + b.rules.join('；'));
+
+  // 三、相关的人
+  const names = presentNpcNames(s, c.action, c.history);
+  const three = [];
+  const npcCtx = npcModule.npcPromptContext(s, c.action);
+  if (npcCtx) three.push(npcCtx);
+  const voices = npcVoiceLines(s, names.length ? names : null);
+  if (voices.length) three.push('说话的腔调和对主角的态度：\n' + voices.join('\n'));
+  three.push('人物的隐秘想法只供作者把握分寸，不能当成读者已知的事写出来。');
+
+  // 四、怎么写更顺
+  const four = ['此刻：' + where];
+  // 注意：state.focus 是上一回合的分类，不代表这回合的行动，所以不按它给写法提示；
+  // 只有玩家在继续上一回合的同一件事（continuing）时沿用上一回合的节奏。
+  const focusTip = s.continuing === true ? FOCUS_TIPS[s.focus] : null;
+  if (focusTip) four.push(focusTip);
+  for (const h of protagonistHints(s)) four.push(h);
+  const plan = c.plan || {};
+  if (plan.settling && s.activeEvent) four.push('这件事要在这一节有个结果：' + (s.activeEvent.title || '') + '——' + (s.activeEvent.desc || ''));
+
+  // 五、收在哪里
+  let five;
+  if (card && chapterTurn >= 4) {
+    five = '本章已经写到第 ' + chapterTurn + ' 节。如果故事自然走到了本章终点，就把这一章收住，落在这个问题上：' + (card.question || '一个让人想翻下一页的问题') + '；还没走到就继续推进，不要硬收。';
+  } else {
+    five = '停在一个自然的、需要主角拿主意或让人想往下读的时刻。';
+  }
+
+  const user = [
+    section('本世前文（读者都读过，按时间顺序）', (c.history && c.history.text) || (b.start && b.start.situation) || '（故事刚开始）'),
+    section('二、故事到这里', two.join('\n') || '（没有需要特别交代的）'),
+    section('三、相关的人', three.join('\n')),
+    section('四、怎么写更顺', four.join('\n')),
+    section('五、收在哪里', five),
+    section('一、这一节要写什么', one.join('\n')),
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
+// 记账：复用回合输出格式里的字段说明，去掉所有关于「怎么写正文」的行（v2 原文一字不改）。
+const LEDGER_DROP = [
+  /^\{"narration":/,
+  /^- narration /,
+  /^- 叙事必须与【时与地】/,
+  /narration 永远是输出的第一个字段/,
+  /narration 仍第一/,
+  /正文优先、第一个字段/,
+  /narration 里必须写出/,
+];
+function ledgerFormat() {
+  const lines = TURN_OUTPUT_FORMAT.split('\n').filter((line) => !LEDGER_DROP.some((re) => re.test(line)));
+  // 第一行原是 {"narration":...,  换成 {，保持 JSON 示例完整。
+  return lines.map((line, i) => (i === 1 && !line.startsWith('{') ? '{' + line.trimStart() : line)).join('\n');
+}
+const LEDGER_EXTRA = [
+  '- 叙事 v3 额外字段：threads_add 每条可以是字符串，也可以是 {"text":"≤20 字","due":1~3}，due 表示预计几章内回收（缺省 2）。',
+  '- "chapter":{"beats_done":["本章卡里这一节已经达成的节点原文"],"chapter_end":false}：正文已经把本章收住（落在章末问题上、告一段落）时 chapter_end 写 true。',
+].join('\n');
+
+// ctx = { action, prose, card, chapterTurn, timeSkip, plan }
+function buildLedgerMessages(state, ctx) {
+  const s = state || {};
+  const c = ctx || {};
+  const plan = c.plan || {};
+  const system = [
+    '下面这段正文已经写好、读者已经读到。你的工作是按正文记账：只记录正文里真实发生的事，不发明正文没写的东西，也不修改正文。',
+    '说明里提到的 narration、叙事、正文，都指【正文】里这段已经写好的文字。只输出一个 JSON 对象。',
+    ledgerFormat(),
+    LEDGER_EXTRA,
+    plan.opening ? '本回合需要开启事件：按正文给出 event。' : '',
+    plan.settling ? '本回合需要结算事件：按正文里主角的应对给出 event_check。' : '',
+    c.timeSkip ? '本回合是时间跳跃：给出 landing_period（跳跃结束时的时段：清晨 / 午后 / 黄昏 / 深夜），time_passes 不起作用。' : '',
+  ].filter(Boolean).join('\n\n');
+  const card = c.card;
+  const threads = Array.isArray(s.threads) ? s.threads : [];
+  const att = Object.entries(s.npcAttitude || {}).map(([k, v]) => k + ':' + v).join(' ');
+  const user = [
+    section('主角当前状态', characterText(s)),
+    statsSectionText(s) ? section('专属状态', statsSectionText(s)) : '',
+    section('身上的印记', ((s.character && s.character.marks) || []).join('；') || '无'),
+    section('未解之谜（解开时 threads_resolve 的文本必须与这里完全一致）', threads.join('\n') || '无'),
+    section('人物与态度', att || '无'),
+    section('时与地（写正文之前）', timePlaceText(s)),
+    card ? section('本章卡', '第 ' + card.index + ' 章《' + (card.title || '') + '》，可能的推进：' + (card.beats || []).join('；') + '；可能的终点：' + (card.end || '')) : '',
+    section('读者这回合的行动', String(c.action || '（未填写）')),
+    section('正文', String(c.prose || '')),
+  ].filter(Boolean).join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -1187,6 +1393,9 @@ function parseJson(text) {
 
 module.exports = {
   buildTurnMessages,
+  buildWriterMessages,
+  buildLedgerMessages,
+  WRITER_RULES,
   buildOutlineMessages,
   OUTLINE_RULES,
   factSeen,
