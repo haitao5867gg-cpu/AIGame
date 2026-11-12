@@ -25,6 +25,14 @@ function toPublicApplied(applied) {
 
 function toPublicState(state) {
   const out = cloneState(state || {});
+  // 线索 / 印记出现的回合（只公开回合号，预计回收章等作者账本仍私有）。
+  const tm = out.threadMeta && typeof out.threadMeta === 'object' ? out.threadMeta : {};
+  const mm = out.markMeta && typeof out.markMeta === 'object' ? out.markMeta : {};
+  const clueThreads = {};
+  for (const t of Object.keys(tm)) if (tm[t] && Number.isSafeInteger(tm[t].plantedTurn)) clueThreads[t] = tm[t].plantedTurn;
+  const clueMarks = {};
+  for (const m of Object.keys(mm)) if (mm[m] && Number.isSafeInteger(mm[m].turn)) clueMarks[m] = mm[m].turn;
+  delete out.markMeta;
   // 叙事 v3：只公开当前章的章名（章卡其余内容是作者笔记，随 outline 一起删除）。
   const curCard = outlineMod.currentCard(out);
   if (out.chapter && typeof out.chapter === 'object') {
@@ -47,6 +55,7 @@ function toPublicState(state) {
   if (bibleNpcs !== undefined && out.bible && typeof out.bible === 'object') {
     out.bible.npcs = bibleNpcs; // 过滤 want 等隐藏动机及未知私有字段
   }
+  out.clueMeta = { threads: clueThreads, marks: clueMarks };
   // 风声预兆：只给出布尔标记，从不带出主题名。
   out.omen = computeOmen(out);
   // 濒死可感知：体魄 ≤ 2 时公开状态带 danger:true，前端据此变红闪烁并提示「伤势沉重」。

@@ -1287,6 +1287,10 @@ function buildWriterMessages(state, ctx) {
   const threads = (Array.isArray(s.threads) ? s.threads : []).filter((t) => !due.includes(t));
   if (due.length) two.push('该在这一章收掉的伏笔：' + due.join('；'));
   if (threads.length) two.push('还没解开的线索：' + threads.join('；'));
+  const activeCount = Array.isArray(s.threads) ? s.threads.length : 0;
+  two.push(activeCount >= 2
+    ? '读者手上已经有 ' + activeCount + ' 条没解开的线索，这一节不要再埋新的悬念，先推进或收掉手上的。'
+    : '先推进、收掉手上的线索，再考虑埋新的；读者一次记不住太多事。');
   const visible = String((c.history && c.history.text) || '') + '\n' + Object.values(b.prologue || {}).join('\n');
   const facts = splitFacts(s.facts, visible);
   if (facts.seen.length) two.push('读者已经知道的事：' + facts.seen.join('；'));
@@ -1314,7 +1318,9 @@ function buildWriterMessages(state, ctx) {
 
   // 五、收在哪里
   let five;
-  if (card && chapterTurn >= 4) {
+  if (card && card.index === 1 && chapterTurn <= 2) {
+    five = '这是故事的开头：重在交代主角、处境和身边的人，让读者站稳脚，不急着抛新的谜团。停在一个自然的、需要主角拿主意的时刻。';
+  } else if (card && chapterTurn >= 4) {
     five = '本章已经写到第 ' + chapterTurn + ' 节。如果故事自然走到了本章终点，就把这一章收住，落在这个问题上：' + (card.question || '一个让人想翻下一页的问题') + '；还没走到就继续推进，不要硬收。';
   } else {
     five = '停在一个自然的、需要主角拿主意或让人想往下读的时刻。';
@@ -1351,6 +1357,9 @@ function ledgerFormat() {
 }
 const LEDGER_EXTRA = [
   '- 叙事 v3：threads_add 每回合最多 1 条，只记正文明确留下、值得追下去的新悬念（同一件事的几个细节算一条，已有线索的进展不算新线索）；每条可以是字符串，也可以是 {"text":"≤20 字","due":1~3}，due 表示预计几章内回收（缺省 2）。',
+  '- 叙事 v3：rumor 一律不填（坊间传闻先关掉，玩家记不住太多东西）。',
+  '- 叙事 v3：marks_add 只记会一直影响后面剧情的处境（受伤、欠人情、被盯上、被通缉之类），一时的情绪、普通的小事不算印记；大多数回合不该有新印记。',
+  '- 叙事 v3：未解之谜同时最多 3 条，已满就不要再填 threads_add；正文里推进或解开了某条线索时，及时用 threads_resolve 收掉。',
   '- 叙事 v3：time_passes 按正文里实际过去的时间判断：同一场景里的几分钟到一两个小时写 0；正文明确写到过了大半天、天亮了、到了下午等才写 1 或 2。不确定就写 0。',
   '- "chapter":{"beats_done":["本章卡里这一节已经达成的节点原文"],"chapter_end":false}：正文已经把本章收住（落在章末问题上、告一段落）时 chapter_end 写 true。',
 ].join('\n');

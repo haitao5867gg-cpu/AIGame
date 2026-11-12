@@ -138,7 +138,7 @@ test('planTurn storyMode：不开事件 / 不预兆 / 不转折 / 不压编年�
   assert.equal(engine.planTurn(s, { storyMode: true }).settling, true);
 });
 
-test('resolveTurn storyMode：伏笔满 5 条拒收新线索、不淡去；正文上限放宽到 2400', () => {
+test('resolveTurn storyMode：伏笔满 3 条起拒收新线索、不淡去；正文上限放宽到 2400', () => {
   const s = engine.createWorld({ id: 'wtest', bible: { start: { place: '甲' } } }, { rng: () => 0.5, now: 1 });
   s.threads = ['一', '二', '三', '四', '五'];
   const plan = engine.planTurn(s, { storyMode: true });
@@ -251,4 +251,33 @@ test('v3 回合：记账没写时间就不推进时钟；每回合最多新埋 1
   const st = JSON.parse(fs.readFileSync(path.join(dataDir, 'worlds', w.id, 'state.json'), 'utf8'));
   assert.deepEqual(st.clock, before);
   assert.deepEqual(st.threads, ['线索甲']);
+});
+
+test('v3 节奏：不记坊间传闻；线索满 3 条拒收；印记和线索的出现回合公开在 clueMeta', async (t) => {
+  let n = 0;
+  const { g, dataDir } = makeGame(t, { complete: (o, real) => {
+    if (o.purpose !== 'ledger') return real();
+    n++;
+    return Promise.resolve({ content: JSON.stringify({ suggestions: ['a', 'b', 'c'], rumor: '有人说钟楼闹鬼', threads_add: ['线索' + n], marks_add: n === 2 ? ['左臂刀伤'] : [] }), usage: { prompt_tokens: 1, completion_tokens: 1 } });
+  } });
+  const w = await g.buildWorld({ seed: '雾里的旧港', name: '旅人' });
+  for (let i = 0; i < 4; i++) await g.takeTurn(w.id, { action: '走' + i });
+  const pub = await g.getWorld(w.id);
+  assert.deepEqual(pub.rumors, []);
+  assert.deepEqual(pub.threads, ['线索1', '线索2', '线索3']);
+  assert.deepEqual(pub.clueMeta.threads, { 线索1: 1, 线索2: 2, 线索3: 3 });
+  assert.deepEqual(pub.clueMeta.marks, { 左臂刀伤: 2 });
+  assert.equal(pub.threadMeta, undefined);
+  assert.equal(pub.markMeta, undefined);
+  const st = JSON.parse(fs.readFileSync(path.join(dataDir, 'worlds', w.id, 'state.json'), 'utf8'));
+  assert.equal(st.markMeta['左臂刀伤'].turn, 2);
+});
+
+test('v3 写作提示：手上线索多时不再埋新悬念；第一章开头重在交代', () => {
+  const s = engine.createWorld({ id: 'wtest', bible: { title: '书', start: { place: '甲' } } }, { rng: () => 0.5, now: 1 });
+  s.threads = ['甲', '乙'];
+  const card = { index: 1, title: '开端', goal: 'g', beats: [] };
+  const [, u] = require('../src/prompts.js').buildWriterMessages(s, { action: '走', card, chapterTurn: 1, plan: {} });
+  assert.match(u.content, /不要再埋新的悬念/);
+  assert.match(u.content, /不急着抛新的谜团/);
 });

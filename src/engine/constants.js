@@ -98,8 +98,8 @@ const MARKS_MAX = 8;
 // 单条 ≤20 字，解开时文本必须与已有完全一致。fadedThreads 也设上限，避免无限增长。
 const THREAD_TEXT_MAX = 20;
 const THREADS_MAX = 6;
-// 叙事 v3（storyMode）：伏笔账本同时活跃最多 5 条，满了拒收新线索、不再自动淡去最旧的。
-const STORY_THREADS_MAX = 5;
+// 叙事 v3（storyMode）：伏笔账本同时活跃最多 3 条（玩家反馈第 3 回合就记不住了），满了拒收新线索、不再自动淡去最旧的。
+const STORY_THREADS_MAX = 3;
 // 叙事 v3 正文 700~1200 字，深度模式偶尔更长；storyMode 下截断上限放宽到 2400。
 const STORY_NARRATION_MAX = 2400;
 const FADED_THREADS_MAX = 20;

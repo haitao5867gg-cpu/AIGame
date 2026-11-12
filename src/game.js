@@ -1327,7 +1327,7 @@ function createGame(cfg, dataDir) {
       marks_remove: ledger.marks_remove,
       threads_add: threadTexts.slice(0, 1), // v3：每回合最多新埋 1 条线索
       threads_resolve: ledger.threads_resolve,
-      rumor: ledger.rumor,
+      rumor: undefined, // v3：坊间传闻先关掉（玩家反馈要记的太多）
       move_to: ledger.move_to,
       // v3：记账没写时间就按「没过多久」处理（引擎缺省是推进一个时段，会让时钟比正文跑得快）。
       time_passes: ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes,
@@ -1372,6 +1372,15 @@ function createGame(cfg, dataDir) {
       meta[t] = { plantedTurn: nextTurn, dueChapter: chapterIndex + (key ? threadDue[key] : 2) };
     }
     finalState.threadMeta = meta;
+    // 印记出现的回合（供面板点开时「跳到那一回合」）。
+    const oldMarkMeta = state.markMeta && typeof state.markMeta === 'object' ? state.markMeta : {};
+    const prevMarks = (state.character && Array.isArray(state.character.marks)) ? state.character.marks : [];
+    const markMeta = {};
+    for (const m of (finalState.character && Array.isArray(finalState.character.marks)) ? finalState.character.marks : []) {
+      if (oldMarkMeta[m]) markMeta[m] = oldMarkMeta[m];
+      else if (!prevMarks.includes(m)) markMeta[m] = { turn: nextTurn };
+    }
+    finalState.markMeta = markMeta;
 
     store.backupForUndo(dataDir, worldId);
     store.saveWorld(dataDir, finalState);
