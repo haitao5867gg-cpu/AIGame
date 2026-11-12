@@ -12,6 +12,7 @@
     $('btn-random').addEventListener('click', randomAlloc);
     $('btn-create').addEventListener('click', createWorld);
     $('btn-send').addEventListener('click', sendAction);
+    $('btn-idea').addEventListener('click', nextIdea);
     $('btn-undo').addEventListener('click', onUndoClick);
     $('btn-panel').addEventListener('click', function () {
       var p = $('panel');
@@ -33,6 +34,12 @@
       if (window.innerWidth < 860) { $('panel').dataset.open = 'false'; syncBodyScrollLock(); }
     });
     $('action-input').addEventListener('keydown', function (e) {
+      // 电脑端快捷键：Alt+I 换一条灵感（手机键盘不会触发 Alt 组合）。
+      if (e.altKey && (e.key === 'i' || e.key === 'I' || e.code === 'KeyI')) {
+        e.preventDefault();
+        nextIdea();
+        return;
+      }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
     });
     window.addEventListener('hashchange', route);

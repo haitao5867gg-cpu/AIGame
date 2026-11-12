@@ -164,7 +164,7 @@
       (log || []).forEach(appendLogRecord);
       renderPanel(state);
       renderEventBanner(state.activeEvent);
-      renderSuggestions(null);
+      resetIdeas(atmosphereLastLog && atmosphereLastLog.suggestions);
       setUndoVisible(!!state.undoAvailable);
       if (state.awaitingRebirth || !state.character.alive) showDeath(state, null);
       else hideDeath();
@@ -442,19 +442,105 @@
     b.appendChild(body);
   }
 
-  function renderSuggestions(list) {
-    var box = $('suggestions');
-    box.textContent = '';
-    var items = (list && list.length) ? list : DEFAULT_SUGGESTIONS;
-    items.slice(0, 3).forEach(function (text) {
-      var b = el('button', 'suggestion', text);
-      b.addEventListener('click', function () {
-        $('action-input').value = text;
-        $('action-input').focus();
-      });
-      box.appendChild(b);
-    });
+  /* IDEA_HELPERS_START */
+  // ---- 灵感按钮：点一下把一条「下一步可以做什么」填进输入框，再点换下一条 ----
+  var ideaQueue = [];        // 还没填过的建议
+  var ideaShown = [];        // 本场景已填过的建议（最多留 12 条，供 avoid 去重）
+  var ideaLoading = false;   // /suggest 请求进行中
+  var ideaToken = 0;         // 防串世界的过期响应
+
+  // 换场景 / 重生 / 回合结果：重置队列与已填记录，作废在途请求，刷新按钮状态。
+  function resetIdeas(list) {
+    ideaToken++;
+    ideaLoading = false;
+    ideaQueue = [];
+    var arr = Array.isArray(list) ? list : [];
+    for (var i = 0; i < arr.length && ideaQueue.length < 3; i++) {
+      if (typeof arr[i] !== 'string') continue;
+      var t = arr[i].trim();
+      if (t) ideaQueue.push(t);
+    }
+    ideaShown = [];
+    var btn = $('btn-idea');
+    if (btn) {
+      btn.textContent = '✦ 灵感';
+      if (btn.removeAttribute) btn.removeAttribute('aria-busy');
+      btn.disabled = !!(busy || ideaLoading);
+    }
   }
+
+  function fillIdea(text) {
+    var input = $('action-input');
+    if (!input) return;
+    input.value = text;
+    ideaShown.push(text);
+    if (ideaShown.length > 12) ideaShown.shift();
+    if (input.focus) input.focus();
+    if (input.setSelectionRange) {
+      try { input.setSelectionRange(text.length, text.length); } catch (_) {}
+    }
+    if (input.dispatchEvent && typeof Event !== 'undefined') {
+      input.dispatchEvent(new Event('input'));
+    }
+    // 0.6 秒轻微发光反馈：remove → 强制重排 → add，连续点击也能重播动画。
+    var btn = $('btn-idea');
+    if (btn && btn.classList) {
+      btn.classList.remove('idea-flash');
+      if (btn.offsetWidth !== undefined) void btn.offsetWidth;
+      btn.classList.add('idea-flash');
+      clearTimeout(btn._ideaFlashTimer);
+      btn._ideaFlashTimer = setTimeout(function () {
+        if (btn.classList) btn.classList.remove('idea-flash');
+      }, 600);
+    }
+  }
+
+  async function nextIdea() {
+    if (busy || !currentWorldId || ideaLoading) return;
+    var btn = $('btn-idea');
+    if (ideaQueue.length) { fillIdea(ideaQueue.shift()); return; }
+    ideaLoading = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '构思中…';
+      if (btn.setAttribute) btn.setAttribute('aria-busy', 'true');
+    }
+    var myToken = ideaToken;
+    var myWorld = currentWorldId;
+    try {
+      var res = await api('/api/worlds/' + encodeURIComponent(myWorld) + '/suggest', {
+        method: 'POST',
+        body: JSON.stringify({ avoid: ideaShown.slice(-12) }),
+      });
+      if (myToken !== ideaToken || myWorld !== currentWorldId) return; // 过期响应，丢弃
+      var list = (res && Array.isArray(res.suggestions)) ? res.suggestions : [];
+      for (var i = 0; i < list.length && ideaQueue.length < 3; i++) {
+        if (typeof list[i] !== 'string') continue;
+        var t = list[i].trim();
+        if (!t || ideaShown.indexOf(t) !== -1 || ideaQueue.indexOf(t) !== -1) continue;
+        ideaQueue.push(t);
+      }
+      if (ideaQueue.length) fillIdea(ideaQueue.shift());
+      else toast('这次没想出新点子，再点一次试试');
+    } catch (err) {
+      // 切走后旧世界的报错不要弹给新世界：token 与世界都未变才提示。
+      if (myToken === ideaToken && myWorld === currentWorldId) {
+        toast(err && err.message ? err.message : String(err));
+      }
+    } finally {
+      // 过期请求（resetIdeas 已自增 token）什么都不碰：否则会把新世界
+      // 在途请求的 ideaLoading / 按钮复位，玩家可重复点击发出重复请求。
+      if (myToken === ideaToken) {
+        ideaLoading = false;
+        if (btn) {
+          btn.textContent = '✦ 灵感';
+          if (btn.removeAttribute) btn.removeAttribute('aria-busy');
+          btn.disabled = !!(busy || ideaLoading);
+        }
+      }
+    }
+  }
+  /* IDEA_HELPERS_END */
 
   function collapsible(title, children) {
     var d = el('details', 'panel-section');
@@ -713,7 +799,7 @@
       renderHeader(s);
       renderPanel(s);
       renderEventBanner(s.activeEvent);
-      renderSuggestions(null);
+      resetIdeas([]);
     } catch (err) {
       toast(err.message);
     }
@@ -727,6 +813,7 @@
   function setBusy(b) {
     busy = b;
     $('btn-send').disabled = b;
+    $('btn-idea').disabled = b || ideaLoading;
     $('pending').hidden = !b;
     clearInterval(pendingTimer);
     pendingTimer = null;
@@ -824,7 +911,7 @@
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
     renderEventBanner(res.state.activeEvent);
-    renderSuggestions(res.suggestions);
+    resetIdeas(res.suggestions);
     setUndoVisible(!!res.state.undoAvailable);
     if (res.death) showDeath(res.state, res.death);
     requestImages();

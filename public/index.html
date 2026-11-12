@@ -125,9 +125,9 @@
         <div id="stream" class="stream"></div>
         <button id="btn-undo" class="undo-btn" hidden>↶ 撤回这一步</button>
         <div class="composer">
-          <div id="suggestions" class="suggestions"></div>
           <div class="composer-row">
             <textarea id="action-input" rows="2" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
+            <button type="button" id="btn-idea" class="btn idea-btn" aria-label="让 AI 根据当前场景想一个下一步" title="没主意？让 AI 根据当前场景想一个下一步，不满意再点一次">✦ 灵感</button>
             <button id="btn-send" class="btn primary">发送</button>
           </div>
           <div id="pending" class="pending" hidden>世界在回应… <span id="pending-secs"></span></div>

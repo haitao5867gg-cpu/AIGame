@@ -51,11 +51,15 @@ test('手机端：.stream 去掉 max-height 限制、.composer sticky bottom 且
   assert.match(mb, /\.composer\s*\{[^}]*background\s*:\s*var\(--bg\)/, '输入区背景应不透明');
 });
 
-test('手机端：#action-input 及 input/textarea/select 为 16px，建议按钮单行横滑', () => {
+test('手机端：#action-input 16px、灵感按钮单行不换行 ≥44px，index.html 已换成灵感按钮', () => {
   assert.match(mb, /#action-input[^{]*\{[^}]*font-size\s*:\s*16px/,
     '#action-input / input / textarea / select 应为 16px（防 iOS 聚焦放大）');
-  assert.match(mb, /\.suggestions\s*\{[^}]*flex-wrap\s*:\s*nowrap/, '.suggestions 不换行');
-  assert.match(mb, /\.suggestions\s*\{[^}]*overflow-x\s*:\s*auto/, '.suggestions 横向滑动');
+  assert.match(mb, /\.composer-row\s*\{[^}]*flex-wrap\s*:\s*nowrap/, '.composer-row 单行不换行');
+  const idea = mb.match(/\.idea-btn[^{]*\{[^}]*min-height\s*:\s*(\d+)px/);
+  assert.ok(idea, '手机媒体查询里应有 .idea-btn 的 min-height');
+  assert.ok(Number(idea[1]) >= 44, '.idea-btn 手机 min-height ≥ 44px');
+  assert.ok(!/id="suggestions"/.test(html), 'index.html 不再有 #suggestions 胶囊容器');
+  assert.match(html, /id="btn-idea"/, 'index.html 应有灵感按钮');
 });
 
 test('手机端：顶栏 sticky 紧凑单行、⋯ 菜单元素齐全、细条横滑、朗读按钮 ≥40px', () => {
@@ -122,13 +126,12 @@ function bodiesOf(re) {
   return bodies.join('\n');
 }
 
-test('手机端第 2 轮：开新世界 / 游戏页 / 用量面板各可点元素 min-height:40px', () => {
+test('手机端第 2 轮：开新世界 / 游戏页 / 用量面板各可点元素 min-height:40px，灵感按钮 ≥44px', () => {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tapTargets = [
     ['#btn-random', '随机按钮'],
     ['.preset', '预设世界观胶囊'],
     ['.alloc-row .btn.tiny', '属性 −/+ 按钮'],
-    ['.suggestion', '建议行动胶囊'],
     ['.undo-btn', '撤回这一步'],
     ['.npc-voice-btn', 'NPC 🔊 按钮'],
     ['.tts-select', '用量面板音色下拉'],
@@ -138,6 +141,8 @@ test('手机端第 2 轮：开新世界 / 游戏页 / 用量面板各可点元�
     assert.match(mb, new RegExp(esc(sel) + '[^{]*\\{[^}]*min-height\\s*:\\s*40px'),
       name + '（' + sel + '）在手机媒体查询里应有 min-height:40px');
   }
+  const idea = mb.match(/\.idea-btn[^{]*\{[^}]*min-height\s*:\s*(\d+)px/);
+  assert.ok(idea && Number(idea[1]) >= 44, '灵感按钮 .idea-btn 手机 min-height ≥ 44px');
 });
 
 test('手机端第 2 轮：input/textarea/select 16px，且显式覆盖 .form / .tts-select', () => {
@@ -164,7 +169,8 @@ test('手机端第 2 轮：横屏媒体查询（顶栏 ≤44px、输入区压缩
   const lb = bodiesOf(/@media\s*\(\s*max-height:\s*500px\s*\)\s*and\s*\(\s*orientation:\s*landscape\s*\)\s*\{/g);
   assert.ok(lb.length > 0, '应能抽出横屏规则体');
   assert.match(lb, /\.game-head\s*\{[^}]*height\s*:\s*44px/, '顶栏高度压到 44px');
-  assert.match(lb, /\.suggestions\s*\{[^}]*display\s*:\s*none/, '建议行动行可隐藏');
+  assert.ok(!/\.idea-btn[^{]*\{[^}]*display\s*:\s*none/.test(lb), '横屏不应隐藏 .idea-btn 灵感按钮');
+  assert.match(lb, /\.idea-btn[^{]*\{[^}]*min-height/, '横屏 .idea-btn 保持可见且有点击区域');
   assert.match(lb, /#action-input[^{]*\{[^}]*max-height/, '输入框压缩为单行');
   assert.match(lb, /\.stream\s*\{[^}]*min-height\s*:\s*50vh/, '叙事至少半屏可见');
   assert.match(lb, /#usage-pop[^{]*\{[^}]*max-height\s*:\s*90vh[^}]*overflow-y\s*:\s*auto/,

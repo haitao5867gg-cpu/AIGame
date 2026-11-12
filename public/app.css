@@ -419,10 +419,18 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 
 /* ---- 输入区 ---- */
 .composer{border-top:1px solid var(--line);padding-top:10px;margin-top:8px}
-.suggestions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-.suggestion{font-family:var(--sans);font-size:12px;color:var(--muted);background:var(--bg-2);
-  border:1px solid var(--line);border-radius:14px;padding:5px 12px}
-.suggestion:hover{border-color:var(--accent-2);color:var(--ink)}
+.idea-btn{flex:none;white-space:nowrap;min-height:40px;border-radius:12px;
+  font-family:var(--sans);font-size:14px;padding:0 14px;cursor:pointer;transition:.15s;
+  color:var(--ink);background:var(--bg-2);border:1px solid var(--line)}
+.idea-btn:hover:not(:disabled){border-color:var(--accent-2)}
+.idea-btn:disabled{opacity:.55;cursor:not-allowed}
+.idea-btn[aria-busy="true"]{cursor:wait}
+@keyframes idea-flash-anim{
+  from{box-shadow:0 0 0 4px rgba(var(--g-accent-rgb,192,57,43),.25)}
+  to{box-shadow:0 0 0 4px rgba(var(--g-accent-rgb,192,57,43),0)}
+}
+.idea-btn.idea-flash{animation:idea-flash-anim .6s ease-out}
+@media(prefers-reduced-motion:reduce){.idea-btn.idea-flash{animation:none}}
 .composer-row{display:flex;gap:8px;align-items:flex-end}
 #action-input{flex:1;min-height:54px}
 .pending{font-family:var(--sans);font-size:13px;color:var(--muted);margin-top:8px}
@@ -641,11 +649,6 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .composer{position:sticky;bottom:0;z-index:30;background:var(--bg);
     padding:8px 0 calc(10px + env(safe-area-inset-bottom));margin-top:8px;
     border-top:1px solid var(--line)}
-  .suggestions{flex-wrap:nowrap;overflow-x:auto;gap:6px;margin-bottom:8px;
-    scrollbar-width:none;-ms-overflow-style:none;padding-bottom:2px}
-  .suggestions::-webkit-scrollbar{display:none}
-  .suggestion{flex:none;white-space:nowrap;min-height:40px;border-radius:18px;
-    display:inline-flex;align-items:center}
   #action-input,input,textarea,select{font-size:16px;max-width:100%}
   #action-input{resize:none;max-height:7em;overflow-y:auto;min-height:44px}
 
@@ -666,6 +669,11 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .alloc-row{min-height:44px}
   .alloc-row .btn.tiny{min-width:40px;min-height:40px}
   .undo-btn{min-height:40px}
+  /* 灵感按钮与发送按钮同一行、都不收缩；textarea 可压缩，390/375px 仍不换行 */
+  .composer-row{flex-wrap:nowrap}
+  #action-input{flex:1;min-width:0}
+  .idea-btn,#btn-send{flex:none;min-height:44px}
+  .idea-btn{padding:0 12px}
   .logout-link,.npc-voice-btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center}
 
   /* 角色面板：全宽、从右侧滑入、顶部关闭 × */
@@ -694,8 +702,7 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .preset{min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
   .alloc-row .btn.tiny{min-height:40px;min-width:40px}
   .form input,.form textarea,.form select{font-size:16px}
-  /* 游戏页：建议行动胶囊 / 撤回 */
-  .suggestion{min-height:40px;min-width:40px}
+  /* 游戏页：撤回这一步 */
   .undo-btn{min-height:40px}
   /* 角色面板「认识的人」🔊：透明 padding 把点击区域撑到 40x40，图标本身不变 */
   .npc-voice-btn{min-width:40px;min-height:40px;padding:10px}
@@ -729,7 +736,7 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   .game-head{height:44px;max-height:44px;margin-bottom:4px;padding-bottom:0}
   .composer{position:sticky;bottom:0;z-index:30;background:var(--bg);
     padding:4px 0 calc(4px + env(safe-area-inset-bottom));margin-top:4px}
-  .suggestions{display:none}
+  .idea-btn{flex:none;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
   #action-input{min-height:0;max-height:2.4em;resize:none;overflow-y:auto}
   .stream{max-height:none;overflow:visible;min-height:50vh}
   #usage-pop,.prologue-card,.item-card-modal-card{max-height:90vh;overflow-y:auto}
@@ -1013,8 +1020,8 @@ body[data-genre] .tts-read-btn{min-height:32px;padding:0 12px;font-size:13px;bac
 
 /* 输入区 */
 body[data-genre] .composer{border-top:1px solid var(--line)}
-body[data-genre] .suggestion{color:var(--ink);background:rgba(var(--g-accent-rgb),.10);border-color:rgba(var(--g-accent-rgb),.32);border-radius:999px}
-body[data-genre] .suggestion:hover{background:rgba(var(--g-accent-rgb),.2);border-color:var(--g-accent)}
+body[data-genre] .idea-btn{color:var(--ink);background:rgba(var(--g-accent-rgb),.14);border-color:rgba(var(--g-accent-rgb),.5)}
+body[data-genre] .idea-btn:hover:not(:disabled){background:rgba(var(--g-accent-rgb),.24);border-color:var(--g-accent)}
 body[data-genre] #action-input{background:rgba(0,0,0,.22);border-color:rgba(255,255,255,.14);border-radius:14px;color:var(--ink)}
 body[data-genre] #action-input:focus{border-color:var(--g-accent)}
 body[data-genre] .btn.primary{background:var(--g-accent);border-color:var(--g-accent);color:var(--g-on-accent);font-weight:600;border-radius:12px}
@@ -1044,12 +1051,13 @@ body[data-genre][data-read="paper"] .opening{background:rgba(var(--g-accent-rgb)
 body[data-genre][data-read="paper"] .action-bubble{background:rgba(var(--g-accent-rgb),.16);border-color:rgba(var(--g-accent-rgb),.6);color:#1f1b15}
 body[data-genre][data-read="paper"] .action-who{background:var(--g-accent-deep);color:#fff}
 body[data-genre][data-read="paper"] .tts-read-btn{background:rgba(70,52,30,.05);border-color:rgba(70,52,30,.2);color:#2a251e}
-body[data-genre][data-read="paper"] .suggestion{color:#2a251e;background:rgba(var(--g-accent-rgb),.14);border-color:rgba(var(--g-accent-rgb),.55)}
 body[data-genre][data-read="paper"] #action-input{background:#fff;border-color:rgba(70,52,30,.2);color:#2a251e}
 body[data-genre][data-read="paper"] #action-input:focus{border-color:var(--g-accent-deep)}
 body[data-genre][data-read="paper"] .btn.primary{background:var(--g-accent-deep);border-color:var(--g-accent-deep);color:#fff}
 body[data-genre][data-read="paper"] .btn.primary:hover:not(:disabled){background:var(--g-accent-deep);border-color:var(--g-accent-deep)}
 body[data-genre][data-read="paper"] .stage .btn:not(.primary),body[data-genre][data-read="paper"] .panel .btn:not(.primary),body[data-genre][data-read="paper"] .undo-btn{color:#2a251e;background:rgba(70,52,30,.04)}
+/* 灵感按钮：纸页态需盖过上面 .stage .btn:not(.primary) 通用规则 */
+body[data-genre][data-read="paper"] .idea-btn,body[data-genre][data-read="paper"] .stage .composer .btn.idea-btn{color:#2a251e;background:rgba(var(--g-accent-rgb),.16);border-color:rgba(var(--g-accent-rgb),.6)}
 body[data-genre][data-read="paper"] .badge.up{color:#2f7a3a;border-color:rgba(47,122,58,.4);background:rgba(47,122,58,.08)}
 body[data-genre][data-read="paper"] .badge.down{color:#a8402f;border-color:rgba(168,64,47,.4);background:rgba(168,64,47,.08)}
 body[data-genre][data-read="paper"] .event-card,body[data-genre][data-read="paper"] .settlement-card{background:rgba(168,64,47,.06);border-color:rgba(168,64,47,.35)}
