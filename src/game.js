@@ -399,6 +399,30 @@ function createGame(cfg, dataDir) {
     throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
   }
 
+  // 带进度的 callParsed：有 onProgress 时走流式，边写边报告已写字数（建世界进度条用）；
+  // 流式输出解析失败再非流式试一次。没有 onProgress 时和 callParsed 完全一样。
+  // 流式本身出错（网关不支持、流停住 90 秒等）：退回原来的非流式调用，进度条按时间走，不让建世界因此失败。
+  // 用量超限（429）直接抛出。
+  async function callParsedLive(purpose, model, messages, mockCtx, usages, extra, onProgress) {
+    if (typeof onProgress !== 'function') return callParsed(purpose, model, messages, mockCtx, usages, extra);
+    let res;
+    try {
+      res = await client.completeStream(Object.assign({}, extra || {}, {
+        purpose, model, messages, responseFormat: 'json_object', mock: mockCtx, onProgress, idleTimeoutMs: 90000,
+      }), null);
+    } catch (err) {
+      if (err && err.status === 429) throw err;
+      return callParsed(purpose, model, messages, mockCtx, usages, extra);
+    }
+    if (usages) usages.push(res.usage);
+    const parsed = prompts.parseJson(res.content);
+    if (parsed) return { parsed, content: res.content };
+    const retry = await call(purpose, model, messages, mockCtx, usages, extra);
+    const parsed2 = prompts.parseJson(retry.content);
+    if (parsed2) return { parsed: parsed2, content: retry.content };
+    throw httpError(502, '模型输出无法解析为 JSON，请稍后重试');
+  }
+
   // 后台画像总结：据最近亲手写的行动归纳「你是什么样的玩家」。
   // 全程 try/catch 静默失败，画像出错绝不影响回合；调用方不 await。
   async function summarizeProfile(playerId) {
@@ -569,8 +593,11 @@ function createGame(cfg, dataDir) {
   }
 
   // ---- 建世界 ----
-  async function buildWorld(input) {
+  // hooks（可选，建世界进度条用）：onStage('world'|'outline'|'save')、onProgress({chars, think})。
+  async function buildWorld(input, hooks) {
     const data = input || {};
+    const hk = hooks || {};
+    const stageHook = (k) => { if (typeof hk.onStage === 'function') { try { hk.onStage(k); } catch (_) { /* 忽略 */ } } };
     const seed = typeof data.seed === 'string' ? data.seed.trim() : '';
     if (!seed) throw httpError(400, '请用一句话描述世界观（seed 不能为空）');
     // 2026-11-12 起建世界不再手动分点：名字、形象可空（AI 起名），另收一句「你是谁」，AI 据此给 3 个出身。
@@ -584,12 +611,14 @@ function createGame(cfg, dataDir) {
 
     return store.withWorldLock(id, async () => {
       const usages = [];
-      const wp = await callParsed(
+      stageHook('world');
+      const wp = await callParsedLive(
         'world', worldModel,
         prompts.buildWorldMessages(seed, { name: givenName, appearance: givenAppearance, identity }),
         { seed, name: givenName, appearance: givenAppearance, identity }, usages,
         // 建世界也用低强度思考：深度思考加上出身、大纲要等好几分钟。
         { extraBody: writingMode.writingCall(cfg, 'fine').extraBody },
+        hk.onProgress,
       );
       const hero = wp.parsed.hero && typeof wp.parsed.hero === 'object' ? wp.parsed.hero : {};
       const name = givenName || (typeof hero.name === 'string' && hero.name.trim() ? hero.name.trim().slice(0, 12) : '') || '无名旅人';
@@ -632,8 +661,10 @@ function createGame(cfg, dataDir) {
       }
       // 叙事 v3：建世界时顺带生成作者自用的隐藏大纲；失败不阻断建世界，第一回合再补。
       if (cfg.NARRATIVE_STYLE === 'v3') {
-        await ensureOutlineOnState(state, [], usages);
+        stageHook('outline');
+        await ensureOutlineOnState(state, [], usages, hk.onProgress);
       }
+      stageHook('save');
       store.saveWorld(dataDir, state);
       return publicWorld(state);
     });
@@ -642,7 +673,7 @@ function createGame(cfg, dataDir) {
   // 叙事 v3：确保 state 上有合法的隐藏大纲（调用方须已持有该世界的锁，这里不再加锁）。
   // 新世界：按设定规划；老世界：带上已发生的故事，从眼下接着规划，第 1 章就是正在进行的这一章。
   // 成功写回 state.outline 和 state.chapter；任何失败都不抛错，返回 false，下一回合再试。
-  async function ensureOutlineOnState(state, events, usages) {
+  async function ensureOutlineOnState(state, events, usages, onProgress) {
     try {
       const existing = outlineMod.normalizeOutline(state.outline);
       if (existing) {
@@ -657,10 +688,11 @@ function createGame(cfg, dataDir) {
       });
       // 大纲用写正文的强模型、低强度思考（深度思考要等好几分钟，建世界等不起）。
       const wc = writingMode.writingCall(cfg, 'fine');
-      const op = await callParsed(
+      const op = await callParsedLive(
         'outline', wc.model,
         prompts.buildOutlineMessages(state, { history }),
         { title: state.bible && state.bible.title }, usages || [], { extraBody: wc.extraBody },
+        onProgress,
       );
       const outline = outlineMod.normalizeOutline(op.parsed);
       if (!outline) return false;

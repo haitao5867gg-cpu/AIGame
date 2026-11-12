@@ -222,7 +222,7 @@ function setup(files) {
   let apiImpl = function () { return Promise.resolve({ id: 'w1' }); };
   const win = {
     innerWidth: 1440, innerHeight: 900,
-    addEventListener() {}, requestAnimationFrame() { return 0; },
+    addEventListener() {}, removeEventListener() {}, requestAnimationFrame() { return 0; },
     matchMedia() { return { matches: false }; }, scrollTo() {},
   };
   const sandbox = {
@@ -313,15 +313,32 @@ test('序章卡 / game.js：选出身接线', () => {
 
 // ---------------------------------------------------------------- createWorld 请求体
 test('createWorld：请求体不含 alloc，空名字/形象/身份不传，带 identity', async () => {
-  const h = setup(['core.js', 'home.js']);
+  const h = setup(['core.js', 'home.js', 'build-modal.js']);
   h.doc.getElementById('seed').value = '蒸汽朋克长安';
-  await h.s.createWorld();
-  // 先 GET 一次世界列表（断网后据此找回新建的世界），再 POST 建世界。
+  // 建世界请求先挂着，看弹窗和进度轮询。
+  let release;
+  h.setApi(function (p, o) {
+    if (o && o.method === 'POST') return new Promise((r) => { release = () => r({ id: 'w1' }); });
+    return { stages: [] };
+  });
+  const run = h.s.createWorld();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.ok(findOne(h.body, '#build-mask'), '开了等待弹窗');
+  // 弹窗每秒 GET 一次进度（先等 700ms：服务器还没开始记进度时查会是 404），建世界本身只 POST 一次。
   const posts = () => h.apiCalls.filter((c) => c.opts.method === 'POST');
   assert.equal(posts().length, 1);
   assert.equal(posts()[0].path, '/api/worlds');
   const body = JSON.parse(posts()[0].opts.body);
+  const firstPoll = h.timers.find((x) => x.ms === 700);
+  assert.ok(firstPoll, '排了首次轮询');
+  firstPoll.fn();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.ok(h.apiCalls.some((c) => c.path === '/api/build-progress?cid=' + body.clientRequestId), '轮询进度');
+  release();
+  await run;
+  h.setApi(function () { return { id: 'w1' }; });
   assert.equal(body.seed, '蒸汽朋克长安');
+  assert.match(body.clientRequestId, /^w[a-z0-9]{8,40}$/, '带建世界请求 ID');
   assert.ok('genre' in body);
   assert.equal('alloc' in body, false, '请求体不得含 alloc');
   assert.equal('name' in body, false, '空名字不传');
@@ -335,10 +352,62 @@ test('createWorld：请求体不含 alloc，空名字/形象/身份不传，带 
   h.doc.getElementById('char-identity').value = ' 欠债的退伍兵 ';
   await h.s.createWorld();
   const body2 = JSON.parse(posts()[1].opts.body);
+  assert.notEqual(body2.clientRequestId, body.clientRequestId, '每次建世界换新 ID');
   assert.equal(body2.name, '阿岚', '名字 trim');
   assert.equal(body2.appearance, '灰袍', '形象 trim');
   assert.equal(body2.identity, '欠债的退伍兵', '身份 trim');
   assert.equal('alloc' in body2, false);
+});
+
+test('createWorld：断网后带同一个 ID 重发，建好后进世界；失败时弹窗给「重试」「关闭」', async () => {
+  const flush = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
+  const fire = (ms) => {
+    const t = h.timers.find((x) => x.ms === ms && !x.cleared && !x.fired);
+    assert.ok(t, '应排了 ' + ms + 'ms 的定时器');
+    t.fired = true;
+    t.fn();
+  };
+  const h = setup(['core.js', 'home.js', 'build-modal.js']);
+  h.s.location.hash = '#/new';
+  h.doc.getElementById('seed').value = '雨夜旧港';
+  let n = 0;
+  h.setApi(function (p, o) {
+    if (o && o.method === 'POST') {
+      n++;
+      if (n === 1) return Promise.reject(Object.assign(new Error('网络断了'), { network: true }));
+      if (n === 2) return Promise.reject(Object.assign(new Error('网关超时'), { status: 524 }));
+      return { id: 'w9' };
+    }
+    return Promise.reject(Object.assign(new Error('没有找到'), { status: 404 }));
+  });
+  const run = h.s.createWorld();
+  await flush();
+  fire(3000);
+  await flush();
+  fire(3000);
+  await run;
+  const posts = h.apiCalls.filter((c) => c.opts.method === 'POST').map((c) => JSON.parse(c.opts.body).clientRequestId);
+  assert.equal(posts.length, 3);
+  assert.equal(new Set(posts).size, 1, '三次都是同一个 ID');
+  assert.equal(findOne(h.body, '.build-title').textContent, '世界成形了');
+  fire(500);
+  assert.equal(h.s.location.hash, '#/w/w9');
+  assert.equal(findOne(h.body, '#build-mask'), null, '进世界前收起弹窗');
+
+  // 服务器明确报错（不是断网 / 网关超时）：不重发，弹窗显示原因和按钮
+  h.setApi(function (p, o) {
+    if (o && o.method === 'POST') return Promise.reject(Object.assign(new Error('模型挂了'), { status: 502 }));
+    return Promise.reject(Object.assign(new Error('没有找到'), { status: 404 }));
+  });
+  h.s.location.hash = '#/new';
+  const before = h.apiCalls.filter((c) => c.opts.method === 'POST').length;
+  await h.s.createWorld();
+  assert.equal(h.apiCalls.filter((c) => c.opts.method === 'POST').length - before, 1, '不重发');
+  assert.equal(findOne(h.body, '.build-title').textContent, '这次没建成');
+  assert.equal(findOne(h.body, '.build-status').textContent, '模型挂了');
+  const btns = findAll(findOne(h.body, '.build-actions'), '.btn');
+  assert.deepEqual(btns.map((b) => b.textContent), ['关闭', '重试']);
+  assert.equal(h.doc.getElementById('btn-create').disabled, false);
 });
 
 test('createWorld：seed 为空只 toast、不发请求', async () => {

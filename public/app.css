@@ -1090,8 +1090,10 @@ body[data-genre][data-read="paper"] .img-fallback{color:#5b4326;background:radia
   body[data-genre] .world-backdrop{filter:blur(6px) brightness(.85);transform:scale(1.08)}
   body[data-genre] .world-backdrop[data-period="dusk"]{filter:blur(6px) brightness(.72) sepia(.12)}
   body[data-genre] .world-backdrop[data-period="night"]{filter:blur(6px) brightness(.55)}
-  body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:rgba(var(--g-tint),.80);
-    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0 -14px 6px;padding:0 10px}
+  /* 顶栏不用 backdrop-filter：它会让顶栏变成 position:fixed 子元素的定位容器，顶栏里的「用量」底部面板、
+     「跳过时间」弹层会被困在 48px 高的顶栏里，成了浏览器顶上一条很窄、关不掉的窗口。改用几乎不透明的底色。 */
+  body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:rgba(var(--g-tint),.96);
+    -webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0 -14px 6px;padding:0 10px}
   body[data-genre] .stage,body.atmosphere-background[data-genre] .stage{background:rgba(var(--g-tint),.66);-webkit-backdrop-filter:none;backdrop-filter:none;
     border:0;border-radius:16px;box-shadow:none;padding:2px 14px 0}
   body[data-genre] .composer{background:rgba(var(--g-tint),.97);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);margin:8px -14px 0;padding-left:14px;padding-right:14px;border-radius:0 0 16px 16px}
@@ -1333,3 +1335,73 @@ body[data-font="l"] .action-bubble,body[data-font="xl"] .action-bubble{font-size
   /* 去掉点按钮的 300ms 延迟和双击放大 */
   button,.btn,a,.top-chip,.genre-pill,.origin-card,.more-menu-item,textarea{touch-action:manipulation}
 }
+
+/* ==== 建世界等待弹窗：全屏遮罩防乱点 + 进度条 + 步骤 + 卡住提示 ==== */
+.build-mask{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  padding:20px 16px calc(20px + env(safe-area-inset-bottom));
+  background:rgba(10,9,7,.78);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  animation:build-fade .25s ease both;touch-action:none;overscroll-behavior:contain}
+@keyframes build-fade{from{opacity:0}to{opacity:1}}
+body.build-open{overflow:hidden}
+.build-card{position:relative;width:min(440px,100%);max-height:100%;overflow-y:auto;
+  background:linear-gradient(180deg,rgba(32,30,23,.98),rgba(24,22,17,.98));
+  border:1px solid rgba(212,169,90,.32);border-radius:18px;padding:26px 22px 20px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);
+  font-family:var(--sans);color:var(--ink);text-align:center;touch-action:pan-y}
+.build-orb{position:relative;width:64px;height:64px;margin:0 auto 12px}
+.build-orb i{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(212,169,90,.35)}
+.build-orb i:nth-child(1){border-style:dashed;animation:build-spin 9s linear infinite}
+.build-orb i:nth-child(2){inset:14px;border-color:rgba(224,84,63,.55);animation:build-spin 4s linear infinite reverse}
+.build-orb i::before{content:'';position:absolute;top:-3px;left:50%;width:6px;height:6px;margin-left:-3px;
+  border-radius:50%;background:var(--gold-2);box-shadow:0 0 10px 2px rgba(212,169,90,.7)}
+.build-orb::after{content:'';position:absolute;inset:27px;border-radius:50%;background:var(--gold);
+  box-shadow:0 0 14px 4px rgba(212,169,90,.45);animation:dot-breathe 2.4s ease-in-out infinite alternate}
+@keyframes build-spin{to{transform:rotate(360deg)}}
+.build-title{margin:0;font-family:var(--serif);font-size:21px;letter-spacing:.12em;color:var(--gold-2)}
+.build-seed{margin:6px 0 0;font-family:var(--serif);font-size:14px;line-height:1.6;color:var(--muted);
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.build-bar{position:relative;height:8px;margin-top:20px;border-radius:999px;overflow:hidden;
+  background:rgba(232,226,208,.08);box-shadow:inset 0 0 0 1px rgba(212,169,90,.18)}
+.build-bar-fill{position:relative;height:100%;width:0;border-radius:inherit;overflow:hidden;
+  background:linear-gradient(90deg,#a52c1f,#d64a33 55%,var(--gold));transition:width .35s linear}
+.build-bar-fill::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  transform:translateX(-100%);animation:inkRun 1.8s ease-in-out infinite}
+.build-meta{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:8px;
+  font-size:13px;color:var(--muted)}
+.build-pct{font-variant-numeric:tabular-nums;color:var(--gold-2);font-weight:600}
+.build-eta{text-align:right}
+.build-steps{list-style:none;margin:18px 0 0;padding:0;text-align:left}
+.build-step{display:flex;align-items:center;gap:10px;min-height:34px;font-size:14px;color:var(--muted)}
+.build-step-dot{flex:none;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1}
+.build-step-label{flex:1;min-width:0}
+.build-step-detail{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.build-step[data-state="done"]{color:rgba(232,226,208,.72)}
+.build-step[data-state="done"] .build-step-dot{border-color:var(--gold);background:var(--gold);color:#1b1a14}
+.build-step[data-state="done"] .build-step-dot::before{content:'✓'}
+.build-step[data-state="active"]{color:var(--ink);font-weight:600}
+.build-step[data-state="active"] .build-step-dot{border-color:var(--accent-2);
+  box-shadow:0 0 0 4px rgba(224,84,63,.16)}
+.build-step[data-state="active"] .build-step-dot::before{content:'';width:8px;height:8px;border-radius:50%;
+  background:var(--accent-2);animation:blink 1.2s ease-in-out infinite}
+.build-step[data-state="active"] .build-step-detail{color:var(--gold)}
+.build-status{margin:14px 0 0;min-height:1.6em;font-size:13px;line-height:1.6;color:var(--muted)}
+.build-status.warn{color:#e8b86a}
+.build-card.failed .build-status{color:#e39a90}
+.build-card.failed .build-orb i,.build-card.failed .build-orb::after{animation:none}
+.build-card.failed .build-bar-fill{background:rgba(224,84,63,.55)}
+.build-card.failed .build-bar-fill::after{display:none}
+.build-actions{display:flex;gap:10px;justify-content:center;margin-top:16px}
+.build-actions .btn{min-width:96px;min-height:44px}
+@media (max-width:600px){
+  .build-card{padding:22px 18px 18px;border-radius:16px}
+  .build-title{font-size:19px}
+}
+@media (prefers-reduced-motion:reduce){
+  .build-mask{animation:none}
+  .build-orb i,.build-orb::after,.build-bar-fill::after,
+  .build-step[data-state="active"] .build-step-dot::before{animation:none}
+  .build-bar-fill{transition:none}
+}
+
