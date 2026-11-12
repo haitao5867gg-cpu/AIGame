@@ -54,6 +54,8 @@ function epitaphFromParsed(parsed, info) {
 }
 
 // 新一世开场：150~300 字。
+// 正文里单独成行的写作说明（收章提示、「未完待续」之类），cleanProse 整行去掉。
+const META_PROSE_LINE = /^\s*[（(【]?\s*(?:本章完|本节完|全章完|未完待续|待续|这一?[章节](?:就)?(?:收|停|写)(?:在这里|到这里|到此)|本[章节](?:就)?(?:收|停|写)(?:在这里|到这里|到此))\s*[。.！!…]*\s*[）)】]?\s*$/;
 const REBIRTH_OPENING_MIN = 150;
 const REBIRTH_OPENING_MAX = 300;
 
@@ -548,6 +550,16 @@ function createGame(cfg, dataDir) {
     return cloneForRead(hydrated);
   }
 
+  // 修仙金手指（作者笔记）：只留约定字段，逐项截断。
+  function sanitizeEdge(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+    const name = str(raw.name, 12);
+    if (!name) return null;
+    const rules = (Array.isArray(raw.rules) ? raw.rules : []).map((r) => str(r, 40)).filter(Boolean).slice(0, 4);
+    return { name, look: str(raw.look, 60), rules, cost: str(raw.cost, 40), secret: str(raw.secret, 40) };
+  }
+
   // ---- 建世界 ----
   async function buildWorld(input) {
     const data = input || {};
@@ -596,6 +608,13 @@ function createGame(cfg, dataDir) {
         );
         if (seedPersona) state.persona = seedPersona;
       } catch (_) { /* 画像读取失败不影响建世界 */ }
+      // 主角说话的腔调（公开，写正文时用）；修仙题材的金手指是作者笔记（私有，见 view.js）。
+      const heroVoice = typeof hero.voice === 'string' ? hero.voice.trim().slice(0, 20) : '';
+      if (heroVoice && state.character) state.character.voice = heroVoice;
+      if (genres.normalizeGenre(state.genre) === 'xuanhuan') {
+        const edge = sanitizeEdge(wp.parsed.edge);
+        if (edge) state.edge = edge;
+      }
       // 叙事 v3：建世界时顺带生成作者自用的隐藏大纲；失败不阻断建世界，第一回合再补。
       if (cfg.NARRATIVE_STYLE === 'v3') {
         await ensureOutlineOnState(state, [], usages);
@@ -1218,7 +1237,9 @@ function createGame(cfg, dataDir) {
     t = t.replace(/^```[a-z]*\n?/i, '').replace(/\n?```\s*$/, '');
     const lines = t.split('\n');
     while (lines.length && /^\s*(#{1,6}\s|第\s*[0-9一二三四五六七八九十百]+\s*[节章回]|正文[：:]|\*\*[^*]{1,30}\*\*\s*$)/.test(lines[0])) lines.shift();
-    t = lines.join('\n').trim();
+    // 模型偶尔把写作说明当正文写出来（「这章收在这里。」「本章完」），整行去掉。
+    t = lines.filter((l) => !META_PROSE_LINE.test(l)).join('\n').trim();
+    t = t.replace(/(?:这一?[章节]|本[章节])就?(?:收|停|写)(?:在这里|到这里|到此)[。！!…]*$/, '').trim();
     const jsonTail = t.search(/\n\s*\{\s*"[a-z_]+"\s*:/);
     if (jsonTail > 0) t = t.slice(0, jsonTail).trim();
     t = t.replace(/\n{3,}/g, '\n\n');
@@ -1230,6 +1251,28 @@ function createGame(cfg, dataDir) {
       t = (cut > max * 0.6 ? head.slice(0, cut + 1) : head).trim();
     }
     return t;
+  }
+
+  // 修仙：压扬计数（连着吃亏几节，供写手「该扬一次了」的提醒）和金手指进度（露过面没有、摸清了哪几条）。
+  // 都是私有作者笔记；主角死了就随这一世清掉。
+  function applyXianxiaLedger(prev, next, ledger, died) {
+    if (died) {
+      delete next.edge; delete next.edgeProgress; delete next.pressure;
+      return;
+    }
+    if (genres.normalizeGenre(next.genre) !== 'xuanhuan') return;
+    const streak = prev.pressure && Number.isSafeInteger(prev.pressure.streak) ? prev.pressure.streak : 0;
+    if (ledger.pressure === 'down') next.pressure = { streak: Math.min(streak + 1, 20) };
+    else if (ledger.pressure === 'up') next.pressure = { streak: 0 };
+    if (!prompts.edgeOf(next)) return;
+    const ep = prompts.edgeProgress(prev);
+    const learned = ep.learned.slice();
+    // 一节最多摸清一条，和写正文的规则一致。
+    for (const n of Array.isArray(ledger.edge_learned) ? ledger.edge_learned : []) {
+      const i = Number(n) - 1;
+      if (Number.isSafeInteger(i) && i >= 0 && i < ep.rules.length && !learned.includes(i)) { learned.push(i); break; }
+    }
+    next.edgeProgress = { shown: ep.shown || ledger.edge_shown === true || learned.length > 0, learned };
   }
 
   // 到期伏笔：活跃线索里预计回收章 <= 当前章的那些。
@@ -1383,6 +1426,7 @@ function createGame(cfg, dataDir) {
       else if (!prevMarks.includes(m)) markMeta[m] = { turn: nextTurn };
     }
     finalState.markMeta = markMeta;
+    applyXianxiaLedger(state, finalState, ledger, !!resolved.result.death);
 
     store.backupForUndo(dataDir, worldId);
     store.saveWorld(dataDir, finalState);

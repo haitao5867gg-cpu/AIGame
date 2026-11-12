@@ -1,7 +1,7 @@
 'use strict';
 
 const env = require('./env.js');
-const { GENRE_STYLES, normalizeGenre } = require('./genres.js');
+const { GENRE_STYLES, STORY_STYLES, OUTLINE_NOTES, SUGGEST_NOTES, normalizeGenre } = require('./genres.js');
 // buildProfileMessages 要用 publicProfile 把六维 ema 归一成 0..100 的倾向数字。
 // profiles.js 只依赖 store / engine 常量，不与本模块形成循环依赖。
 const profiles = require('./profiles.js');
@@ -341,7 +341,8 @@ const STATS_DESIGN_RULES = [
   '· name ≤4 字，不能和六项基础属性（体魄/心智/魅力/气运/声望/资源）重名或意思重复；icon 用一个贴切的表情符号；desc ≤30 字说清它代表什么、怎么变化；',
   '· 数值槽 max 一般 100；start 是开局值；drift 是每过一个时段（清晨/午后/黄昏/深夜）自然变化多少（饥饿口渴这类会自然下降的给 -2~-5，理智、名声这类不自然变化的给 0）；',
   '· warn 给 1~2 条警戒线：低于（below）或高于（above）某值时的状态名 label（≤8 字）和后果 effect（≤40 字，写出对行动和叙事的具体影响）；最严重的一条可以带 drain（每回合扣 1 点的基础属性名，如饿到极点扣「体魄」、理智崩溃扣「心智」）；',
-  '· 等级阶梯给 4~10 个由低到高的阶名（如修仙境界、游戏等级、帮派地位），start 是开局所在阶的下标；',
+  '· 等级阶梯给 4~12 个由低到高的阶名（如修仙境界、游戏等级、帮派地位），start 是开局所在阶的下标；',
+  '· 修仙题材的「境界」阶梯必须是修为本身，从低到高按小层列，前面细后面粗（如 练气一层、练气二层……练气九层、筑基初期、筑基中期、筑基后期），不要把门内身份（记名弟子、外门弟子、内门弟子）混进境界里；start 按主角开局的修为定（还没入门就从最低一层起）；',
   '· 举例：末日求生给「饱腹」「水分」（会自然下降，归零伤身）；修仙给「境界」（阶梯）和「灵力」；恐怖给「理智」（低了出现幻觉、崩溃）；游戏系统给「等级」（阶梯）和「能量」；',
   '· 不要设计和世界无关的通用数值，也不要超过 4 个。',
 ];
@@ -350,12 +351,13 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"genre":"xuanhuan|urban|game|horror|cozy|general",',
   ' "bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
-  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
+  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice,rank}],',
   ' "start":{"place","period","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},',
  ' "stats":[{name,kind:"gauge",icon,desc,max,start,drift,warn},{name,kind:"rank",icon,desc,ranks,start}],"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}},',
-  ' "hero":{"name":"主角名","appearance":"一句外貌"},',
+  ' "hero":{"name":"主角名","appearance":"一句外貌","voice":"主角的说话方式 ≤20 字"},',
+  ' "edge":{"name":"≤8 字","look":"≤40 字","rules":["≤30 字 x3~4"],"cost":"≤30 字","secret":"≤30 字"},',
   ' "origins":[{"title":"≤8 字","blurb":"≤40 字","style":"冒险|审慎|共情|权谋|坚韧|秩序","attrs":{"体魄":2,"心智":1,"魅力":1,"气运":0,"声望":1,"资源":1},"item":{"name":"≤12 字","desc":"≤60 字","type":"≤6 字"}}]}',
   'genre 按玩家那句话世界观和 bible 的题材判断，只取 xuanhuan / urban / game / horror / cozy / general 之一；',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
@@ -381,7 +383,9 @@ const WORLD_OUTPUT_FORMAT = [
   'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
-  'hero：玩家给了主角姓名就原样用；没给就起一个符合世界观的名字。appearance 一句话外貌（玩家给了形象就照着写）。',
+  'hero：玩家给了主角姓名就原样用；没给就起一个符合世界观的名字。appearance 一句话外貌（玩家给了形象就照着写）。voice 是主角说话的腔调（≤20 字，贴合出身和性子，和 NPC 的 voice 一样只写风格）。',
+  'npcs[].rank：修仙题材必填，这个人的修为（≤8 字，用 stats 里境界阶梯的阶名，或更高的境界名），其他题材不填；',
+  'edge：只有修仙题材给，其他题材不填。这是主角的金手指——一件只有主角有、能让他比别人修炼得快或活得下去的东西或本事：name 叫什么；look 它刚出现时看上去是什么样（主角最初能感知到的样子）；rules 是 3~4 条它的隐藏规律，主角要靠试探一条条摸清，每条都能换来看得见的好处（由浅到深）；cost 用它的代价或限制；secret 为什么绝不能让人知道。它的来历是全书的核心谜底，不写进 edge。',
   'origins 给 3 个主角出身，玩家开局时从中选一个：',
   '  · 三个出身方向明显不同（如一个能打、一个有门路、一个会钻营），都要能自然落在同一个开场情境（start.situation）里；',
   '  · title ≤8 字（如「镖局少主」「落魄账房」）；blurb ≤40 字，写清这个出身的处境、长处和随之而来的麻烦；',
@@ -1070,6 +1074,8 @@ function buildSuggestMessages(state, opts) {
     '· 不要和【已经给过的建议】重复或换个说法重复；',
     '· 只输出一个 JSON 对象：{"suggestions":["…","…","…"]}。',
   ];
+  const suggestNote = genreNote(SUGGEST_NOTES, s);
+  if (suggestNote) systemLines.splice(systemLines.length - 1, 0, '· ' + suggestNote);
   if (useProfile) {
     systemLines.splice(
       systemLines.length - 1,
@@ -1103,6 +1109,39 @@ function buildSuggestMessages(state, opts) {
   ];
 }
 
+
+// ---- 修仙：主角的金手指（state.edge，私有作者笔记，绝不公开） ----
+// 金手指的进度（私有）：shown = 正文里已经露过面；learned = 主角已经摸清的规律序号（edge.rules 的下标）。由记账写入。
+function edgeProgress(state) {
+  const edge = edgeOf(state);
+  const rules = edge && Array.isArray(edge.rules) ? edge.rules.filter((r) => typeof r === 'string' && r.trim()).map((r) => r.trim()) : [];
+  const p = state && state.edgeProgress && typeof state.edgeProgress === 'object' ? state.edgeProgress : {};
+  const learned = Array.isArray(p.learned) ? p.learned.filter((i) => Number.isSafeInteger(i) && i >= 0 && i < rules.length) : [];
+  return { rules, learned, shown: !!p.shown };
+}
+
+// 金手指目前只有修仙题材用（建世界只在修仙时生成）；改了题材的老世界不再带它。
+function edgeOf(state) {
+  if (normalizeGenre(state && state.genre) !== 'xuanhuan') return null;
+  const e = state && state.edge;
+  if (!e || typeof e !== 'object' || Array.isArray(e) || typeof e.name !== 'string' || !e.name.trim()) return null;
+  return e;
+}
+
+function edgeNotesText(edge) {
+  const rules = Array.isArray(edge.rules) ? edge.rules.filter((r) => typeof r === 'string' && r.trim()) : [];
+  return [
+    `${edge.name}：最初看上去是${edge.look || '（未写）'}`,
+    rules.length ? `隐藏规律（由浅到深）：${rules.join('；')}` : '',
+    edge.cost ? `代价或限制：${edge.cost}` : '',
+    edge.secret ? `不能让人知道的原因：${edge.secret}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function genreNote(map, state) {
+  const g = normalizeGenre(state && state.genre);
+  return (map && typeof map[g] === 'string') ? map[g] : '';
+}
 
 // ---- 叙事 v3：隐藏大纲（作者自用，绝不给玩家看） ----
 // 互动连载：玩家扮演主角、每回合决定主角做什么，所以大纲只写每章的戏剧目标和要揭开的东西，
@@ -1138,12 +1177,15 @@ function buildOutlineMessages(state, opts) {
     section('主角', `${c.name || '无名旅人'}（${c.appearance || ''}）。${pro.me || ''} ${pro.goal || ''}`.trim()),
     section('开场', (b.start && b.start.situation) || ''),
   ];
+  const edge = edgeOf(s);
+  if (edge) user.push(section('主角的金手指（作者笔记）', edgeNotesText(edge)));
   if (history) {
     user.push(section('已经发生的故事（读者都读过）', history));
     user.push('这是一个已经开始的故事：大纲要从眼下接着规划，第 1 张章卡就是正在进行的这一章，不要推翻已经发生的事。');
   }
+  const note = genreNote(OUTLINE_NOTES, s);
   return [
-    { role: 'system', content: OUTLINE_RULES },
+    { role: 'system', content: note ? OUTLINE_RULES + '\n' + note : OUTLINE_RULES },
     { role: 'user', content: user.join('\n\n') },
   ];
 }
@@ -1186,16 +1228,16 @@ function splitFacts(facts, visibleText) {
 // 写正文的模型只看作者身份 + 写作准则（system）和一份大白话任务书（user），只输出纯正文；
 // 数值、物品、线索、档案这些能由程序校验的东西，交给写完之后的记账调用。措辞为本项目自写。
 const WRITER_RULES = [
-  '1. 用第二人称「你」写主角。每节 800~1200 字，最长不超过 1400 字；写成连贯的场景：有动作、有对话、有主角的心思和判断。',
+  '1. 用第二人称「你」写主角。每节一般 800~1200 字，最长不超过 1400 字（题材文风对篇幅另有要求时按文风）；写成连贯的场景：有动作、有对话、有主角的心思和判断。',
   '2. 读者这回合的行动，这一节就写出结果，并把主角做了什么写进正文里——不看读者的输入也能读懂。世界和人物按各自的情理和意愿回应；不顺利只能是因为情理，不能故意刁难。不替主角做读者没说的重大决定。',
   '3. 一节只推进一件主要的事。优先推进、回收已经出现过的伏笔；新的悬念每节最多一个。',
-  '4. 信息只能通过主角的眼睛、耳朵和推理得到。作者笔记（大纲、设定、人物的隐秘想法）读者看不到，第一次写进正文时要让主角当场经历或得知；「刚才」「那条」「你记得」这类回指只能指前文真写过的东西。',
+  '4. 信息只能通过主角的眼睛、耳朵和推理得到（任务书明确允许的章末「另一边」除外）。作者笔记（大纲、设定、人物的隐秘想法）读者看不到，第一次写进正文时要让主角当场经历或得知；「刚才」「那条」「你记得」这类回指只能指前文真写过的东西。',
   '5. 时间、地点、天气和前文连贯；这一节过了多久，要在正文里交代。',
   '6. 每个人物说话有自己的腔调（见【三、相关的人】），台词像真人说话：有停顿、打岔、答非所问，不像辩论。',
   '7. 去掉 AI 腔：段尾不补感悟或总结；少用「缓缓、淡淡、微微、不禁、仿佛」这类副词和比喻；不同人物的反应要不同，别都「瞳孔一缩、心中一凛」；情绪用动作和细节表现，不贴标签；写完一个画面不再补一句解释它的意思；环境描写为情节服务，别每节都写雨、烟、霓虹。',
   '8. 节奏有快有慢：有的段落一句话，有的段落十几句；紧张时句子短，平静时可以舒展。段落之间空一行。',
   '9. 结尾停在一个自然的、需要主角拿主意或让人想往下读的时刻；不出选择题，不做总结，不把冲突全部解决。',
-  '10. 只输出正文：不要标题、不要「第几节」、不要说明文字、不要 JSON。',
+  '10. 只输出正文：不要标题、不要「第几节」、不要说明文字、不要 JSON；也不要写「本章完」「这章收在这里」这类话——收章就是正文自然停住。',
 ].join('\n');
 
 const FOCUS_TIPS = {
@@ -1213,7 +1255,7 @@ function npcVoiceLines(state, names) {
   const att = (state && state.npcAttitude) || {};
   return npcs
     .filter((n) => n && n.name && (!names || names.includes(n.name)))
-    .map((n) => '- ' + n.name + '：说话' + (n.voice || '（当场确立一种和别人不同的腔调）') +
+    .map((n) => '- ' + n.name + '：' + (typeof n.rank === 'string' && n.rank.trim() ? '修为' + n.rank.trim() + '；' : '') + '说话' + (n.voice || '（当场确立一种和别人不同的腔调）') +
       (Object.prototype.hasOwnProperty.call(att, n.name) ? '；对主角的态度 ' + att[n.name] : ''));
 }
 
@@ -1249,14 +1291,16 @@ function buildWriterMessages(state, ctx) {
   const b = s.bible || {};
   const hero = (s.character && s.character.name) || '主角';
   const title = b.title || '无题';
-  const genreStyle = GENRE_STYLES[normalizeGenre(s.genre)] || '';
+  const genre = normalizeGenre(s.genre);
+  const xianxia = genre === 'xuanhuan';
+  const genreStyle = STORY_STYLES[genre] || '';
   const system = [
     '你是连载小说《' + title + '》的作者。一位读者扮演主角' + hero + '，每回合告诉你主角想做什么，你接着写下一节正文。这部书写完会整理成一本小说给别人读，所以每一节都要经得起当小说读。',
     '【写作准则】',
     WRITER_RULES,
     '【亲密关系】',
     INTIMACY_COMMON + '\n' + (c.adult ? INTIMACY_ADULT_ON : INTIMACY_ADULT_OFF),
-    genreStyle ? String(genreStyle).slice(0, 400) : '',
+    genreStyle ? String(genreStyle).slice(0, 1200) : '',
   ].filter(Boolean).join('\n');
 
   const card = c.card || null;
@@ -1269,8 +1313,11 @@ function buildWriterMessages(state, ctx) {
   one.push('书名《' + title + '》。' + (card ? '现在写第 ' + card.index + ' 章《' + (card.title || '') + '》的第 ' + chapterTurn + ' 节。' : ''));
   if (card && card.goal) one.push('本章目标：' + card.goal);
   one.push('读者这回合的行动：' + action);
-  one.push('这一节就要写出这个行动的结果。篇幅 800~1200 字，写到一个合适的停顿就收住，不要越写越长。');
+  one.push(xianxia
+    ? '这一节就要写出这个行动的结果。篇幅按分量：过场、重复的劳作 300~600 字，一笔带过就跳到下一个有事的时刻；冲突、突破、斗法、金手指的试探 1000~1400 字。写到一个合适的停顿就收住。'
+    : '这一节就要写出这个行动的结果。篇幅 800~1200 字，写到一个合适的停顿就收住，不要越写越长。');
   if (c.timeSkip) one.push('这一节是时间跳跃：从此刻起过去' + (c.timeSkip.label || '一段时间') + '，读者对这段时间的打算是「' + (c.timeSkip.plan || '按眼下的日子过下去') + '」。先按时间顺序概写这段日子（有代价、有挫折也有收获），再落到跳跃结束时一个具体的时刻。');
+  if (c.timeSkip && xianxia) one.push('读者想借这段时间修炼或突破的，结果必须看得见：要么破了一层（写清从哪一层到哪一层、身体和本事具体变了什么、和同门比现在站在哪），要么卡在瓶颈——但要弄清卡在哪、下一步还缺什么（丹药、功法、机缘或金手指的某条规律）。不要写成「三个月过去，什么都没变」。');
 
   // 二、故事到这里
   const two = [];
@@ -1296,6 +1343,19 @@ function buildWriterMessages(state, ctx) {
   if (facts.seen.length) two.push('读者已经知道的事：' + facts.seen.join('；'));
   if (facts.unseen.length) two.push('背景设定（读者还不知道，第一次写进正文时要交代主角怎么得知）：' + facts.unseen.join('；'));
   if (Array.isArray(b.rules) && b.rules.length) two.push('世界规则（真实成立，但正文没写过之前读者不知道）：' + b.rules.join('；'));
+  const edge = edgeOf(s);
+  if (edge) {
+    const { rules, learned } = edgeProgress(s);
+    const known = rules.filter((r, i) => learned.includes(i) || factSeen(r, visible));
+    const unknown = rules.filter((r) => !known.includes(r));
+    const lines = ['主角的金手指「' + edge.name + '」（作者笔记，主角最大的秘密）：最初看上去是' + (edge.look || '（未写）') + '。'];
+    if (known.length) lines.push('主角已经在正文里摸清的规律：' + known.join('；'));
+    if (unknown.length) lines.push('还没摸清的规律（读者不知道；读者拿它试探时，一节最多让主角摸清下一条，要写出试探的过程和换来的好处）：' + unknown.join('；'));
+    if (!known.length && !(s.edgeProgress && s.edgeProgress.shown) && !factSeen(edge.name, visible)) lines.push('它还没在正文里露过面：这一章里找个自然的时机让它出现（先让主角感知到它的样子，规律留给后面一条条摸）。');
+    if (edge.cost) lines.push('代价或限制：' + edge.cost);
+    if (edge.secret) lines.push('为什么不能让人知道：' + edge.secret);
+    two.push(lines.join('\n'));
+  }
 
   // 三、相关的人
   const names = presentNpcNames(s, c.action, c.history);
@@ -1304,6 +1364,8 @@ function buildWriterMessages(state, ctx) {
   if (npcCtx) three.push(npcCtx);
   const voices = npcVoiceLines(s, names.length ? names : null);
   if (voices.length) three.push('说话的腔调和对主角的态度：\n' + voices.join('\n'));
+  const heroVoice = s.character && typeof s.character.voice === 'string' ? s.character.voice.trim() : '';
+  if (heroVoice) three.push('主角' + hero + '说话：' + heroVoice + '。读者没写主角说什么时，也可以按这个腔调让主角回应，但不替读者做重大决定。');
   three.push('人物的隐秘想法只供作者把握分寸，不能当成读者已知的事写出来。');
 
   // 四、怎么写更顺
@@ -1315,6 +1377,8 @@ function buildWriterMessages(state, ctx) {
   for (const h of protagonistHints(s)) four.push(h);
   const plan = c.plan || {};
   if (plan.settling && s.activeEvent) four.push('这件事要在这一节有个结果：' + (s.activeEvent.title || '') + '——' + (s.activeEvent.desc || ''));
+  const pressure = s.pressure && Number.isSafeInteger(s.pressure.streak) ? s.pressure.streak : 0;
+  if (xianxia && pressure >= 3) four.push('主角已经连着 ' + pressure + ' 节只吃亏、没占到一点便宜了：这一节让主角这回合的努力按情理换来一点实打实的回报（一点收获、一次小胜或让对手吃瘪），但不要替读者做决定。');
 
   // 五、收在哪里
   let five;
@@ -1322,6 +1386,7 @@ function buildWriterMessages(state, ctx) {
     five = '这是故事的开头：重在交代主角、处境和身边的人，让读者站稳脚，不急着抛新的谜团。停在一个自然的、需要主角拿主意的时刻。';
   } else if (card && chapterTurn >= 4) {
     five = '本章已经写到第 ' + chapterTurn + ' 节。如果故事自然走到了本章终点，就把这一章收住，落在这个问题上：' + (card.question || '一个让人想翻下一页的问题') + '；还没走到就继续推进，不要硬收。';
+    if (xianxia) five += '\n如果这一节收了章，可以在最后加一段「另一边」：单独一行写「* * *」，下面用第三人称写 3~6 句主角不在场时别处发生的事（谁盯上了主角、谁在打主角的算盘、哪里起了异常），只写读者能感知的威胁和动机，不揭核心谜底。这一章已经写过就不要再写。';
   } else {
     five = '停在一个自然的、需要主角拿主意或让人想往下读的时刻。';
   }
@@ -1364,6 +1429,24 @@ const LEDGER_EXTRA = [
   '- "chapter":{"beats_done":["本章卡里这一节已经达成的节点原文"],"chapter_end":false}：正文已经把本章收住（落在章末问题上、告一段落）时 chapter_end 写 true。',
 ].join('\n');
 
+// 修仙题材的记账附加：主角这节是吃亏还是占到便宜（供「压了要扬」的提醒）、境界变化、灵感「稳进险」、章末另一边。
+const XIANXIA_LEDGER = [
+  '- 修仙：另给 "pressure":"down|up|none"——这一节主角主要是吃亏受压（被欺负、被克扣、受挫、白忙）写 down，占到便宜（有收获、小胜、对手吃瘪、修为或金手指有进展）写 up，两样都有按结尾时的处境定，都没有写 none。',
+  '- 修仙：正文明确写到主角破了一层或升了一阶，就在 stats_diff 里给「境界」类阶梯 +1；没写明就不动。',
+  '- 修仙：suggestions ' + (SUGGEST_NOTES.xuanhuan || ''),
+  '- 修仙：正文里单独一行「* * *」之后是主角不在场的「另一边」，主角不知道这些：不要据此改主角的物品、印记、属性或人物对主角的态度；读者知道了的新威胁可以按规则记成一条线索。',
+].join('\n');
+
+function xianxiaEdgeLedgerText(state) {
+  const edge = edgeOf(state);
+  if (!edge) return '';
+  const { rules, learned, shown } = edgeProgress(state);
+  const lines = ['「' + edge.name + '」：' + (edge.look || '') + (shown ? '（正文里已经露过面）' : '（正文里还没露过面）')];
+  rules.forEach((r, i) => { if (!learned.includes(i)) lines.push((i + 1) + '. ' + r); });
+  lines.push('正文第一次让主角感知或用到它，给 "edge_shown":true；正文里主角明确试出、弄懂了上面某条规律，给 "edge_learned":[序号]（只填这里列出的序号，没弄懂就不给）。');
+  return lines.join('\n');
+}
+
 // ctx = { action, prose, card, chapterTurn, timeSkip, plan }
 function buildLedgerMessages(state, ctx) {
   const s = state || {};
@@ -1374,6 +1457,7 @@ function buildLedgerMessages(state, ctx) {
     '说明里提到的 narration、叙事、正文，都指【正文】里这段已经写好的文字。只输出一个 JSON 对象。',
     ledgerFormat(),
     LEDGER_EXTRA,
+    normalizeGenre(s.genre) === 'xuanhuan' ? XIANXIA_LEDGER : '',
     plan.opening ? '本回合需要开启事件：按正文给出 event。' : '',
     plan.settling ? '本回合需要结算事件：按正文里主角的应对给出 event_check。' : '',
     c.timeSkip ? '本回合是时间跳跃：给出 landing_period（跳跃结束时的时段：清晨 / 午后 / 黄昏 / 深夜），time_passes 不起作用。' : '',
@@ -1389,6 +1473,7 @@ function buildLedgerMessages(state, ctx) {
     section('人物与态度', att || '无'),
     section('时与地（写正文之前）', timePlaceText(s)),
     card ? section('本章卡', '第 ' + card.index + ' 章《' + (card.title || '') + '》，可能的推进：' + (card.beats || []).join('；') + '；可能的终点：' + (card.end || '')) : '',
+    xianxiaEdgeLedgerText(s) ? section('主角的金手指（作者笔记，只用来对照正文记账）', xianxiaEdgeLedgerText(s)) : '',
     section('读者这回合的行动', String(c.action || '（未填写）')),
     section('正文', String(c.prose || '')),
   ].filter(Boolean).join('\n\n');
@@ -1433,7 +1518,8 @@ function buildNextChapterMessages(state, ctx) {
     '规则：从上一章的承接点接着写；读者实际走出来的方向是真的，不要强行拉回原来的计划，原计划里的后续章卡只作参考；',
     '卷节拍表里已经发生的拍就往下推进；该收的伏笔安排在这一章收掉；章卡只写读者能感知的信号，不写作者的内部真相；节点是建议不是必须；一章大约 4~6 回合。',
     '只输出一张章卡 JSON：{"title":"≤10 字","goal":"本章戏剧目标","start":"起点情形","beats":["2~4 个可能的推进节点"],"end":"可能的终点","question":"章末留给读者的问题","avoid":["本章不要做的事，≤3 条"]}',
-  ].join('\n');
+    genreNote(OUTLINE_NOTES, s),
+  ].filter(Boolean).join('\n');
   const chapters = (Array.isArray(s.chapters) ? s.chapters : [])
     .map((ch) => '第 ' + ch.index + ' 章《' + (ch.title || '') + '》：' + (ch.summary || '') + (ch.bridge ? '（承接：' + ch.bridge + '）' : ''))
     .join('\n');
@@ -1446,6 +1532,7 @@ function buildNextChapterMessages(state, ctx) {
     section('已经写完的章', chapters || '（无）'),
     section('最近的正文', chapterRecordsText(c.recentRecords) || '（无）'),
     section('还没解开的线索', (Array.isArray(s.threads) ? s.threads : []).join('；') || '无'),
+    edgeOf(s) ? section('主角的金手指（作者笔记）', edgeNotesText(edgeOf(s))) : '',
     (c.dueThreads && c.dueThreads.length) ? section('该在下一章收掉的伏笔', c.dueThreads.join('；')) : '',
     later ? section('原计划里的后续章卡（参考）', later) : '',
     '请规划第 ' + nextIndex + ' 章。',
@@ -1469,6 +1556,8 @@ function parseJson(text) {
 }
 
 module.exports = {
+  edgeOf,
+  edgeProgress,
   buildTurnMessages,
   buildWriterMessages,
   buildLedgerMessages,

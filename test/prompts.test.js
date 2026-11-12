@@ -50,7 +50,7 @@ test('建世界 prompt：要求 start.items 给 2~3 个起始物品', () => {
 
 test('建世界 prompt：要求 npcs 带 want 与 voice 字段（欲望/立场 + 语言指纹）', () => {
   const [system] = prompts.buildWorldMessages('一句世界观', { name: '旅人', appearance: '灰袍' });
-  assert.match(system.content, /"npcs":\[\{name,role,desc,want,voice\}\]/);
+  assert.match(system.content, /"npcs":\[\{name,role,desc,want,voice(,rank)?\}\]/);
   assert.match(system.content, /want/);
   assert.match(system.content, /想要什么/);
   assert.match(system.content, /voice/);
