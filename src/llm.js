@@ -1068,34 +1068,70 @@ function createClient(cfg, dataDir) {
     let completion_tokens = 0;
     let thinkChars = 0;
     let thinkAt = 0;
-    await readSSE(resp.body, (dataLine) => {
-      if (!dataLine || dataLine === '[DONE]') return;
-      let chunk;
-      try { chunk = JSON.parse(dataLine); } catch (_) { return; }
-      // 部分实现把用量放在最后一个 chunk（需 stream_options.include_usage，这里被动接收）。
-      if (chunk && chunk.usage) {
-        prompt_tokens = Number(chunk.usage.prompt_tokens) || prompt_tokens;
-        completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
-      }
-      const choices = chunk && chunk.choices;
-      const d = choices && choices[0] && choices[0].delta;
-      // DeepSeek 原生叫 reasoning_content；OpenRouter 风格的网关叫 reasoning。
-      const reasoning = d && (typeof d.reasoning_content === 'string' ? d.reasoning_content : d.reasoning);
-      if (typeof reasoning === 'string' && reasoning && typeof sro.onThinking === 'function') {
-        const first = thinkChars === 0;
-        thinkChars += reasoning.length;
-        const nowMs = Date.now();
-        if (first || nowMs - thinkAt >= 800) {
-          thinkAt = nowMs;
-          try { sro.onThinking(thinkChars); } catch (_) { /* 回调出错不影响读流 */ }
+    let progressAt = 0;
+    // idleTimeoutMs（可选，建世界用）：连接上之后这么久一个字节都没收到，就当流停住了，中止并报 504。
+    // 不传时和原来一样（回合流式有前端看门狗兜底）。
+    const idleMs = Number.isSafeInteger(sro.idleTimeoutMs) && sro.idleTimeoutMs > 0 ? sro.idleTimeoutMs : 0;
+    let idleTimer = null;
+    let stalled = false;
+    const kick = () => {
+      if (!idleMs) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { stalled = true; controller.abort(); }, idleMs);
+    };
+    kick();
+    try {
+      await readSSE(resp.body, (dataLine) => {
+        kick();
+        if (!dataLine || dataLine === '[DONE]') return;
+        let chunk;
+        try { chunk = JSON.parse(dataLine); } catch (_) { return; }
+        // 部分实现把用量放在最后一个 chunk（需 stream_options.include_usage，这里被动接收）。
+        if (chunk && chunk.usage) {
+          prompt_tokens = Number(chunk.usage.prompt_tokens) || prompt_tokens;
+          completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
         }
+        const choices = chunk && chunk.choices;
+        const d = choices && choices[0] && choices[0].delta;
+        // DeepSeek 原生叫 reasoning_content；OpenRouter 风格的网关叫 reasoning。
+        const reasoning = d && (typeof d.reasoning_content === 'string' ? d.reasoning_content : d.reasoning);
+        if (typeof reasoning === 'string' && reasoning) {
+          const first = thinkChars === 0;
+          thinkChars += reasoning.length;
+          const nowMs = Date.now();
+          if (typeof sro.onThinking === 'function' && (first || nowMs - thinkAt >= 800)) {
+            thinkAt = nowMs;
+            try { sro.onThinking(thinkChars); } catch (_) { /* 回调出错不影响读流 */ }
+          }
+        }
+        const delta = d && d.content;
+        if (typeof delta === 'string' && delta) {
+          fullContent += delta;
+          decoder.push(delta);
+        }
+        // onProgress({chars, think})：已写字数 / 已思考字数（建世界进度条用），最多每 500ms 一次。
+        if (typeof sro.onProgress === 'function' && (delta || reasoning)) {
+          const nowMs = Date.now();
+          if (nowMs - progressAt >= 500) {
+            progressAt = nowMs;
+            try { sro.onProgress({ chars: fullContent.length, think: thinkChars }); } catch (_) { /* 忽略 */ }
+          }
+        }
+      });
+    } catch (err) {
+      if (stalled) {
+        const e = new Error(`LLM 流式输出停住了（${idleMs} ms 没有新内容）`);
+        e.status = 504;
+        e.expose = true;
+        throw e;
       }
-      const delta = d && d.content;
-      if (typeof delta === 'string' && delta) {
-        fullContent += delta;
-        decoder.push(delta);
-      }
-    });
+      throw err;
+    } finally {
+      clearTimeout(idleTimer);
+    }
+    if (typeof sro.onProgress === 'function') {
+      try { sro.onProgress({ chars: fullContent.length, think: thinkChars }); } catch (_) { /* 忽略 */ }
+    }
     // 用量缺失时按文本估算，保证 events.jsonl 的 usage 聚合不为 0。
     if (prompt_tokens === 0 && completion_tokens === 0) {
       const est = fakeTokens(messages, fullContent);
@@ -1189,6 +1225,14 @@ function createClient(cfg, dataDir) {
       }
       if (typeof o.onThinking === 'function') {
         try { o.onThinking(1); } catch (_) { /* 忽略 */ }
+      }
+      // 建世界进度：分 8 步报告已写字数；LLM_MOCK_DELAY_MS 给界面检查放慢（默认不等）。
+      if (typeof o.onProgress === 'function') {
+        const delay = Number(process.env.LLM_MOCK_DELAY_MS) || 0;
+        for (let k = 1; k <= 8; k++) {
+          if (delay) await new Promise((r) => setTimeout(r, delay / 8));
+          try { o.onProgress({ chars: Math.round(content.length * k / 8), think: 0 }); } catch (_) { /* 忽略 */ }
+        }
       }
       // 把假叙事切成小块，每块间隔约 30ms 回调，模拟流式。
       const size = 6;

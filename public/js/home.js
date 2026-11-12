@@ -451,23 +451,32 @@
     } catch (_) {}
   }
 
-  // 建世界时网络断了（切后台 / 锁屏 / 换网络）：世界多半还在服务器上照常生成。
-  // 隔几秒查一次世界列表，出现建之前没有的新世界就直接进去，最多找 3 分钟。
-  async function findNewWorld(beforeIds) {
-    var known = {};
-    beforeIds.forEach(function (id) { known[id] = true; });
-    var deadline = Date.now() + 180000;
-    while (Date.now() < deadline) {
-      await new Promise(function (r) { setTimeout(r, 5000); });
-      if (location.hash !== '#/new') return null; // 玩家已经离开新世界页
+  // 建世界请求 ID：服务器同一个 ID 只建一次，并按它记进度（弹窗轮询）。
+  function newBuildRequestId() {
+    var r = '';
+    while (r.length < 12) r += Math.random().toString(36).slice(2);
+    return 'w' + Date.now().toString(36) + r.slice(0, 12);
+  }
+
+  // 发建世界请求：网络断了（切后台 / 锁屏 / 换网络）或隧道网关超时（524 等），
+  // 带同一个 ID 再发——服务器还在建就等它、建好了直接给同一个世界，不会建出两个。最多等 4 分钟。
+  async function postWorldOnce(body, onRetry) {
+    var deadline = Date.now() + 240000;
+    var lastErr = null;
+    for (var attempt = 0; Date.now() < deadline; attempt++) {
+      if (attempt) {
+        await new Promise(function (r) { setTimeout(r, 3000); });
+        if (typeof onRetry === 'function') onRetry(attempt);
+      }
       try {
-        var list = await api('/api/worlds');
-        for (var i = 0; i < list.length; i++) {
-          if (list[i] && list[i].id && !known[list[i].id]) return list[i].id;
-        }
-      } catch (_) { /* 网络还没恢复，继续等 */ }
+        return await api('/api/worlds', { method: 'POST', body: JSON.stringify(body) });
+      } catch (err) {
+        lastErr = err;
+        var gateway = err && (err.status === 504 || (err.status >= 520 && err.status <= 524));
+        if (!(err && err.network) && !gateway) throw err;
+      }
     }
-    return null;
+    throw lastErr || new Error('网络断了，请检查网络后再试');
   }
 
   async function createWorld() {
@@ -487,26 +496,63 @@
     if (name) body.name = name;
     if (appearance) body.appearance = appearance;
     if (identity) body.identity = identity;
+    var cid = newBuildRequestId();
+    body.clientRequestId = cid;
     setCreating(true);
-    var beforeIds = null;
-    try {
-      beforeIds = (await api('/api/worlds')).map(function (w) { return w.id; });
-    } catch (_) { beforeIds = null; }
-    try {
-      var w = await api('/api/worlds', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      location.hash = '#/w/' + w.id;
-    } catch (err) {
-      var found = null;
-      if (err && err.network && beforeIds) {
-        setCreating(true, '连接断了，世界可能还在成形，正在找回');
-        found = await findNewWorld(beforeIds);
+    BuildModal.open(seed);
+    // 每秒查一次进度；查到「建好了」直接进世界（POST 连接可能已经断了）。
+    var settled = false;
+    var polling = true;
+    function enter(id) {
+      if (settled) return;
+      settled = true;
+      BuildModal.done();
+      setTimeout(function () {
+        BuildModal.close();
+        if (location.hash === '#/new') location.hash = '#/w/' + id;
+      }, 500);
+    }
+    (async function pollProgress() {
+      var misses = 0;
+      // 稍等一下再查：服务器收到请求、开始记进度之前查会是 404。
+      await new Promise(function (r) { setTimeout(r, 700); });
+      while (polling && !settled) {
+        try {
+          var snap = await api('/api/build-progress?cid=' + encodeURIComponent(cid));
+          misses = 0;
+          BuildModal.update(snap);
+          if (snap.done && snap.worldId) { enter(snap.worldId); break; }
+        } catch (err) {
+          misses++;
+          if (err && err.network && misses >= 2) BuildModal.setNote('网络断了，正在重连…世界还在服务器上照常生成。');
+        }
+        if (!polling || settled) break;
+        await new Promise(function (r) { setTimeout(r, 1000); });
       }
-      if (found) location.hash = '#/w/' + found;
-      else toast(err.message);
+    })();
+    // 离开新世界页（返回 / 切别的页面）：收起弹窗，世界照常在服务器上建好，之后出现在「我的世界」里。
+    function onLeave() {
+      if (location.hash === '#/new') return;
+      polling = false;
+      if (!settled) BuildModal.close();
+    }
+    window.addEventListener('hashchange', onLeave);
+    try {
+      var w = await postWorldOnce(body, function () {
+        BuildModal.setNote('连接断了一下，正在接回刚才那次建世界…');
+      });
+      BuildModal.setNote('');
+      enter(w.id);
+    } catch (err) {
+      polling = false;
+      if (!settled && BuildModal.isOpen()) {
+        BuildModal.fail((err && err.message) || '建世界失败，请重试', function () { createWorld(); });
+      } else if (!settled) {
+        toast(err.message);
+      }
     } finally {
+      polling = false;
+      window.removeEventListener('hashchange', onLeave);
       setCreating(false);
     }
   }

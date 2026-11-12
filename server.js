@@ -19,6 +19,7 @@ const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
 const adultMode = require('./src/adult-mode.js');
 const { createIdempotency, validId: validClientId } = require('./src/idempotency.js');
+const buildProgress = require('./src/build-progress.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -216,6 +217,16 @@ function turnOnceFor(g) {
   if (!t) {
     t = createIdempotency({ ttlMs: 30 * 60 * 1000, max: 120 });
     turnOnceByGame.set(g, t);
+  }
+  return t;
+}
+// 建世界进度（见 src/build-progress.js）：每个 game 实例一份，key = 玩家 + clientRequestId。
+const buildProgressByGame = new WeakMap();
+function buildProgressFor(g) {
+  let t = buildProgressByGame.get(g);
+  if (!t) {
+    t = buildProgress.createBuildProgress();
+    buildProgressByGame.set(g, t);
   }
   return t;
 }
@@ -580,11 +591,23 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     for (const w of list) w.cover = covers[w.id] || null;
     return sendJson(res, 200, list);
   }
+  // 建世界进度：GET /api/build-progress?cid=…（前端建世界弹窗每秒轮询一次画进度条）。
+  if (pathname === '/api/build-progress' && method === 'GET') {
+    const cid = searchParams ? searchParams.get('cid') : '';
+    if (!validClientId(cid)) return sendError(res, 400, 'cid 无效');
+    const snap = buildProgressFor(g).snapshot(player.id + ':' + cid);
+    if (!snap) return sendJson(res, 404, { error: '没有找到这次建世界', code: 'build_unknown' });
+    return sendJson(res, 200, snap);
+  }
   if (pathname === '/api/worlds' && method === 'POST') {
     const body = await readJsonBody(req);
-    if (body && body.adultMode === true) {
+    const input = Object.assign({}, body);
+    const cid = input.clientRequestId;
+    delete input.clientRequestId;
+    let llmRoute = null;
+    if (input.adultMode === true) {
       // 成人模式：默认关；要玩家确认满 18 岁、主人开放（来客）、网关配好，三样缺一不可。
-      if (body.confirm18 !== true) return sendJson(res, 400, { error: '成人模式需要确认已年满 18 岁' });
+      if (input.confirm18 !== true) return sendJson(res, 400, { error: '成人模式需要确认已年满 18 岁' });
       if (!adultMode.playerAllowed(dataDir, player)) {
         return sendJson(res, 403, { error: '主人还没有开放成人内容，不能建成人模式世界' });
       }
@@ -592,16 +615,37 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
         return sendJson(res, 503, { error: '成人模式还没配置好（服务器缺少 EXPLABS_API_KEY）' });
       }
       // 建世界的全部 LLM 调用（世界、大纲）都走成人模式网关。
-      const world = await context.run({ playerId: player.id, llmRoute: adultMode.ROUTE }, () => g.buildWorld(body));
-      accessMod.setOwner(dataDir, world.id, player.id);
-      triggerImages(images, dataDir, world);
-      return sendJson(res, 201, world);
+      llmRoute = adultMode.ROUTE;
+    } else {
+      input.adultMode = false;
     }
-    const world = await g.buildWorld(Object.assign({}, body, { adultMode: false }));
-    // 建世界成功后登记归属；无记录的老世界默认归 host。
-    accessMod.setOwner(dataDir, world.id, player.id);
-    // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
-    triggerImages(images, dataDir, world);
+    // 带合法 clientRequestId 时：记进度（前端弹窗轮询），并且同一个 ID 只建一次——
+    // 手机切后台断了连接，前端用同一个 ID 再 POST 只会等到 / 拿到同一个世界，不会建出两个。
+    const key = validClientId(cid) ? player.id + ':' + cid : null;
+    const tracker = buildProgressFor(g);
+    const exec = async () => {
+      if (key) tracker.start(key, dataDir, cfg.NARRATIVE_STYLE === 'v3');
+      const hooks = key ? { onStage: (k) => tracker.stage(key, k), onProgress: (p) => tracker.progress(key, p) } : undefined;
+      try {
+        const run = () => g.buildWorld(input, hooks);
+        const world = llmRoute
+          ? await context.run({ playerId: player.id, llmRoute }, run)
+          : await run();
+        // 建世界成功后登记归属；无记录的老世界默认归 host。
+        accessMod.setOwner(dataDir, world.id, player.id);
+        // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
+        triggerImages(images, dataDir, world);
+        if (key) {
+          const timings = tracker.finish(key, world.id);
+          if (timings) buildProgress.recordStats(dataDir, timings);
+        }
+        return world;
+      } catch (err) {
+        if (key) tracker.fail(key, err && err.expose && err.message ? err.message : '建世界失败，请重试');
+        throw err;
+      }
+    };
+    const world = key ? (await turnOnceFor(g).run('world:' + key, exec)).value : await exec();
     return sendJson(res, 201, world);
   }
 
