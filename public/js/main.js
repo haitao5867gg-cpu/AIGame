@@ -9,7 +9,7 @@
     document.addEventListener('click', onDocumentClick);
     // 点击大图查看器（再点）关闭
     $('image-viewer').addEventListener('click', closeImageViewer);
-    $('btn-random').addEventListener('click', randomAlloc);
+    $('identity-dice').addEventListener('click', onIdentityDice);
     $('btn-create').addEventListener('click', createWorld);
     $('btn-send').addEventListener('click', sendAction);
     $('btn-idea').addEventListener('click', nextIdea);

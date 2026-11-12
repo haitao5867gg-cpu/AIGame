@@ -38,7 +38,7 @@ test('序章：index.html 在 game.js 之前引入 /js/prologue.js', () => {
 });
 
 test('序章：showPrologue 含四段小标题与「开始」按钮', () => {
-  assert.ok(/function showPrologue\(title, prologue, onStart\)/.test(prologueSrc), '应有 showPrologue');
+  assert.ok(/function showPrologue\(title, prologue, onStart, opts\)/.test(prologueSrc), '应有 showPrologue');
   for (const h of ['这个世界', '你是谁', '你想要的', '此刻']) {
     assert.ok(prologueSrc.includes(h), '应含小标题「' + h + '」');
   }

@@ -61,18 +61,15 @@
       <label>文风</label>
       <div id="genre-row" class="genre-row"></div>
 
-      <label for="char-name">角色名</label>
-      <input id="char-name" type="text" placeholder="无名旅人">
-      <label for="char-appearance">形象描述</label>
-      <input id="char-appearance" type="text" placeholder="一袭布衣">
-
-      <div class="alloc-head">
-        <label>属性分配（基础 5，额外 6 点，每项最多 +3）</label>
-        <span id="points-left">剩余 0 点</span>
-        <button id="btn-random" class="btn tiny">随机</button>
+      <label for="char-identity">你是谁</label>
+      <div class="identity-row">
+        <input id="char-identity" type="text" maxlength="80" placeholder="一句话说说你是谁，比如：欠了一屁股债的退伍兵，枪法准（可不写，AI 会给你几个出身挑）">
+        <button type="button" id="identity-dice" class="btn tiny" title="换一个示例身份">换一个</button>
       </div>
-      <div id="alloc" class="alloc"></div>
-      <p class="hint">不分配也可直接创世，默认把 6 点平均加到 6 项属性上。</p>
+      <label for="char-name">名字</label>
+      <input id="char-name" type="text" placeholder="不填由 AI 起名">
+      <label for="char-appearance">形象</label>
+      <input id="char-appearance" type="text" placeholder="可不填">
 
       <button id="btn-create" class="btn primary" style="margin-top:14px">创世</button>
       <div id="creating" class="creating" hidden>世界正在成形<span class="dots">…</span></div>

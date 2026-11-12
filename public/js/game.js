@@ -161,6 +161,46 @@
     }, 2100);
   }
 
+  // 推荐出身下标：画像 ready 时取 dims 最高的维度，选 style 等于它的第一个出身；否则 -1。
+  function originRecommend(origins, profile) {
+    if (!profile || !profile.ready || !profile.dims || !Array.isArray(origins)) return -1;
+    var dims = profile.dims;
+    var best = null, bestVal = -1;
+    Object.keys(dims).forEach(function (d) {
+      var v = Number(dims[d]) || 0;
+      if (v > bestVal) { bestVal = v; best = d; }
+    });
+    if (!best) return -1;
+    for (var i = 0; i < origins.length; i++) {
+      if (origins[i] && origins[i].style === best) return i;
+    }
+    return -1;
+  }
+
+  // 序章卡选出身的参数；onChoose POST /origin，成功后用返回的世界刷新界面。
+  function buildPrologueOpts(state) {
+    var origins = Array.isArray(state.origins) ? state.origins : [];
+    var chosen = !!(state.character && state.character.origin);
+    return {
+      origins: origins,
+      chosen: chosen,
+      recommend: originRecommend(origins, profileData),
+      onChoose: function (i) {
+        return api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/origin', {
+          method: 'POST',
+          body: JSON.stringify({ index: i }),
+        }).then(function (w) {
+          currentState = w;
+          renderHeader(w);
+          renderPanel(w);
+          var o = w.character && w.character.origin;
+          toast('你的出身：' + ((o && o.title) || (origins[i] && origins[i].title) || ''));
+          return w;
+        });
+      },
+    };
+  }
+
   async function showGame(id) {
     currentWorldId = id;
     $('view-game').hidden = false;
@@ -203,14 +243,19 @@
 
       // 序章：首次进入（turn 0、未看过、四段齐全）弹出；缺失则后台补生成，
       // 供面板入口使用。老世界（turn > 0）不自动弹出，卡片也不阻塞上面的回放。
+      // 新增：turn 0、有出身且还没选时，即使看过序章也弹出，让玩家选完。
       var pr = state.bible && state.bible.prologue;
       var wtitle = (state.bible && state.bible.title) || '无限世界';
       var seen = false;
       try { seen = !!localStorage.getItem('prologueSeen:' + id); } catch (_) {}
-      if (state.turn === 0 && !seen && pr && pr.world && pr.me && pr.goal && pr.now) {
+      var prReady = pr && pr.world && pr.me && pr.goal && pr.now;
+      var origins = Array.isArray(state.origins) ? state.origins : [];
+      var chosen = !!(state.character && state.character.origin);
+      var needPick = origins.length > 0 && !chosen;
+      if (state.turn === 0 && prReady && (!seen || needPick)) {
         showPrologue(wtitle, pr, function () {
           try { localStorage.setItem('prologueSeen:' + id, '1'); } catch (_) {}
-        });
+        }, buildPrologueOpts(state));
       }
       if (!pr) {
         api('/api/worlds/' + encodeURIComponent(id) + '/prologue')
@@ -982,6 +1027,8 @@
     var meta = el('div', 'char-meta');
     meta.appendChild(el('div', 'char-name', (s.character && s.character.name) || '无名旅人'));
     meta.appendChild(el('div', 'char-sub', '第 ' + (s.life || 0) + ' 世 · 第 ' + (s.turn || 0) + ' 回合'));
+    var origins = Array.isArray(s.origins) ? s.origins : [];
+    var origin = (s.character && s.character.origin) || null;
     var badges = el('div', 'char-badges');
     stats.forEach(function (st) {
       if (st && st.kind === 'rank') {
@@ -989,7 +1036,22 @@
       }
     });
     if (danger) badges.appendChild(el('span', 'char-danger', '伤势沉重'));
+    if (origin) {
+      var ob = el('span', 'char-origin', '出身：' + (origin.title || ''));
+      ob.setAttribute('title', origin.blurb || ''); // blurb 作 tooltip
+      badges.appendChild(ob);
+    }
     meta.appendChild(badges);
+    if (s.turn === 0 && origins.length > 0 && !origin) {
+      var pick = el('button', 'btn tiny char-origin-pick', '选出身');
+      pick.type = 'button';
+      pick.addEventListener('click', function () {
+        var p = (s.bible && s.bible.prologue) || null;
+        var wt = (s.bible && s.bible.title) || '无限世界';
+        showPrologue(wt, p, null, buildPrologueOpts(s));
+      });
+      meta.appendChild(pick);
+    }
     card.appendChild(meta);
     panel.appendChild(card);
 

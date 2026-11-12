@@ -327,6 +327,29 @@
   }
 
   // ---- 新世界 ----
+  // 「换一个」示例身份：与题材无关的通用身份，随机填一条。
+  var IDENTITY_SAMPLES = [
+    '刚被退婚的穷书生',
+    '会修机器的失业工程师',
+    '被师门赶出来的小道士',
+    '欠了一屁股债的退伍兵，枪法准',
+    '在码头扛包的孤儿',
+    '丢了官职的小捕快',
+    '带着一封密信的信使',
+    '被同行排挤的年轻大夫',
+    '守着祖传铺子的手艺人',
+    '从戏班跑出来的武生',
+    '记不清自己是谁的旅人',
+    '总在换名字的江湖骗子',
+  ];
+
+  function onIdentityDice() {
+    var cur = $('char-identity').value.trim();
+    var pool = IDENTITY_SAMPLES.filter(function (s) { return s !== cur; });
+    var pick = pool[Math.floor(Math.random() * pool.length)];
+    $('char-identity').value = pick;
+  }
+
   function showNew() {
     $('view-new').hidden = false;
     window.scrollTo(0, 0); // 进入新世界页时回到顶部，避免停在首页的滚动位置
@@ -336,7 +359,6 @@
     if (typeof Sky !== 'undefined') Sky.start($('home-sky'));
     if (!$('presets').childElementCount) renderPresets();
     if (!$('genre-row').childElementCount) renderGenres();
-    if (!$('alloc').childElementCount) initAlloc();
     if (homeDraft) {
       if (homeDraft.seed) $('seed').value = homeDraft.seed;
       if (homeDraft.genre) {
@@ -354,7 +376,6 @@
       }
     }
     homeDraft = null;
-    updatePoints();
   }
 
   function renderPresets() {
@@ -384,59 +405,6 @@
     });
   }
 
-  function remaining() {
-    return 6 - ATTRS.reduce(function (s, a) { return s + (alloc[a] || 0); }, 0);
-  }
-
-  function initAlloc() {
-    var box = $('alloc');
-    box.textContent = '';
-    ATTRS.forEach(function (a) {
-      alloc[a] = 1; // 默认平均分配，剩余 0 点
-      var row = el('div', 'alloc-row');
-      row.appendChild(el('span', 'alloc-name', a));
-      var minus = el('button', 'btn tiny', '−');
-      var val = el('span', 'alloc-val', '1');
-      var plus = el('button', 'btn tiny', '+');
-      minus.addEventListener('click', function () { changeAlloc(a, -1, val); });
-      plus.addEventListener('click', function () { changeAlloc(a, 1, val); });
-      row.appendChild(minus);
-      row.appendChild(val);
-      row.appendChild(plus);
-      box.appendChild(row);
-    });
-  }
-
-  function changeAlloc(a, d, valEl) {
-    var next = (alloc[a] || 0) + d;
-    if (next < 0 || next > 3) return;
-    if (d > 0 && remaining() <= 0) return;
-    alloc[a] = next;
-    valEl.textContent = String(next);
-    updatePoints();
-  }
-
-  function randomAlloc() {
-    ATTRS.forEach(function (a) { alloc[a] = 0; });
-    var left = 6;
-    while (left > 0) {
-      var candidates = ATTRS.filter(function (a) { return alloc[a] < 3; });
-      var a = candidates[Math.floor(Math.random() * candidates.length)];
-      alloc[a] += 1;
-      left -= 1;
-    }
-    var rows = $('alloc').children;
-    ATTRS.forEach(function (a, i) { rows[i].querySelector('.alloc-val').textContent = String(alloc[a]); });
-    updatePoints();
-  }
-
-  function updatePoints() {
-    var r = remaining();
-    $('points-left').textContent = '剩余 ' + r + ' 点';
-    $('points-left').style.color = r === 0 ? 'var(--muted)' : 'var(--accent-2)';
-    $('btn-create').disabled = r !== 0;
-  }
-
   function setCreating(b) {
     $('creating').hidden = !b;
     $('btn-create').disabled = b;
@@ -445,14 +413,18 @@
   async function createWorld() {
     var seed = $('seed').value.trim();
     if (!seed) { toast('请先写一句世界观'); return; }
-    if (remaining() !== 0) { toast('请分配完 6 点属性'); return; }
-    var name = $('char-name').value.trim() || '无名旅人';
-    var appearance = $('char-appearance').value.trim() || '一袭布衣';
+    var name = $('char-name').value.trim();
+    var appearance = $('char-appearance').value.trim();
+    var identity = $('char-identity').value.trim();
+    var body = { seed: seed, genre: selectedGenre };
+    if (name) body.name = name;
+    if (appearance) body.appearance = appearance;
+    if (identity) body.identity = identity;
     setCreating(true);
     try {
       var w = await api('/api/worlds', {
         method: 'POST',
-        body: JSON.stringify({ seed: seed, name: name, appearance: appearance, alloc: alloc, genre: selectedGenre }),
+        body: JSON.stringify(body),
       });
       location.hash = '#/w/' + w.id;
     } catch (err) {

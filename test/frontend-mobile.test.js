@@ -129,9 +129,9 @@ function bodiesOf(re) {
 test('手机端第 2 轮：开新世界 / 游戏页 / 用量面板各可点元素 min-height:40px，灵感按钮 ≥44px', () => {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tapTargets = [
-    ['#btn-random', '随机按钮'],
+    ['#identity-dice', '换一个身份按钮'],
     ['.preset', '预设世界观胶囊'],
-    ['.alloc-row .btn.tiny', '属性 −/+ 按钮'],
+    ['.char-origin-pick', '选出身按钮'],
     ['.undo-btn', '撤回这一步'],
     ['.npc-voice-btn', 'NPC 🔊 按钮'],
     ['.tts-select', '用量面板音色下拉'],

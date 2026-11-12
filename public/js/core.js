@@ -155,7 +155,6 @@ function relTime(ts, now) {
   var toastTimer = null;
   var pendingTimer = null;
   var pendingStart = 0;
-  var alloc = {};
   var undoBusy = false;       // 撤回请求进行中
   var undoArmed = false;      // 撤回按钮是否处于二次确认态
   var undoArmTimer = null;
