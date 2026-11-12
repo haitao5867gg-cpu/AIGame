@@ -1405,6 +1405,26 @@
   function clearPendingTurn(worldId) {
     try { localStorage.removeItem(PENDING_TURN_KEY + worldId); } catch (_) {}
   }
+  // 取回 / 回退用的普通 /turn：同一个 ID 服务器只执行一次，所以遇到网关超时（Cloudflare 隧道
+  // 约 100 秒没响应就回 524）、网关错误时可以放心再问一次，最多 3 次。
+  async function postTurnOnce(worldId, body) {
+    var lastErr = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise(function (r) { setTimeout(r, 2500); });
+      try {
+        return await api('/api/worlds/' + encodeURIComponent(worldId) + '/turn', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        lastErr = err;
+        var gateway = err && (err.status === 502 || err.status === 503 || err.status === 504 || (err.status >= 520 && err.status <= 524));
+        if (!gateway) throw err;
+      }
+    }
+    throw lastErr;
+  }
+
   // 同一句行动（上次没成功、内容没改）重发时沿用上次的 ID。
   function pendingTurnIdFor(worldId, kind, text) {
     var rec = loadPendingTurn(worldId);
@@ -1438,10 +1458,7 @@
     var block = beginStreamNarration();
     var reload = false;
     try {
-      var res = await api('/api/worlds/' + encodeURIComponent(id) + '/turn', {
-        method: 'POST',
-        body: JSON.stringify({ clientTurnId: rec.cid, attachOnly: true }),
-      });
+      var res = await postTurnOnce(id, { clientTurnId: rec.cid, attachOnly: true });
       clearPendingTurn(id);
       reload = !(res && res.state && baseTurn != null && res.state.turn <= baseTurn);
     } catch (err) {
@@ -1654,10 +1671,7 @@
       block = beginStreamNarration();
       setPendingLabel('连接断了一下，正在取回这一回合…');
       try {
-        var fb = await api('/api/worlds/' + encodeURIComponent(worldId) + '/turn', {
-          method: 'POST',
-          body: JSON.stringify({ action: action, clientTurnId: cid }),
-        });
+        var fb = await postTurnOnce(worldId, { action: action, clientTurnId: cid });
         clearPendingTurn(worldId);
         if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
         if (worldId !== currentWorldId) return;
@@ -1827,10 +1841,7 @@
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
       setPendingLabel('连接断了一下，正在取回…');
       try {
-        var fb = await api('/api/worlds/' + encodeURIComponent(worldId) + '/turn', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        });
+        var fb = await postTurnOnce(worldId, body);
         clearPendingTurn(worldId);
         renderResult(fb);
         ok = true;

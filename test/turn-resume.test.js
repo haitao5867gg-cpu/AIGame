@@ -147,7 +147,8 @@ test('前端：行动 / 时光推进带 clientTurnId，断流回退用同一个 
   const game = pub('js/game.js');
   assert.match(game, /function newClientTurnId\(/);
   assert.match(game, /streamTurn\(\{ action: action, clientTurnId: cid \}, block\)/);
-  assert.match(game, /JSON\.stringify\(\{ action: action, clientTurnId: cid \}\)/);
+  assert.match(game, /postTurnOnce\(worldId, \{ action: action, clientTurnId: cid \}\)/);
+  assert.match(game, /err\.status >= 520 && err\.status <= 524/, '网关超时（524）自动再取一次');
   assert.match(game, /timeSkip: \{ span: span, plan: plan \}, clientTurnId: cid/);
   assert.match(game, /attachOnly: true/);
   assert.match(game, /resumePendingTurn\(id\)/, 'showGame 进世界时取回');
