@@ -16,7 +16,10 @@ const DEFAULTS = Object.freeze({
   LLM_MODEL_WORLD: DEFAULT_LLM_MODEL,
   LLM_MOCK: '0',
   // 叙事写法：v1（旧写法）/ v2（小说化写法，默认）。默认 v2，按题材追加文风段。
-  NARRATIVE_STYLE: 'v2',
+  NARRATIVE_STYLE: 'v2',   // v1 / v2：单次回合调用；v3：隐藏大纲 + 写正文与记账分两步
+  STORY_HISTORY_BUDGET: '30000', // v3：本世前文按原文给模型的字符预算，超出的更早部分用章摘要
+  STORY_MODEL: '',          // v3 写正文的模型；空 = LLM_MODEL_WORLD
+  STORY_LEDGER_MODEL: '',   // v3 记账（抽数值 / 物品 / 线索）的模型；空 = LLM_MODEL
   LLM_TIMEOUT_MS: '90000',
   LLM_DAILY_TOKEN_LIMIT: '2000000',
   // 每位玩家（含主人）各自的每日 token 上限；0 表示不限。与全局上限相互独立。
@@ -77,6 +80,7 @@ const NUMERIC_KEYS = Object.freeze([
   'IMAGE_MAX_PER_WORLD', 'IMAGE_CONCURRENCY', 'IMAGE_SCENE_DAILY_PER_PLAYER', 'IMAGE_LOCAL_MIN_FREE_MB',
   'CLOUDFLARE_DAILY_NEURONS', 'CLOUDFLARE_RESERVE_FROM',
   'TTS_PLAYER_DAILY_CHARS', 'TTS_CACHE_MAX_MB', 'TTS_MONTHLY_CHARS', 'TTS_MONTHLY_STOP_AT',
+  'STORY_HISTORY_BUDGET',
 ]);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -137,6 +141,10 @@ function normalizeProviders(value) {
 function normalize(raw) {
   const cfg = Object.assign({}, raw);
   cfg.LLM_MOCK = isMock(cfg.LLM_MOCK);
+  cfg.NARRATIVE_STYLE = ['v1', 'v2', 'v3'].includes(String(cfg.NARRATIVE_STYLE || '').trim().toLowerCase())
+    ? String(cfg.NARRATIVE_STYLE).trim().toLowerCase() : DEFAULTS.NARRATIVE_STYLE;
+  if (!cfg.STORY_MODEL) cfg.STORY_MODEL = cfg.LLM_MODEL_WORLD || cfg.LLM_MODEL;
+  if (!cfg.STORY_LEDGER_MODEL) cfg.STORY_LEDGER_MODEL = cfg.LLM_MODEL;
   for (const key of NUMERIC_KEYS) {
     cfg[key] = toNumber(cfg[key], DEFAULTS[key]);
   }

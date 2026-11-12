@@ -15,6 +15,8 @@ const prefs = require('./prefs.js');
 const context = require('./context.js');
 const genres = require('./genres.js');
 const profiles = require('./profiles.js');
+const outlineMod = require('./outline.js');
+const historyMod = require('./history.js');
 
 // 正在后台总结画像的玩家（key = dataDir + playerId，避免多个 createGame 实例互相误判）。
 // 后台总结在 takeTurn 里「不 await」发起，靠 finally 从这里移除，防止同一玩家重复触发。
@@ -583,9 +585,44 @@ function createGame(cfg, dataDir) {
         );
         if (seedPersona) state.persona = seedPersona;
       } catch (_) { /* 画像读取失败不影响建世界 */ }
+      // 叙事 v3：建世界时顺带生成作者自用的隐藏大纲；失败不阻断建世界，第一回合再补。
+      if (cfg.NARRATIVE_STYLE === 'v3') {
+        await ensureOutlineOnState(state, [], usages);
+      }
       store.saveWorld(dataDir, state);
       return publicWorld(state);
     });
+  }
+
+  // 叙事 v3：确保 state 上有合法的隐藏大纲（调用方须已持有该世界的锁，这里不再加锁）。
+  // 新世界：按设定规划；老世界：带上已发生的故事，从眼下接着规划，第 1 章就是正在进行的这一章。
+  // 成功写回 state.outline 和 state.chapter；任何失败都不抛错，返回 false，下一回合再试。
+  async function ensureOutlineOnState(state, events, usages) {
+    try {
+      const existing = outlineMod.normalizeOutline(state.outline);
+      if (existing) {
+        if (!state.chapter || !Number.isSafeInteger(state.chapter.index)) {
+          state.chapter = outlineMod.freshChapter((state.turn || 0) + 1);
+        }
+        return true;
+      }
+      const isNew = !(state.turn > 0);
+      const history = isNew ? null : historyMod.buildStoryHistory(events, state, {
+        budget: cfg.STORY_HISTORY_BUDGET,
+      });
+      const op = await callParsed(
+        'outline', cfg.STORY_MODEL || worldModel,
+        prompts.buildOutlineMessages(state, { history }),
+        { title: state.bible && state.bible.title }, usages || [],
+      );
+      const outline = outlineMod.normalizeOutline(op.parsed);
+      if (!outline) return false;
+      state.outline = outline;
+      state.chapter = outlineMod.freshChapter((state.turn || 0) + 1);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ---- 读 ----

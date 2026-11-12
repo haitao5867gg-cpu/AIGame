@@ -81,7 +81,8 @@ function createWorld(spec, opts) {
     nextTwistTurn: TWIST_GAP_MIN + Math.floor(unit(rng) * TWIST_GAP_SPAN), // 到点触发时间型转折
     oversteps: 0,            // 玩家累计越界次数（用于越界后果升级阶梯）
     location: (bible.start && typeof bible.start.place === 'string') ? bible.start.place : '',
-    clock: { day: 1, period: PERIODS[0] },
+    // 开场时段跟着开场情境走（bible.start.period）；缺失 / 非法时仍从清晨开始。
+    clock: { day: 1, period: (bible.start && PERIODS.includes(bible.start.period)) ? bible.start.period : PERIODS[0] },
     pastLives: [],           // 前世墓志铭 [{life,name,epitaph,turns,cause}]
     chronicle: [],
     recent: [],

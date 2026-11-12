@@ -25,6 +25,7 @@ const PURPOSES = Object.freeze({
   SUGGEST: 'suggest',   // 玩家点「灵感」生成下一步建议
   STATS: 'stats',       // 老世界补设计专属状态（GET /stats 时额外调用）
   PROFILE: 'profile',   // 后台总结玩家画像（summary / traits / wants）
+  OUTLINE: 'outline',   // 叙事 v3：作者自用的隐藏大纲（卷节拍表 + 章卡）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -249,6 +250,7 @@ function mockWorld(m) {
       ],
       start: {
         place: '灰烬港',
+        period: '清晨',
         situation: '你在一条搁浅的船上醒来，手里攥着一封无字信。',
         items: ['一封无字信', '旧铜灯', '半张海图'],
         items_info: {
@@ -543,6 +545,25 @@ function mockItemsInfo(m) {
 // 老世界补设计专属状态：按题材给 2 个合法数值槽（名字随题材变化），
 // 让 LLM_MOCK 下 GET /stats 走真实的「模型设计 → normalizeStatsSpec 消毒 → 保存」链路。
 // 后台总结玩家画像：返回确定性的 summary / traits / wants，供 LLM_MOCK 走真实链路。
+// 叙事 v3 隐藏大纲：一份合法的卷节拍表 + 3 张章卡（确定性假数据）。
+function mockOutline() {
+  return {
+    premise: '无名者在灰烬港查清无字信的去处，也查清自己是谁',
+    core_truth: '无字信是主角自己寄给十年后的自己的，写信的人就是失去记忆前的主角',
+    hero_arc: '从只想自保的局外人，变成肯为港里人担责的人',
+    volume: {
+      title: '雾港之信', promise: '无字信背后藏着一段被抹去的约定', catalyst: '守夜人认出了信封上的火漆',
+      crises: ['钟声被人偷改', '拾骨少女被缄默庭带走', '灰烬港封港'],
+      midpoint: '信是主角自己写的', low: '主角被当成偷钟人通缉', payoff: '在钟楼里读出信的内容', hook: '信里提到的岛真的存在',
+    },
+    chapters: [
+      { title: '搁浅', goal: '在港里站稳脚，弄清信从哪来', start: '在搁浅的船上醒来', beats: ['守夜人盘问来历', '枯井集市有人认得火漆'], end: '有人愿意替主角作保', question: '火漆上的纹样属于谁', avoid: ['不要揭开写信人的身份'] },
+      { title: '乱钟', goal: '查出谁在偷改钟声', start: '钟声在半夜多敲了一下', beats: ['跟踪可疑的敲钟人', '缄默庭出面阻拦'], end: '找到被调过的更漏', question: '偷改钟声是为了掩盖什么', avoid: [] },
+      { title: '封港', goal: '在封港前把信送出去', start: '港口贴出封港告示', beats: ['拾骨少女失踪', '铸剑师要一把有名之剑作交换'], end: '主角决定留下', question: '留下的代价是什么', avoid: [] },
+    ],
+  };
+}
+
 function mockProfile() {
   return {
     summary: '你行事谨慎，习惯先观察再动手，愿意与人结交，也偏爱带感情线的剧情。',
@@ -590,6 +611,7 @@ function mockFor(purpose, m) {
     case PURPOSES.SUGGEST: return mockSuggest(m);
     case PURPOSES.STATS: return mockStats(m);
     case PURPOSES.PROFILE: return mockProfile();
+    case PURPOSES.OUTLINE: return mockOutline();
     default: return mockTurn(m);
   }
 }

@@ -108,6 +108,7 @@ const SCENE_COHERENCE_REMINDER = [
   '交代可见位置、形态或可知作用，再用「它下面 / 它旁边」承载人物动作；' +
   '只把地标塞进「X 旁 / X 下」的复合短语不算完成首次交代。身份与动机可留住悬念，基本空间关系不能缺。',
   '- 续写以玩家为准（本回合的新行动）；普通名词不必逐个解释、不整段复述设定、不强行转场或推进线索 / 新事件。',
+  '- 「刚才」「那条」「你记得」「你没听漏」「之前说的」这类回指，只能指向前文里真正写过的内容；设定和事实账本里正文还没写过的东西，第一次出现时要交代主角是怎么得知的。',
 ].join('\n');
 
 // 第一幕专属：与「当前地点的环境背景（玩家尚未读过）」片段配套的首幕落位指令。
@@ -350,7 +351,7 @@ const WORLD_OUTPUT_FORMAT = [
   '{"genre":"xuanhuan|urban|game|horror|cozy|general",',
   ' "bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
   ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice}],',
-  ' "start":{"place","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
+  ' "start":{"place","period","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},',
  ' "stats":[{name,kind:"gauge",icon,desc,max,start,drift,warn},{name,kind:"rank",icon,desc,ranks,start}],"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
@@ -374,6 +375,7 @@ const WORLD_OUTPUT_FORMAT = [
   'start.items 给 2~3 个符合世界观的起始物品（角色开局随身携带，名称 ≤12 字，如「一封无字信」「旧铜灯」）；',
   'start.items_info 给 start.items 里每个物品 1~2 句介绍和类型，键与物品名一致：',
   '  desc ≤60 字（是什么、有什么用或特别之处、来历），type ≤6 字（法器/丹药/兵器/杂物/信物/文书…，可选）；',
+  'start.period 是开场所处的时段，只能是 清晨 / 午后 / 黄昏 / 深夜 之一，必须和 start.situation 写的天色一致（雨夜、深夜来电就写「深夜」）；',
   'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
@@ -538,7 +540,8 @@ function buildTurnMessages(state, plan, action, opts) {
 
   const sys = [];
   sys.push(CONSTITUTION);
-  sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible)));
+  sys.push(section('锁定的世界设定（只读，不得改写）', worldBibleText(state.bible) +
+    '\n这些规则真实成立，但正文没写过之前读者并不知道；第一次出现时要正面交代主角是怎么得知的。'));
   sys.push(section('叙事与状态规则', isV2 ? V2_TURN_RULES : TURN_RULES));
   // 题材文风：v2 / v2-3p 在「写作手法」段之后追加选中文风段；v1 与 general 不追加。
   if (isV2) {
@@ -1088,6 +1091,85 @@ function buildSuggestMessages(state, opts) {
   ];
 }
 
+
+// ---- 叙事 v3：隐藏大纲（作者自用，绝不给玩家看） ----
+// 互动连载：玩家扮演主角、每回合决定主角做什么，所以大纲只写每章的戏剧目标和要揭开的东西，
+// 不写死主角的行动；章卡只写读者能感知的信号，不写作者的内部真相。措辞为本项目自写。
+const OUTLINE_RULES = [
+  '你在为一部互动连载小说做作者自用的隐藏大纲。读者扮演主角，每回合决定主角做什么，作者接着写正文；这部书写完会整理成小说给别人读。',
+  '所以大纲要写清每一章的戏剧目标、阻力和要揭开的东西，但不要写死主角的具体行动——读者走到哪，作者就从那里接着写。',
+  '先定一卷的节拍：开卷让读者期待什么（promise）→ 一件不可逆的起因事件（catalyst）→ 三次一次比一次狠的危机（crises）→ 中段反转（midpoint）→ 卷末最低谷（low）→ 卷末兑现（payoff）和留给下一卷的钩子（hook）。',
+  '再给前 3 章各一张章卡：title（≤10 字）、goal（本章戏剧目标）、start（起点情形）、beats（2~4 个可能的推进节点）、end（可能的终点）、question（章末留给读者的问题）、avoid（本章不要做的事，≤3 条）。一章大约写 4~6 回合。',
+  '章卡只写读者能感知到的信号（如「老者举动反常」），不写作者知道的内部真相（如「老者是隐藏高手」）；真相只写进 core_truth。节点是建议不是必须。',
+  '主线冲突要清楚，悬念要能一步步回收，主角要有变化；第一章就要有具体的事情发生，不要用整章铺垫设定。',
+  '只输出 JSON：{"premise":"一句话主线","core_truth":"贯穿全书的核心谜底","hero_arc":"主角的成长线","volume":{"title","promise","catalyst","crises":["…","…","…"],"midpoint","low","payoff","hook"},"chapters":[{"title","goal","start","beats":["…"],"end","question","avoid":["…"]}]}',
+].join('\n');
+
+function buildOutlineMessages(state, opts) {
+  const s = state || {};
+  const b = s.bible || {};
+  const c = s.character || {};
+  const pro = b.prologue || {};
+  const npcLines = (Array.isArray(b.npcs) ? b.npcs : [])
+    .filter((n) => n && n.name)
+    .map((n) => `${n.name}（${n.role || ''}）：${n.desc || ''}${n.want ? `；想要：${n.want}` : ''}${n.voice ? `；说话：${n.voice}` : ''}`)
+    .join('\n');
+  const history = opts && opts.history && typeof opts.history.text === 'string' ? opts.history.text : '';
+  const user = [
+    section('设定（作者笔记）', [
+      `书名：${b.title || ''}；基调：${b.tone || ''}；题材：${s.genre || ''}`,
+      `世界规则：${(b.rules || []).join('；')}`,
+      `地点：${(b.places || []).map((p) => `${p.name}（${p.desc || ''}）`).join('；')}`,
+      `势力：${(b.factions || []).map((f) => `${f.name}（${f.desc || ''}；${f.stance || ''}）`).join('；')}`,
+    ].join('\n')),
+    section('人物（含隐秘想法，作者笔记）', npcLines || '（暂无）'),
+    section('主角', `${c.name || '无名旅人'}（${c.appearance || ''}）。${pro.me || ''} ${pro.goal || ''}`.trim()),
+    section('开场', (b.start && b.start.situation) || ''),
+  ];
+  if (history) {
+    user.push(section('已经发生的故事（读者都读过）', history));
+    user.push('这是一个已经开始的故事：大纲要从眼下接着规划，第 1 张章卡就是正在进行的这一章，不要推翻已经发生的事。');
+  }
+  return [
+    { role: 'system', content: OUTLINE_RULES },
+    { role: 'user', content: user.join('\n\n') },
+  ];
+}
+
+// ---- 叙事 v3：读者读过 / 没读过的事实 ----
+// 保守判定：事实里被「」『』“”包住的片段原样出现在可见正文里就算读过；否则看汉字/数字的二字组
+// （bigram）有多少出现在可见正文里，至少四成才算读过（用真实存档校准）。抽不出 3 个二字组时要求整句原样出现。
+function factBigrams(text) {
+  const chars = String(text == null ? '' : text).replace(/[^\u4e00-\u9fff0-9０-９A-Za-z]/g, '');
+  const grams = new Set();
+  for (let i = 0; i + 2 <= chars.length; i++) grams.add(chars.slice(i, i + 2));
+  return { chars, grams: Array.from(grams) };
+}
+
+function factSeen(text, visibleText) {
+  const v = String(visibleText == null ? '' : visibleText);
+  const t = String(text == null ? '' : text).trim();
+  if (!v || !t) return false;
+  const quoted = (t.match(/[「『“]([^」』”]{2,})[」』”]/g) || []).map((q) => q.slice(1, -1));
+  if (quoted.some((q) => v.includes(q))) return true;
+  const { chars, grams } = factBigrams(t);
+  if (grams.length < 3) return chars.length > 0 && v.includes(chars);
+  let hits = 0;
+  for (const g of grams) if (v.includes(g)) hits++;
+  return hits / grams.length >= 0.4;
+}
+
+function splitFacts(facts, visibleText) {
+  const seen = [];
+  const unseen = [];
+  for (const f of Array.isArray(facts) ? facts : []) {
+    const t = f && typeof f === 'object' ? f.text : f;
+    if (typeof t !== 'string' || !t.trim()) continue;
+    (factSeen(t, visibleText) ? seen : unseen).push(t.trim());
+  }
+  return { seen, unseen };
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -1105,6 +1187,10 @@ function parseJson(text) {
 
 module.exports = {
   buildTurnMessages,
+  buildOutlineMessages,
+  OUTLINE_RULES,
+  factSeen,
+  splitFacts,
   buildPrologueMessages,
   buildStatsMessages,
   statsSectionText,
