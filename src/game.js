@@ -553,17 +553,22 @@ function createGame(cfg, dataDir) {
     const data = input || {};
     const seed = typeof data.seed === 'string' ? data.seed.trim() : '';
     if (!seed) throw httpError(400, '请用一句话描述世界观（seed 不能为空）');
-    const name = (typeof data.name === 'string' && data.name.trim()) || '无名旅人';
-    const appearance = (typeof data.appearance === 'string' && data.appearance.trim()) || '一袭布衣';
+    // 2026-11-12 起建世界不再手动分点：名字、形象可空（AI 起名），另收一句「你是谁」，AI 据此给 3 个出身。
+    const givenName = (typeof data.name === 'string' && data.name.trim()) ? data.name.trim().slice(0, 12) : '';
+    const givenAppearance = (typeof data.appearance === 'string' && data.appearance.trim()) ? data.appearance.trim().slice(0, 40) : '';
+    const identity = (typeof data.identity === 'string' && data.identity.trim()) ? data.identity.trim().slice(0, 80) : '';
     const id = newWorldId();
 
     return store.withWorldLock(id, async () => {
       const usages = [];
       const wp = await callParsed(
         'world', worldModel,
-        prompts.buildWorldMessages(seed, { name, appearance }),
-        { seed, name, appearance }, usages,
+        prompts.buildWorldMessages(seed, { name: givenName, appearance: givenAppearance, identity }),
+        { seed, name: givenName, appearance: givenAppearance, identity }, usages,
       );
+      const hero = wp.parsed.hero && typeof wp.parsed.hero === 'object' ? wp.parsed.hero : {};
+      const name = givenName || (typeof hero.name === 'string' && hero.name.trim() ? hero.name.trim().slice(0, 12) : '') || '无名旅人';
+      const appearance = givenAppearance || (typeof hero.appearance === 'string' && hero.appearance.trim() ? hero.appearance.trim().slice(0, 40) : '') || '一袭布衣';
       const bible = wp.parsed.bible;
       const apex = wp.parsed.apex;
       if (!bible || typeof bible !== 'object' || !apex || typeof apex !== 'object') {
@@ -575,7 +580,7 @@ function createGame(cfg, dataDir) {
       let state;
       try {
         state = engine.createWorld(
-          { id, seed, name, appearance, bible, apex, alloc: data.alloc, genre: rawGenre },
+          { id, seed, name, appearance, bible, apex, alloc: data.alloc, genre: rawGenre, origins: wp.parsed.origins },
           { rng: Math.random, now: Date.now() },
         );
       } catch (err) {
@@ -1486,6 +1491,20 @@ function createGame(cfg, dataDir) {
     }
   }
 
+  // 选出身：只在第 0 回合、还没选过时允许；属性按出身重新分配，多带一件起始物品。
+  async function chooseOrigin(worldId, input) {
+    store.assertWorldId(worldId);
+    return store.withWorldLock(worldId, async () => {
+      const state = loadState(worldId);
+      if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+      const index = input && Number.isSafeInteger(input.index) ? input.index : -1;
+      const r = engine.applyOrigin(state, index);
+      if (r.error) throw httpError(409, r.error);
+      store.saveWorld(dataDir, r.state);
+      return withUndoFlag(publicWorld(r.state), r.state, worldId);
+    });
+  }
+
   // ---- 撤回上一步 ----
   // 在该世界互斥锁内执行：有 .prev 快照才允许；死亡回合 / 重生之后返回 409 并说明。
   // 恢复 state.json、删除 .prev（只能撤回一步），并向 events.jsonl 追加
@@ -1586,7 +1605,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, chooseOrigin, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
     exportWorld, undoTurn, listScenes, getNpcDetail, suggestActions,
   };
 }

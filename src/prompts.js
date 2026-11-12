@@ -354,7 +354,9 @@ const WORLD_OUTPUT_FORMAT = [
   ' "start":{"place","period","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},',
  ' "stats":[{name,kind:"gauge",icon,desc,max,start,drift,warn},{name,kind:"rank",icon,desc,ranks,start}],"eventThemes":[str x6]},',
-  ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}}}',
+  ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}},',
+  ' "hero":{"name":"主角名","appearance":"一句外貌"},',
+  ' "origins":[{"title":"≤8 字","blurb":"≤40 字","style":"冒险|审慎|共情|权谋|坚韧|秩序","attrs":{"体魄":2,"心智":1,"魅力":1,"气运":0,"声望":1,"资源":1},"item":{"name":"≤12 字","desc":"≤60 字","type":"≤6 字"}}]}',
   'genre 按玩家那句话世界观和 bible 的题材判断，只取 xuanhuan / urban / game / horror / cozy / general 之一；',
   '要求：名词具体、有张力、起点明确；eventThemes 给 6 个符合世界观的大事类型；',
   ...STATS_DESIGN_RULES,
@@ -379,6 +381,14 @@ const WORLD_OUTPUT_FORMAT = [
   'start.facts 给 2~3 条关键时间/规则事实（每条 ≤30 字，如「满月在三日后」「城门每日戌时落锁」「报出真名会被登记」），',
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
+  'hero：玩家给了主角姓名就原样用；没给就起一个符合世界观的名字。appearance 一句话外貌（玩家给了形象就照着写）。',
+  'origins 给 3 个主角出身，玩家开局时从中选一个：',
+  '  · 三个出身方向明显不同（如一个能打、一个有门路、一个会钻营），都要能自然落在同一个开场情境（start.situation）里；',
+  '  · title ≤8 字（如「镖局少主」「落魄账房」）；blurb ≤40 字，写清这个出身的处境、长处和随之而来的麻烦；',
+  '  · attrs 是这个出身在六项基础属性上的额外加点，合计正好 6 点、单项 0~3；style 是这个出身最接近的行事风格，只能取 冒险 / 审慎 / 共情 / 权谋 / 坚韧 / 秩序 之一；',
+  '  · item 是这个出身多带的一件起始物品（名称 ≤12 字，desc ≤60 字，type ≤6 字），不要和 start.items 重复；',
+  '  · 如果玩家写了「你是谁」，第一个出身就照玩家写的来（title 概括玩家写的身份），另外两个给不同方向的选择；',
+  '  · 因为出身由玩家选，prologue.me 只写三个出身共通的部分（姓名、眼下的处境），不要写死具体出身。',
 ].join('\n');
 
 function worldBibleText(bible) {
@@ -407,6 +417,7 @@ function characterText(state) {
   const attitude = Object.entries(state.npcAttitude || {}).map(([k, v]) => `${k}:${v}`).join(' ');
   return [
     `姓名：${c.name || '（无名）'}；形象：${c.appearance || ''}`,
+    ...(c.origin && c.origin.title ? [`出身：${c.origin.title}——${c.origin.blurb || ''}`] : []),
     `属性：${attrs}`,
     `物品：${(c.items || []).join('、') || '无'}`,
     `NPC 态度：${attitude || '无记录'}`,
@@ -876,7 +887,8 @@ function buildWorldMessages(seed, input) {
   ].join('\n\n');
   const user = [
     `玩家的一句话世界观：${String(seed == null ? '' : seed)}`,
-    `主角姓名：${i.name || '（由玩家稍后决定）'}；形象：${i.appearance || ''}`,
+    `主角姓名：${i.name || '（玩家没写，请在 hero.name 里起一个）'}；形象：${i.appearance || '（玩家没写）'}`,
+    `你是谁（玩家写的身份，可能为空）：${i.identity || '（没写，三个出身自由设计）'}`,
   ].join('\n');
   return [
     { role: 'system', content: system },

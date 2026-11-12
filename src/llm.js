@@ -239,12 +239,25 @@ async function readSSE(body, onData) {
 
 // ---- 确定性假数据 ----
 
+function mockOrigins(m) {
+  const identity = m && typeof m.identity === 'string' && m.identity.trim() ? m.identity.trim() : '';
+  const list = [
+    { title: '守夜会学徒', blurb: '跟着守夜人学看钟，消息灵通，但规矩多', style: '秩序', attrs: { 心智: 2, 声望: 2, 体魄: 1, 魅力: 1 }, item: { name: '更漏铜牌', desc: '守夜会学徒的腰牌，夜里能过关卡。', type: '信物' } },
+    { title: '拾骨者', blurb: '在废墟里淘旧物，身手灵活，欠着黑市的钱', style: '冒险', attrs: { 体魄: 3, 气运: 2, 资源: 1 }, item: { name: '铁钩', desc: '翻废墟用的铁钩，也能防身。', type: '工具' } },
+    { title: '落魄账房', blurb: '会算账识人心，手里没钱，认得不少人', style: '权谋', attrs: { 心智: 3, 魅力: 2, 资源: 1 }, item: { name: '旧账本', desc: '记着港里一半人的欠账。', type: '文书' } },
+  ];
+  if (identity) list.unshift({ title: identity.slice(0, 8), blurb: '按你写的：' + identity.slice(0, 30), style: '坚韧', custom: true, attrs: { 体魄: 2, 心智: 2, 魅力: 2 }, item: { name: '随身旧物', desc: '一件跟了你很久的旧物。', type: '杂物' } });
+  return list.slice(0, 3);
+}
+
 function mockWorld(m) {
   const seed = m && m.seed ? String(m.seed) : '一句世界观';
   const n = hash(seed) % 7;
   const title = clip(seed, 10) + '·' + ['纪元', '残卷', '秘史', '长夜', '边境', '旧约', '回响'][n];
   return {
     genre: 'xuanhuan',
+    hero: { name: (m && m.name) || '雾生', appearance: (m && m.appearance) || '一身旧袍' },
+    origins: mockOrigins(m),
     bible: {
       title,
       tone: '苍茫而诡谲，暗流涌动',

@@ -662,6 +662,22 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, { genre });
   }
 
+  // 选出身：POST /api/worlds/:id/origin { index }（只在第 0 回合、还没选过时允许）。
+  const originMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/origin$/);
+  if (originMatch) {
+    if (method !== 'POST') return sendError(res, 405, '该路径不支持此 HTTP 方法');
+    let id;
+    try {
+      id = decodeURIComponent(originMatch[1]);
+    } catch (_) {
+      return sendError(res, 400, '非法的世界 ID');
+    }
+    if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
+    if (!requireOwner(res, dataDir, id, player)) return;
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, await g.chooseOrigin(id, body || {}));
+  }
+
   // 灵感：POST /api/worlds/:id/suggest {avoid} 据当前局面给下一步行动建议（只读，不改存档）。
   const suggestMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/suggest$/);
   if (suggestMatch) {

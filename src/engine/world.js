@@ -4,6 +4,7 @@ const { ATTRS, ATTR_INIT, ATTR_EXTRA_TOTAL, ATTR_EXTRA_MAX, TWIST_GAP_MIN, TWIST
 const { normalizeGenre } = require('../genres.js');
 const { unit, normalizeEventThemes, cloneState, freshPersona, startingItems, startingFacts, initialNpcAttitude, normalizePrologue, cleanItemInfo } = require('./util.js');
 const { normalizeStatsSpec } = require('./stats.js');
+const { normalizeOrigins } = require('./origins.js');
 const npcs = require('../npcs.js');
 
 // ---- 建世界 / 分配属性点 ----
@@ -94,6 +95,8 @@ function createWorld(spec, opts) {
     // 世界专属状态：bible.stats 是原始设计（原样存进 bible），这里按归一后的 genre
     // 消毒成运行数据；缺失 / 非法时用题材兜底模板。
     stats: normalizeStatsSpec(bible.stats, genre),
+    // 出身选项（玩家在序章卡上选一个；选之前属性按默认平均分配）。
+    origins: normalizeOrigins(s.origins),
   };
   // 新世界：初始化 NPC 长期档案（按 bible.npcs 建立完整 original 基线，标记已迁移）。
   return npcs.initializeNpcMemory(world);

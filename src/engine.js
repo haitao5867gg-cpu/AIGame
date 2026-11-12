@@ -12,7 +12,12 @@ const stats = require('./engine/stats.js');
 const npcs = require('./npcs.js');
 const eventLog = require('./event-log.js');
 
+const origins = require('./engine/origins.js');
+
 module.exports = {
+  normalizeAlloc: origins.normalizeAlloc,
+  normalizeOrigins: origins.normalizeOrigins,
+  applyOrigin: origins.applyOrigin,
   ATTRS: constants.ATTRS,
   PERSONA_DIMS: constants.PERSONA_DIMS,
   ATTR_MIN: constants.ATTR_MIN,
