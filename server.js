@@ -15,6 +15,7 @@ const context = require('./src/context.js');
 const store = require('./src/store.js');
 const llmMod = require('./src/llm.js');
 const prefs = require('./src/prefs.js');
+const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -412,6 +413,17 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     const out = prefs.setPrefs(dataDir, player.id, body);
     if (body && typeof body.adultAllowed === 'boolean') out.adultAllowed = prefs.getAdultAllowed(dataDir);
     return sendJson(res, 200, { prefs: out });
+  }
+
+  // ---- 玩家画像：需登录（与 /api/prefs 同一门禁），只能读写自己的（用 player.id 隔离）----
+  if (pathname === '/api/profile' && method === 'GET') {
+    return sendJson(res, 200, {
+      profile: profiles.publicProfile(profiles.getProfile(dataDir, player.id)),
+    });
+  }
+  if (pathname === '/api/profile' && method === 'DELETE') {
+    const def = profiles.resetProfile(dataDir, player.id);
+    return sendJson(res, 200, { profile: profiles.publicProfile(def) });
   }
 
   // ---- 朗读（Azure 语音服务）：需登录，错误按 status 返回 JSON ----

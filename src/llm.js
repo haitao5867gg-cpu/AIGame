@@ -24,6 +24,7 @@ const PURPOSES = Object.freeze({
   GENRE: 'genre',       // 老世界补判题材（ensureGenre 的短调用）
   SUGGEST: 'suggest',   // 玩家点「灵感」生成下一步建议
   STATS: 'stats',       // 老世界补设计专属状态（GET /stats 时额外调用）
+  PROFILE: 'profile',   // 后台总结玩家画像（summary / traits / wants）
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -541,6 +542,15 @@ function mockItemsInfo(m) {
 
 // 老世界补设计专属状态：按题材给 2 个合法数值槽（名字随题材变化），
 // 让 LLM_MOCK 下 GET /stats 走真实的「模型设计 → normalizeStatsSpec 消毒 → 保存」链路。
+// 后台总结玩家画像：返回确定性的 summary / traits / wants，供 LLM_MOCK 走真实链路。
+function mockProfile() {
+  return {
+    summary: '你行事谨慎，习惯先观察再动手，愿意与人结交，也偏爱带感情线的剧情。',
+    traits: ['先观察后动手', '爱结交人', '喜欢感情线'],
+    wants: '循序渐进、有人情味、留有余地的剧情',
+  };
+}
+
 function mockStats(m) {
   const genre = (m && m.genre) || 'general';
   const byGenre = {
@@ -579,6 +589,7 @@ function mockFor(purpose, m) {
     case PURPOSES.GENRE: return mockGenre(m);
     case PURPOSES.SUGGEST: return mockSuggest(m);
     case PURPOSES.STATS: return mockStats(m);
+    case PURPOSES.PROFILE: return mockProfile();
     default: return mockTurn(m);
   }
 }

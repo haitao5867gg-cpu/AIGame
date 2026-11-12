@@ -2,6 +2,9 @@
 
 const env = require('./env.js');
 const { GENRE_STYLES, normalizeGenre } = require('./genres.js');
+// buildProfileMessages 要用 publicProfile 把六维 ema 归一成 0..100 的倾向数字。
+// profiles.js 只依赖 store / engine 常量，不与本模块形成循环依赖。
+const profiles = require('./profiles.js');
 // npcs.js 是纯数据层（只依赖 crypto + event-log），不 require 任何 engine/* 模块，
 // 因此这里 require 它取有界的 npcPromptContext 不会与提示词 / 引擎产生循环依赖。
 // 命名成 npcModule：buildTurnMessages / worldBibleText 内部另有局部变量 npcs（bible 的 NPC 数组），
@@ -984,11 +987,65 @@ function buildRebirthOpeningMessages(state, info) {
 
 // 玩家点「灵感」：只据玩家此刻已看到的局面给下一步行动建议，绝不掺入 NPC 私密档案 /
 // 规则 / apex / 事件计划等内部信息。纯函数，单独导出便于单测。
+// 后台总结玩家画像：只根据玩家亲手写的行动归纳，system 固定、user 给既有总结 / 六维 / 最近行动。
+function buildProfileMessages(profile) {
+  const p = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {};
+  const view = profiles.publicProfile(p);
+  const system = [
+    '你在为一位文字冒险游戏的玩家画像。根据他最近亲手写下的行动，总结他是什么样的玩家。只输出 JSON：',
+    '{"summary":"≤120 字，用第二人称『你』描述行事风格、偏好和习惯",',
+    '"traits":["≤6 个玩法标签，每个 ≤8 字，如『先观察后动手』『爱结交人』『喜欢感情线』"],',
+    '"wants":"≤60 字，他通常想要什么样的剧情"}。',
+    '只根据给出的行动归纳，不要编造；不要写露骨内容。',
+  ].join('');
+  const prevSummary = typeof p.summary === 'string' && p.summary.trim() ? p.summary : '无';
+  const prevTraits = Array.isArray(p.traits) && p.traits.length ? p.traits.join('、') : '无';
+  const dims = Object.keys(view.dims)
+    .map((d) => `${d}${view.dims[d]}`)
+    .join('、');
+  const actions = (Array.isArray(p.recentActions) ? p.recentActions : [])
+    .slice(-30)
+    .map((a) => {
+      const genre = a && typeof a.genre === 'string' ? a.genre : '';
+      const title = a && typeof a.title === 'string' ? a.title : '';
+      const text = a && typeof a.text === 'string' ? a.text : '';
+      return `[${genre}·${title}] ${text}`;
+    })
+    .join('\n');
+  const user = [
+    section('之前的总结和标签', `总结：${prevSummary}\n标签：${prevTraits}`),
+    section('六维倾向', dims),
+    section('最近亲手写下的行动', actions || '无'),
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
+// 给「这位玩家的习惯」那段用的文字：总结 + 标签 + 六维里最高的两项。
+function profileHabitsText(profile) {
+  const parts = [];
+  if (typeof profile.summary === 'string' && profile.summary.trim()) parts.push(profile.summary);
+  if (Array.isArray(profile.traits) && profile.traits.length) parts.push(profile.traits.join('、'));
+  const dims = profile.dims && typeof profile.dims === 'object' ? profile.dims : {};
+  const top2 = Object.keys(dims)
+    .map((k) => [k, Number(dims[k]) || 0])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([k, v]) => `${k}${v}`);
+  if (top2.length) parts.push(`倾向最高：${top2.join('、')}`);
+  return parts.join('\n');
+}
+
 function buildSuggestMessages(state, opts) {
   const s = state || {};
   const b = s.bible || {};
   const avoid = Array.isArray(opts && opts.avoid) ? opts.avoid : [];
-  const system = [
+  const profile = opts && opts.profile;
+  // 只有画像 ready 才加内容；否则 system / user 与不带画像时逐字一致。
+  const useProfile = !!(profile && profile.ready);
+  const systemLines = [
     '你是这个故事的旁观参谋。根据下面玩家此刻看到的局面，给主角 3 条下一步可以做的具体行动建议。要求：',
     '· 每条是一句以主角视角写的行动（不要以「你」或「我」开头，直接写动作，例如「顺着声音迎上去，看看巷里追过来的是什么人」），12~36 个汉字；',
     '· 三条方向明显不同：一条大胆冒险、一条谨慎稳妥、一条借人/用计（拉拢、交易、设局）；',
@@ -997,7 +1054,15 @@ function buildSuggestMessages(state, opts) {
     '· 不要写露骨的性内容，不要写选择题或解释；',
     '· 不要和【已经给过的建议】重复或换个说法重复；',
     '· 只输出一个 JSON 对象：{"suggestions":["…","…","…"]}。',
-  ].join('\n');
+  ];
+  if (useProfile) {
+    systemLines.splice(
+      systemLines.length - 1,
+      0,
+      '· 第一条建议写这位玩家最可能想做的事（贴合他的习惯和刚发生的事），另外两条给不同方向的选择',
+    );
+  }
+  const system = systemLines.join('\n');
   const recent = Array.isArray(s.recent) ? s.recent.slice(-2) : [];
   let happened;
   if (recent.length) {
@@ -1008,13 +1073,15 @@ function buildSuggestMessages(state, opts) {
   } else {
     happened = (b.start && b.start.situation) || '';
   }
-  const user = [
+  const userSections = [
     section('世界', `标题：${b.title || ''}\n基调：${b.tone || ''}`),
     section('主角', characterText(s)),
     section('此刻', timePlaceText(s)),
     section('刚发生的事', happened),
     section('已经给过的建议', avoid.length ? avoid.map((x) => String(x)).join('\n') : '无'),
-  ].join('\n\n');
+  ];
+  if (useProfile) userSections.push(section('这位玩家的习惯', profileHabitsText(profile)));
+  const user = userSections.join('\n\n');
   return [
     { role: 'system', content: system },
     { role: 'user', content: user },
@@ -1042,6 +1109,7 @@ module.exports = {
   buildStatsMessages,
   statsSectionText,
   buildSuggestMessages,
+  buildProfileMessages,
   buildItemsInfoMessages,
   buildWorldMessages,
   buildChapterMessages,

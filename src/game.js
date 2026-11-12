@@ -14,6 +14,11 @@ const prompts = require('./prompts.js');
 const prefs = require('./prefs.js');
 const context = require('./context.js');
 const genres = require('./genres.js');
+const profiles = require('./profiles.js');
+
+// 正在后台总结画像的玩家（key = dataDir + playerId，避免多个 createGame 实例互相误判）。
+// 后台总结在 takeTurn 里「不 await」发起，靠 finally 从这里移除，防止同一玩家重复触发。
+const summarizingProfiles = new Set();
 
 // 带状态码的可暴露错误；server.js 统一转成 {error:"中文说明"}。
 class HttpError extends Error {
@@ -385,6 +390,36 @@ function createGame(cfg, dataDir) {
     throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
   }
 
+  // 后台画像总结：据最近亲手写的行动归纳「你是什么样的玩家」。
+  // 全程 try/catch 静默失败，画像出错绝不影响回合；调用方不 await。
+  async function summarizeProfile(playerId) {
+    try {
+      const profile = profiles.getProfile(dataDir, playerId);
+      const pp = await callParsed('profile', turnModel,
+        prompts.buildProfileMessages(profile), { turns: profile.turns }, []);
+      const parsed = pp.parsed || {};
+      profiles.applySummary(dataDir, playerId, {
+        summary: parsed.summary,
+        traits: parsed.traits,
+        wants: parsed.wants,
+      }, Date.now());
+    } catch (_) {
+      // 总结失败静默：绝不因为总结影响回合。
+    }
+  }
+
+  // 距上次总结 >= 15 回合且无进行中的总结时，后台发起一次。
+  // 不 await：直接在请求处理的异步链里发起即可继承 AsyncLocalStorage（用量记到该玩家头上）。
+  function maybeSummarizeProfile(playerId, profile) {
+    if (profile.turns - profile.summaryTurn < 15) return;
+    const key = `${dataDir}\u0000${playerId}`;
+    if (summarizingProfiles.has(key)) return;
+    summarizingProfiles.add(key);
+    summarizeProfile(playerId)
+      .catch(() => {})
+      .finally(() => summarizingProfiles.delete(key));
+  }
+
   // 主回合调用（可流式）：首尝试走流式并逐段回调 onDelta；
   // 解析失败时的重试一律走非流式（不再回调 delta）。拿到 content 之后的
   // 解析 / 校验 / 落库流程与非流式完全一致。
@@ -540,6 +575,14 @@ function createGame(cfg, dataDir) {
       } catch (err) {
         throw httpError(400, err && err.message ? err.message : '属性点分配非法');
       }
+      // 新世界继承玩家画像：画像已成熟（turns≥10）时用 seedPersona 覆盖初始 persona。
+      // 只改新世界的初始 persona，不动引擎；读取失败一律忽略，绝不影响建世界。
+      try {
+        const seedPersona = profiles.seedPersona(
+          profiles.getProfile(dataDir, context.currentPlayerId() || 'host'),
+        );
+        if (seedPersona) state.persona = seedPersona;
+      } catch (_) { /* 画像读取失败不影响建世界 */ }
       store.saveWorld(dataDir, state);
       return publicWorld(state);
     });
@@ -608,8 +651,18 @@ function createGame(cfg, dataDir) {
       .map((x) => x.trim().slice(0, 80))
       .filter((x) => x)
       .slice(-12);
+    // 带当前玩家的画像视图（ready 时「灵感」会据此猜玩家最可能想做的事）。
+    // 出错 / 画像未就绪就不传，提示词与不带画像时完全一致。
+    let profileView;
+    try {
+      profileView = profiles.publicProfile(
+        profiles.getProfile(dataDir, context.currentPlayerId() || 'host'),
+      );
+    } catch (_) {
+      profileView = undefined;
+    }
     const gp = await callParsed('suggest', turnModel,
-      prompts.buildSuggestMessages(state, { avoid }),
+      prompts.buildSuggestMessages(state, { avoid, profile: profileView }),
       { avoid, turn: state.turn }, []);
     const seen = new Set(avoid);
     const suggestions = [];
@@ -1056,6 +1109,26 @@ function createGame(cfg, dataDir) {
         usage: usageAgg,
         ts: resolved.result.ts,
       });
+
+      // 玩家画像：回合成功落库后记录本回合（失败路径不会走到这里）。
+      // 后台总结在请求异步链里直接发起，继承 AsyncLocalStorage（用量记到该玩家头上）。
+      try {
+        const playerId = context.currentPlayerId() || 'host';
+        const applied = resolved.result.applied || {};
+        const tags = Array.isArray(applied.persona_tags) ? applied.persona_tags : [];
+        const bible = finalState.bible || {};
+        const updated = profiles.recordTurn(dataDir, playerId, {
+          tags,
+          action,
+          genre: finalState.genre,
+          title: bible.title,
+          adult: resolved.result.adult === true,
+          now,
+        });
+        maybeSummarizeProfile(playerId, updated);
+      } catch (_) {
+        // 画像出错绝不影响回合。
+      }
 
       const result = engine.toPublicTurnResult(resolved.result, finalState);
       // 服务端徽章：回合结果也带出 stat / drain 徽章（前端展示是下一个任务）。
