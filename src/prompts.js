@@ -869,6 +869,45 @@ function buildRebirthOpeningMessages(state, info) {
   ];
 }
 
+// 玩家点「灵感」：只据玩家此刻已看到的局面给下一步行动建议，绝不掺入 NPC 私密档案 /
+// 规则 / apex / 事件计划等内部信息。纯函数，单独导出便于单测。
+function buildSuggestMessages(state, opts) {
+  const s = state || {};
+  const b = s.bible || {};
+  const avoid = Array.isArray(opts && opts.avoid) ? opts.avoid : [];
+  const system = [
+    '你是这个故事的旁观参谋。根据下面玩家此刻看到的局面，给主角 3 条下一步可以做的具体行动建议。要求：',
+    '· 每条是一句以主角视角写的行动（不要以「你」或「我」开头，直接写动作，例如「顺着声音迎上去，看看巷里追过来的是什么人」），12~36 个汉字；',
+    '· 三条方向明显不同：一条大胆冒险、一条谨慎稳妥、一条借人/用计（拉拢、交易、设局）；',
+    '· 必须贴合当前地点、时间、在场的人和物、刚发生的事，不要泛泛的「环顾四周」；',
+    '· 只能根据下面给出的已发生内容推测，不要编造玩家还不知道的秘密或未来剧情；',
+    '· 不要写露骨的性内容，不要写选择题或解释；',
+    '· 不要和【已经给过的建议】重复或换个说法重复；',
+    '· 只输出一个 JSON 对象：{"suggestions":["…","…","…"]}。',
+  ].join('\n');
+  const recent = Array.isArray(s.recent) ? s.recent.slice(-2) : [];
+  let happened;
+  if (recent.length) {
+    happened = recent.map((r) => {
+      const narr = String((r && r.narration) || '').slice(-900);
+      return `行动：${(r && r.action) || ''} / 叙事：${narr}`;
+    }).join('\n');
+  } else {
+    happened = (b.start && b.start.situation) || '';
+  }
+  const user = [
+    section('世界', `标题：${b.title || ''}\n基调：${b.tone || ''}`),
+    section('主角', characterText(s)),
+    section('此刻', timePlaceText(s)),
+    section('刚发生的事', happened),
+    section('已经给过的建议', avoid.length ? avoid.map((x) => String(x)).join('\n') : '无'),
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+}
+
 // 解析：去掉 ```json 包裹、截取第一个 { 到最后一个 }；失败返回 null。
 function parseJson(text) {
   if (typeof text !== 'string') return null;
@@ -887,6 +926,7 @@ function parseJson(text) {
 module.exports = {
   buildTurnMessages,
   buildPrologueMessages,
+  buildSuggestMessages,
   buildItemsInfoMessages,
   buildWorldMessages,
   buildChapterMessages,

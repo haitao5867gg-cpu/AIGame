@@ -168,6 +168,9 @@ function toPublicLogRecord(rec) {
   const ts = publicTimeSkip(e.timeSkip);
   return {
     ...(ts ? { timeSkip: ts } : {}),
+    ...(e.applied && Array.isArray(e.applied.suggestions)
+      ? { suggestions: e.applied.suggestions.filter((x) => typeof x === 'string').slice(0, 3) }
+      : {}),
     turn: e.turn,
     life: e.life,
     action: typeof e.action === 'string' ? e.action : '',
@@ -570,6 +573,50 @@ function createGame(cfg, dataDir) {
       store.saveWorld(dataDir, state);
       return state.genre;
     });
+  }
+
+  // 玩家点「灵感」：只读当前局面，请模型给 3 条下一步行动，供前端填进输入框。
+  // 不加世界锁、不保存、不改 state；失败也不动存档。
+  async function suggestActions(worldId, input) {
+    store.assertWorldId(worldId);
+    const state = loadState(worldId);
+    if (!state) throw httpError(404, '世界不存在或已被移入回收站');
+    if (state.awaitingRebirth || (state.character && state.character.alive === false)) {
+      throw httpError(409, '这一世已经结束，先开启新的一世吧');
+    }
+    const rawAvoid = input && Array.isArray(input.avoid) ? input.avoid : [];
+    const avoid = rawAvoid
+      .filter((x) => typeof x === 'string')
+      .map((x) => x.trim().slice(0, 80))
+      .filter((x) => x)
+      .slice(-12);
+    const gp = await callParsed('suggest', turnModel,
+      prompts.buildSuggestMessages(state, { avoid }),
+      { avoid, turn: state.turn }, []);
+    const seen = new Set(avoid);
+    const suggestions = [];
+    const items = (gp.parsed && Array.isArray(gp.parsed.suggestions)) ? gp.parsed.suggestions : [];
+    for (const item of items) {
+      if (typeof item !== 'string') continue;
+      let text = item.trim();
+      // 去掉开头的序号 / 项目符号 / 引号 / 「你」「我」（可能叠加），以及结尾的句号 / 引号。
+      for (let guard = 0; guard < 8; guard++) {
+        const before = text;
+        text = text.replace(/^[0-9]+[.、)）:：]?\s*/, '');
+        text = text.replace(/^[-*•—–]\s*/, '');
+        text = text.replace(/^[「『“‘"']+/, '');
+        text = text.replace(/^(你|我)/, '');
+        text = text.replace(/^\s+/, '');
+        if (text === before) break;
+      }
+      text = text.replace(/[。.!！？?…」』”’"']+$/, '').trim().slice(0, 60);
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      suggestions.push(text);
+      if (suggestions.length >= 3) break;
+    }
+    if (!suggestions.length) throw httpError(502, '这次没想出新点子，再点一次试试');
+    return { suggestions };
   }
 
   async function getWorld(worldId) {
@@ -1058,7 +1105,7 @@ function createGame(cfg, dataDir) {
 
   return {
     buildWorld, getWorld, ensurePrologue, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
-    exportWorld, undoTurn, listScenes, getNpcDetail,
+    exportWorld, undoTurn, listScenes, getNpcDetail, suggestActions,
   };
 }
 

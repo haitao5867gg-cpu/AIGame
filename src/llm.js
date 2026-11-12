@@ -22,6 +22,7 @@ const PURPOSES = Object.freeze({
   PROLOGUE: 'prologue', // 老世界补序章（GET /prologue 时额外调用）
   ITEMS_INFO: 'items-info', // 老物品补介绍（GET /items 时批量生成）
   GENRE: 'genre',       // 老世界补判题材（ensureGenre 的短调用）
+  SUGGEST: 'suggest',   // 玩家点「灵感」生成下一步建议
 });
 
 // 由 seed 派生少量差异，保证「同一输入 → 同一输出」的确定性。
@@ -287,6 +288,39 @@ function mockGenre(m) {
   return { genre: 'general' };
 }
 
+// 玩家点「灵感」：从一个固定的通用行动池里确定性挑 3 条。
+// 去掉 avoid 中出现过的，按 avoid + turn 的 hash 选起点，保证「同输入同输出、avoid 不同结果不同」。
+function mockSuggest(m) {
+  const pool = [
+    '先四下看看，找条退路',
+    '找个人打听刚才的动静',
+    '检查一下随身带的东西',
+    '顺着声音摸过去看看',
+    '先躲起来观察一会儿',
+    '主动上前搭话，探探口风',
+    '沿着来路退回去，别惊动他们',
+    '把手里的东西亮出来试探反应',
+    '绕到侧门，看看有没有别的出入口',
+    '记下对方说的每句话，回头再琢磨',
+    '先歇口气，等局面自己明朗些',
+    '挑个最不起眼的角落藏好身形',
+  ];
+  const avoid = Array.isArray(m && m.avoid) ? m.avoid : [];
+  const avoidSet = new Set(avoid.map((x) => String(x)));
+  let candidates = pool.filter((x) => !avoidSet.has(x));
+  // avoid 极端情况下把池子削到不足 3 条时，按池子顺序补回，保证始终输出 3 条。
+  if (candidates.length < 3) {
+    for (const x of pool) {
+      if (candidates.length >= 3) break;
+      if (!candidates.includes(x)) candidates.push(x);
+    }
+  }
+  const start = hash(JSON.stringify(m && m.avoid || []) + (m && m.turn || 0)) % candidates.length;
+  const out = [];
+  for (let i = 0; i < 3; i++) out.push(candidates[(start + i) % candidates.length]);
+  return { suggestions: out };
+}
+
 function mockTurn(m) {
   const turn = (m && m.turn) || 1;
   const timeSkip = m && m.timeSkip;
@@ -486,6 +520,7 @@ function mockFor(purpose, m) {
     case PURPOSES.PROLOGUE: return mockPrologue();
     case PURPOSES.ITEMS_INFO: return mockItemsInfo(m);
     case PURPOSES.GENRE: return mockGenre(m);
+    case PURPOSES.SUGGEST: return mockSuggest(m);
     default: return mockTurn(m);
   }
 }
