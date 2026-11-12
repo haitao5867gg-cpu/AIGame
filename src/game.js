@@ -565,6 +565,8 @@ function createGame(cfg, dataDir) {
         'world', worldModel,
         prompts.buildWorldMessages(seed, { name: givenName, appearance: givenAppearance, identity }),
         { seed, name: givenName, appearance: givenAppearance, identity }, usages,
+        // 建世界也用低强度思考：深度思考加上出身、大纲要等好几分钟。
+        { extraBody: writingMode.writingCall(cfg, 'fine').extraBody },
       );
       const hero = wp.parsed.hero && typeof wp.parsed.hero === 'object' ? wp.parsed.hero : {};
       const name = givenName || (typeof hero.name === 'string' && hero.name.trim() ? hero.name.trim().slice(0, 12) : '') || '无名旅人';
