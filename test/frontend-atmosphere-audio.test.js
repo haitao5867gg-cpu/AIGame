@@ -96,3 +96,88 @@ test('拒绝远程或目录穿越音频；无WebAudio时保留原生volume回退
   f.c.setCatalog({ themes: { lingtian: { music: { calm: { src: 'https://example.test/x.mp3' } }, ambience: {} } } });
   assert(f.audios.every(a => a.paused && !a.src)); f.c.destroy();
 });
+
+// ---------- 多曲目：切歌、播完接下一首、坏文件跳过、收听记录 ----------
+const TRACKS = [
+  { id: 'calm', title: 'Guzheng City', artist: 'Kevin MacLeod', theme: 'lingtian', mood: 'calm', src: '/assets/atmosphere/calm-v1.mp3' },
+  { id: 'xx01', title: '琵琶语', artist: '林海', theme: 'lingtian', mood: 'calm', src: '/api/bgm/file/xx01.mp3' },
+  { id: 'xx02', title: '云水禅心', artist: '王珣', theme: 'lingtian', mood: 'calm', src: '/api/bgm/file/xx02.mp3' },
+  { id: 'xx06', title: '璃月', artist: '陈致逸', theme: 'lingtian', mood: 'explore', src: '/api/bgm/file/xx06.mp3' },
+  { id: 'ap01', title: 'The Last of Us', artist: 'GS', theme: 'apocalypse', mood: 'calm', src: '/api/bgm/file/ap01.mp3' },
+  { id: 'evil', title: 'x', artist: 'y', theme: 'lingtian', mood: 'calm', src: 'https://evil.example/a.mp3' },
+  { id: 'BAD ID', title: 'x', artist: 'y', theme: 'lingtian', mood: 'calm', src: '/api/bgm/file/xx03.mp3' },
+];
+function playlistFixture(opts = {}) {
+  const audios = [], timers = new Map(), events = []; let tid = 0, clock = 0;
+  class Audio {
+    constructor() { this.paused = true; this.volume = 1; this.src = ''; this.calls = 0; this.loop = false; audios.push(this); }
+    pause() { this.paused = true; }
+    removeAttribute() { this.src = ''; }
+    load() {}
+    play() { this.calls++; this.paused = false; return opts.play ? opts.play(this) : Promise.resolve(); }
+  }
+  const c = mod.create({ Audio, AudioContext: null, now: () => clock, random: () => (opts.random === undefined ? 0 : opts.random),
+    setTimeout: fn => { const id = ++tid; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id) });
+  c.onTrack(e => events.push(e));
+  c.setCatalog(catalog); c.setTracks(TRACKS); c.setScene(scene()); c.setPrefs({ enabled: true });
+  return { c, audios, events, timers, advance(ms) { clock += ms; },
+    flush() { const all = [...timers.values()]; timers.clear(); all.forEach(fn => fn()); } };
+}
+test('曲目单只收安全音源；随机起播；状态带曲名和首数', async () => {
+  const f = playlistFixture({ random: 0.5 }); await f.c.enableFromGesture();
+  const st = f.c.getStatus();
+  assert.equal(st.trackCount, 3); assert.deepEqual(st.track, { id: 'xx01', title: '琵琶语', artist: '林海' });
+  assert.equal(f.audios[0].src, '/api/bgm/file/xx01.mp3'); assert.equal(f.audios[0].loop, false);
+  f.c.destroy();
+});
+test('下一首/上一首立即换歌并循环到头；手动切走记 skip，秒数按出声时间算', async () => {
+  const f = playlistFixture(); await f.c.enableFromGesture();
+  assert.equal(f.c.getStatus().track.id, 'calm');
+  f.advance(42000); assert.equal(f.c.next(), true); await tick();
+  assert.equal(f.audios[0].src, '/api/bgm/file/xx01.mp3');
+  assert.deepEqual(f.events, [{ id: 'calm', seconds: 42, reason: 'skip', first: true }]);
+  f.advance(500); f.c.prev(); await tick(); f.c.prev(); await tick();
+  assert.equal(f.c.getStatus().track.id, 'xx02');
+  assert.deepEqual(f.events.map(e => [e.id, e.reason, e.seconds]), [['calm', 'skip', 42], ['xx01', 'skip', 0.5], ['calm', 'skip', 0]]);
+  f.c.destroy();
+});
+test('自然播完接下一首并记 end；只有一首时循环、切歌返回 false', async () => {
+  const f = playlistFixture(); await f.c.enableFromGesture();
+  f.advance(114000); f.audios[0].onended(); await tick();
+  assert.equal(f.c.getStatus().track.id, 'xx01');
+  assert.deepEqual(f.events[0], { id: 'calm', seconds: 114, reason: 'end', first: true });
+  f.c.setScene(scene('explore')); f.flush(); await tick();
+  assert.equal(f.audios[0].src, '/api/bgm/file/xx06.mp3'); assert.equal(f.audios[0].loop, true);
+  assert.equal(f.c.next(), false); assert.equal(f.c.getStatus().trackCount, 1);
+  f.c.destroy();
+});
+test('场景换档位记 switch，回到原档位还是原来那首；不到 1 秒的不算播放', async () => {
+  const f = playlistFixture(); await f.c.enableFromGesture();
+  f.c.next(); await tick(); f.events.length = 0;
+  f.advance(20000); f.c.setScene(scene('explore')); f.flush(); await tick();
+  assert.deepEqual(f.events, [{ id: 'xx01', seconds: 20, reason: 'switch', first: true }]);
+  f.advance(300); f.c.setScene(scene('calm')); f.flush(); await tick();
+  assert.equal(f.c.getStatus().track.id, 'xx01'); assert.equal(f.events.length, 1, 'xx06 只响了 0.3 秒，不上报');
+  f.c.destroy();
+});
+test('题材组：末日世界先排末日曲再排本题材曲', async () => {
+  const f = playlistFixture();
+  f.c.setScene(Object.assign(scene(), { musicThemes: ['apocalypse', 'lingtian'] })); await f.c.enableFromGesture();
+  assert.equal(f.c.getStatus().trackCount, 4); assert.equal(f.c.getStatus().track.id, 'ap01');
+  f.c.destroy();
+});
+test('放不出来的歌本次会话跳过并记 fail，不卡住', async () => {
+  const f = playlistFixture({ play: a => a.src.includes('xx01') ? Promise.reject(new Error('decode')) : Promise.resolve() });
+  await f.c.enableFromGesture(); f.c.next(); await tick(); await tick();
+  assert.equal(f.c.getStatus().track.id, 'xx02'); assert.equal(f.c.getStatus().trackCount, 2);
+  assert.ok(f.events.some(e => e.id === 'xx01' && e.reason === 'fail'));
+  assert.ok(f.c.getStatus().playing); f.c.destroy();
+});
+test('切后台暂停计时；中途补报不结束这次播放，之后只补秒数', async () => {
+  const f = playlistFixture(); await f.c.enableFromGesture();
+  f.advance(10000); f.c.setHidden(true); f.advance(60000); f.c.reportListen();
+  assert.deepEqual(f.events, [{ id: 'calm', seconds: 10, reason: 'stop', first: true }]);
+  f.c.setHidden(false); await tick(); await tick(); f.advance(5000); f.c.stop();
+  assert.deepEqual(f.events[1], { id: 'calm', seconds: 5, reason: 'stop', first: false });
+  f.c.destroy();
+});

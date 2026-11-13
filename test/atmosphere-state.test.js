@@ -391,3 +391,14 @@ test('resolveReading：六种组合 + 非法 reading 按 auto（dawn/day 亮，�
     assert.equal(A.resolveReading(bad, 'BOGUS'), 'night', '未知时辰按夜');
   }
 });
+
+test('musicThemes：末日/西幻/言情/科幻按标题和基调认出来排在本题材前，修仙恐怖不细分', () => {
+  const S = require('../public/js/atmosphere-state.js');
+  assert.deepEqual(S.musicThemes({ genre: 'general', bible: { title: '废土拾荒者', tone: '末日求生' } }), ['apocalypse', 'general']);
+  assert.deepEqual(S.musicThemes({ genre: 'general', bible: { title: '银月王国的见习法师' } }), ['fantasy', 'general']);
+  assert.deepEqual(S.musicThemes({ genre: 'urban', bible: { title: '写字楼里的暗恋' } }), ['romance', 'urban']);
+  assert.deepEqual(S.musicThemes({ genre: 'general', bible: { title: '星舰远征' } }), ['game', 'general']);
+  assert.deepEqual(S.musicThemes({ genre: 'xuanhuan', bible: { title: '末日修仙' } }), ['lingtian']);
+  assert.deepEqual(S.musicThemes({ genre: 'cozy', bible: { title: '小镇面馆' } }), ['cozy']);
+  assert.deepEqual(S.musicThemes(null), ['general']);
+});

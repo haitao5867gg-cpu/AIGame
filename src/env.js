@@ -80,6 +80,8 @@ const DEFAULTS = Object.freeze({
   TTS_CACHE_MAX_MB: '300',          // 朗读音频缓存（DATA_DIR/tts/）总大小上限（MB），超出按修改时间删最旧
   TTS_MONTHLY_CHARS: '500000',      // Azure F0 免费档每月字符额度（按 UTC 月统计）
   TTS_MONTHLY_STOP_AT: '450000',    // 本月用量达此值即停用 Azure，留缓冲避免超 50 万；下月自动恢复
+  // 候选配乐 mp3 所在目录（文件名 = 曲目编号.mp3）；留空 = 项目目录旁的 AIGameMedia/bgm
+  BGM_DIR: '',
 });
 
 const NUMERIC_KEYS = Object.freeze([

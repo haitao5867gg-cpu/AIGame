@@ -17,6 +17,7 @@ const llmMod = require('./src/llm.js');
 const prefs = require('./src/prefs.js');
 const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
+const bgmMod = require('./src/bgm.js');
 const adultMode = require('./src/adult-mode.js');
 const { createIdempotency, validId: validClientId } = require('./src/idempotency.js');
 const buildProgress = require('./src/build-progress.js');
@@ -556,6 +557,30 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     });
   }
 
+  // ---- 配乐：曲目单 / 候选曲音频 / 播放统计 ----
+  if (pathname === '/api/bgm/catalog' && method === 'GET') {
+    return sendJson(res, 200, runtime.bgm.catalog());
+  }
+  const bgmFile = /^\/api\/bgm\/file\/([a-z0-9][a-z0-9-]{0,39})\.mp3$/.exec(pathname);
+  if (bgmFile && (method === 'GET' || method === 'HEAD')) {
+    const filePath = runtime.bgm.filePath(bgmFile[1]);
+    if (!filePath) return sendError(res, 404, '这首配乐还没有音频文件');
+    let st;
+    try { st = fs.statSync(filePath); } catch (_) { st = null; }
+    if (!st || !st.isFile()) return sendError(res, 404, '这首配乐还没有音频文件');
+    return serveAtmosphereAudio(req, res, filePath, 'audio/mpeg', st.size, method === 'HEAD');
+  }
+  if (pathname === '/api/bgm/events' && method === 'POST') {
+    const body = await readJsonBody(req);
+    const accepted = runtime.bgm.record(player.id, body && body.events);
+    return sendJson(res, 200, { ok: true, accepted });
+  }
+  if (pathname === '/api/bgm/stats' && method === 'GET') {
+    // 去留由主人定，统计只给主人看。
+    if (!(player && player.host)) return sendJson(res, 403, { error: '只有主人能看配乐统计' });
+    return sendJson(res, 200, runtime.bgm.report());
+  }
+
   // ---- 无世界 ID 的接口 ----
   if (pathname === '/api/health' && method === 'GET') {
     return sendJson(res, 200, {
@@ -985,7 +1010,8 @@ function createHttpServer(cfg, opts) {
     now: o.ttsNow || o.now,
   });
   // 隧道在 server.listen 之后才启动，用可写 holder 让路由拿到最新 tunnel（测试可经 opts.tunnel 注入）。
-  const runtime = { tunnel: o.tunnel || null, tts };
+  const bgm = o.bgm || bgmMod.createBgm(cfg, dataDir, { now: o.now });
+  const runtime = { tunnel: o.tunnel || null, tts, bgm };
   const server = http.createServer((req, res) => {
     Promise.resolve()
       .then(() => handle(req, res, cfg, g, images, dataDir, access, runtime))

@@ -275,6 +275,18 @@
 
     // ---- 今日各玩家 / 全局 token（仅主人）----
     if (isHost) {
+      // 配乐统计入口：每首歌的播放次数、时长、被切走次数（弹窗在 bgm-stats.js）。
+      var bgmSec = el('div', 'usage-sec');
+      bgmSec.appendChild(el('h4', null, '配乐'));
+      var bgmBtn = el('button', 'btn tiny', '查看配乐统计');
+      bgmBtn.id = 'btn-bgm-stats';
+      bgmBtn.addEventListener('click', function () {
+        setUsageOpen(false);
+        if (typeof BgmStats !== 'undefined') BgmStats.open();
+      });
+      bgmSec.appendChild(bgmBtn);
+      bgmSec.appendChild(el('div', 'usage-note', '玩家游玩时可以自己切歌，这里按每首歌的数据决定去留'));
+      box.appendChild(bgmSec);
       var plSec = el('div', 'usage-sec');
       plSec.appendChild(el('h4', null, '今日各玩家'));
       var players = d.players || [];

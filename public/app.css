@@ -1410,3 +1410,28 @@ body.build-open{overflow:hidden}
   .build-bar-fill{transition:none}
 }
 
+
+/* ---- 配乐切歌条：声音开着且有曲名时出现在地点行下面 ---- */
+.bgm-bar{display:flex;align-items:center;justify-content:center;gap:2px;max-width:420px;margin:2px auto 4px;padding:0 6px;
+  font-family:var(--sans);color:var(--muted)}
+.bgm-bar[hidden]{display:none}
+.bgm-btn{flex:none;width:44px;height:36px;border:0;background:transparent;color:inherit;font-size:16px;line-height:1;cursor:pointer;border-radius:8px}
+.bgm-btn:disabled{opacity:.35;cursor:default}
+.bgm-btn:not(:disabled):active{background:rgba(127,127,127,.25)}
+.bgm-name{flex:1 1 0;min-width:0;text-align:center;height:36px;border:0;background:transparent;color:inherit;font-size:13px;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+body[data-genre] .bgm-bar{color:#f3eee4;text-shadow:0 1px 6px rgba(0,0,0,.7)}
+.atmosphere-track{display:flex;align-items:center;gap:8px;margin:14px 0;font-size:15px}
+.atmosphere-track>span{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;line-height:1.5}
+.atmosphere-track>span small{display:block;color:var(--muted);font-size:12px}
+.atmosphere-track .btn{flex:none;min-width:48px;min-height:44px;font-size:18px;padding:4px 10px}
+
+/* ---- 配乐统计弹窗 ---- */
+.bgm-stats-card{max-width:560px}
+.bgm-stats-group{font-size:13px;color:var(--muted);margin:16px 0 4px}
+.bgm-stats-row{padding:8px 0;border-bottom:1px solid var(--line)}
+.bgm-stats-title{font-size:15px}
+.bgm-stats-meta{font-size:12px;color:var(--muted);margin-left:8px}
+.bgm-stats-nums{font-size:13px;line-height:1.6;color:var(--muted)}
+.bgm-stats-missing{opacity:.55}
+#bgm-stats-sort{min-height:40px;font-size:16px;padding:0 10px;background:var(--bg-2);color:var(--ink);border:1px solid var(--line);border-radius:8px}

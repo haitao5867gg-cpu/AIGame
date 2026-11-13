@@ -170,6 +170,31 @@ function () {
     return 'general'; // 缺失 / 未知 / 识别中：所有世界都有配乐，按通用处理
   }
 
+  // 配乐用的题材组（只影响选曲，不改文风 / 底图）：游戏里没有单独题材的末日、西幻、言情，
+  // 以及归在「通用」里的科幻，按世界标题和基调里的关键词认出来，排在本题材前面。
+  // 玄幻修仙、恐怖悬疑、游戏系统自成一类，不再细分。
+  var SUB_THEMES = [
+    ['apocalypse', /末日|末世|废土|丧尸|灾变|核冬|避难所|幸存者|辐射|天灾/],
+    ['fantasy', /西幻|奇幻|魔法|骑士|精灵|巨龙|王国|魔王|勇者|法师|矮人|猎魔|领主|公会/],
+    ['romance', /言情|恋爱|爱情|甜宠|虐恋|心动|暗恋|初恋|婚约|姻缘|恋人/],
+    ['game', /科幻|星际|赛博|飞船|机甲|太空|星舰|人工智能|仿生/],
+  ];
+  function musicThemes(state) {
+    var s = (state && typeof state === 'object' && !Array.isArray(state)) ? state : {};
+    var base = classifyTheme(s);
+    if (base === 'lingtian' || base === 'horror' || base === 'game') return [base];
+    var b = (s.bible && typeof s.bible === 'object') ? s.bible : {};
+    var text = [b.title, s.title, b.tone, b.premise, b.setting, s.seed].filter(function (v) {
+      return typeof v === 'string';
+    }).join(' ');
+    var out = [];
+    SUB_THEMES.forEach(function (pair) {
+      if (pair[0] !== base && pair[1].test(text)) out.push(pair[0]);
+    });
+    out.push(base);
+    return out;
+  }
+
   function resolveLocation(state, opts) {
     var scene = (opts && opts.scene && typeof opts.scene === 'object') ? opts.scene : {};
     var loc = firstString(
@@ -253,6 +278,7 @@ function () {
   return {
     normalizePrefs: normalizePrefs,
     resolve: resolve,
+    musicThemes: musicThemes,
     resolveReading: resolveReading,
     DEFAULT_ATMOSPHERE: DEFAULT_ATMOSPHERE,
   };
