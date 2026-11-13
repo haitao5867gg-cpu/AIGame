@@ -620,7 +620,7 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, item
   if (castNames.some((n) => n === '你' || n === heroId.name)) {
     const ik = indexKeyOf('hero', imageKey('hero', heroId.keyName, style.zh, worldId));
     const r = ready(ik);
-    if (r) refs.push({ path: r.p, label: 'the main character', type: 'person' });
+    if (r) refs.push({ path: r.p, label: 'the main character', type: 'person', who: '你' });
   }
   // NPC 头像：除主角外最多 2 个；说明用该头像当初英文描述里的短名词，保证提示词是英文
   let npcUsed = 0;
@@ -630,7 +630,7 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, item
     const ik = indexKeyOf('npc', imageKey('npc', name, style.zh, worldId));
     const r = ready(ik);
     if (!r) continue;
-    refs.push({ path: r.p, label: shortNoun(r.e.enPrompt, 'another character'), type: 'person' });
+    refs.push({ path: r.p, label: shortNoun(r.e.enPrompt, 'another character'), type: 'person', who: name });
     npcUsed += 1;
   }
   // 物品图：最多 1 个
@@ -643,6 +643,56 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, item
     break;
   }
   return refs.slice(0, 4);
+}
+
+// ---- 记账模型直接写的英文画面（job.en = {place, light, people:[{who, en, pos}]}）----
+// 以前是把 ≤40 字的中文再自由翻译一遍，还要求去掉人名：谁在做什么对不上号，没有参考图的人直接消失，
+// 翻译还会加料、译错（「水下街」→ Underwater，「名册」→ roster 被画成公鸡）。
+// 现在每个人一句「看上去是谁 + 在做什么 + 站位」，有参考图的人写明是哪张图。
+const POS_EN = { left: ', on the left', center: ', in the center', right: ', on the right', background: ', in the background' };
+function sceneEnOf(job) {
+  const en = job && job.en && typeof job.en === 'object' ? job.en : null;
+  if (!en) return null;
+  const people = (Array.isArray(en.people) ? en.people : [])
+    .filter((p) => p && typeof p.who === 'string' && typeof p.en === 'string' && p.en.trim());
+  const place = typeof en.place === 'string' ? en.place.trim() : '';
+  if (!place && !people.length) return null;
+  return { place, light: typeof en.light === 'string' ? en.light.trim() : '', people };
+}
+// 文生图用的一句英文画面（没有参考图时）。没有结构化画面返回 ''。
+function sceneEnglish(job) {
+  const en = sceneEnOf(job);
+  if (!en) return '';
+  const setting = [en.place, en.light].filter(Boolean).join(', ');
+  const people = en.people.map((p) => `${p.en}${POS_EN[p.pos] || ''}`).join('; ');
+  return [setting, people].filter(Boolean).join('. ');
+}
+// 多参考图用的画面段落：有参考图的人写「the person from image N」，没有的人只写外貌和动作。没有结构化画面返回 ''。
+function sceneBoundText(job) {
+  const en = sceneEnOf(job);
+  if (!en) return '';
+  const refs = Array.isArray(job.refs) ? job.refs : [];
+  const used = new Set();
+  const lines = [];
+  const setting = [en.place, en.light].filter(Boolean).join(', ');
+  if (setting) lines.push(`${setting[0].toUpperCase()}${setting.slice(1)}.`);
+  for (const p of en.people) {
+    const i = refs.findIndex((r, k) => r.type === 'person' && r.who === p.who && !used.has(k));
+    const pos = POS_EN[p.pos] || '';
+    if (i >= 0) {
+      used.add(i);
+      lines.push(`The person from image ${i}${p.who === '你' ? ' (the main character)' : ''}, ${p.en}${pos}.`);
+    } else {
+      lines.push(`Also in the scene: ${p.en}${pos}.`);
+    }
+  }
+  refs.forEach((r, k) => {
+    if (used.has(k)) return;
+    lines.push(r.type === 'item'
+      ? `The ${r.label} from image ${k} is in the scene.`
+      : `The person from image ${k} (${r.label}) is also present.`);
+  });
+  return lines.join(' ');
 }
 
 // ---- 核心：可实例化的图片管理器（进程内全局队列）----
@@ -1106,6 +1156,20 @@ function createImages(cfg, opts) {
       ? `场景地点：${clip(place, 60)}；画面动作：${clip(action, 160)}；`
         + `世界：${job.bibleTitle || ''}；时代背景：${eraZh}`
       : `场景：${clip(desc, 60)}；世界：${job.bibleTitle || ''}；时代背景：${eraZh}`;
+    const hasItem0 = job.refs.some((r) => r.type === 'item');
+    const bound = sceneBoundText(job);
+    if (bound) {
+      // 记账模型已经给了英文画面：不再翻译，人和参考图一一对应。
+      const keep0 = "Keep each person's face, hair and clothing exactly as in their reference image"
+        + (hasItem0 ? ' and the item exactly as in its reference image' : '');
+      const prompt0 = `${st.en || ''}. Wide cinematic 16:9 scene, ${eraEn} style. ${bound} ${keep0}. `
+        + `Period-accurate setting, ${FULLY_CLOTHED_EN}, clean image, unsigned.`;
+      const out0 = await callCloudflareRefs(prompt0, job.refs);
+      return {
+        bytes: out0.bytes, prompt: prompt0, enPrompt: sceneEnglish(job), provider: 'cloudflare', model: sceneRefModel,
+        neurons: out0.neurons, refCount: job.refs.length,
+      };
+    }
     const enDesc = (await englishDesc(job, subject)) || 'a dramatic game scene';
     const parts = job.refs.map((r, i) => (r.type === 'item'
       ? `the ${r.label} from image ${i}`
@@ -1142,7 +1206,7 @@ function createImages(cfg, opts) {
     if (p === 'cloudflare') {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
       // 翻译结果若仍是中文，englishDesc 会抛错，让 generate 换下一家中文提供方。
-      const enPrompt = (await englishDesc(job)) || enFallback();
+      const enPrompt = (isScene && sceneEnglish(job)) || (await englishDesc(job)) || enFallback();
       const prompt = enPromptOf(enPrompt);
       const { bytes, neurons } = await callCloudflare(prompt);
       return { bytes, neurons, prompt, enPrompt, model: cfModel };
@@ -1160,7 +1224,7 @@ function createImages(cfg, opts) {
       return { bytes: await callImageApi(prompt, true), prompt, enPrompt: '', model };
     }
     // local：先翻译，再拼英文提示词；翻译仍是中文就抛错让回退链换下一家。
-    const enPrompt = (await englishDesc(job)) || enFallback();
+    const enPrompt = (isScene && sceneEnglish(job)) || (await englishDesc(job)) || enFallback();
     const prompt = enPromptOf(enPrompt);
     return { bytes: await callImageApi(prompt, false), prompt, enPrompt, model: 'local' };
   }
@@ -1489,6 +1553,11 @@ function createImages(cfg, opts) {
         place: typeof q.place === 'string' ? q.place : '',
         action: typeof q.action === 'string' ? q.action : '',
         refs,
+        // 记账模型直接写的英文画面；who 里的主角名统一成「你」，好和参考图对上。
+        en: q.en && typeof q.en === 'object' ? Object.assign({}, q.en, {
+          people: (Array.isArray(q.en.people) ? q.en.people : []).map((p) => (
+            p && p.who === heroId.name ? Object.assign({}, p, { who: '你' }) : p)),
+        }) : null,
       });
       drain();
       return key;
@@ -1546,7 +1615,7 @@ module.exports = {
   createImages, configure, reset,
   // 纯函数
   inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, gatewayPrompt, listForState, readIndex, serveImage, collectRefs, coverForWorlds,
-  negativePromptZh, resolveItemEntry, itemInScene, shortNoun,
+  negativePromptZh, resolveItemEntry, itemInScene, shortNoun, sceneEnglish, sceneBoundText,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   DEFAULT_SCENE_REF_MODEL,

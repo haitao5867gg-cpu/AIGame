@@ -105,7 +105,37 @@ function normalizeScene(raw, forced) {
     : [place, action].filter(Boolean).join('，')).slice(0, SCENE_DESC_MAX);
   if (!desc) return { draw: false };
   const draw = raw.draw === true || forced === true;
-  return draw ? { draw: true, desc, place, cast, items, action } : { draw: false };
+  if (!draw) return { draw: false };
+  const out = { draw: true, desc, place, cast, items, action };
+  const en = normalizeSceneEn(raw, cast);
+  if (en) out.en = en;
+  return out;
+}
+
+// 给画师看的英文画面（记账模型直接写，省掉事后那次自由翻译）：
+// place 地方、light 光线气氛、people 每个人「看上去是谁 + 此刻在做什么」和站位。
+// 只收纯英文短句（带汉字、过长的整项丢掉）；who 必须是 cast 里的名字。什么都没有时返回 null（走老的翻译链路）。
+const SCENE_EN_POS = ['left', 'center', 'right', 'background'];
+function cleanSceneEn(v, max) {
+  if (typeof v !== 'string') return '';
+  const t = v.replace(/["'`“”‘’]/g, '').replace(/\s+/g, ' ').trim().replace(/[.;,\s]+$/, '');
+  if (!t || /[^\x20-\x7e]/.test(t) || t.length > max) return '';
+  return t;
+}
+function normalizeSceneEn(raw, cast) {
+  const place = cleanSceneEn(raw.place_en, 120);
+  const light = cleanSceneEn(raw.light_en, 80);
+  const people = [];
+  for (const p of (Array.isArray(raw.people) ? raw.people : [])) {
+    if (!p || typeof p !== 'object' || people.length >= SCENE_CAST_MAX) continue;
+    const who = typeof p.who === 'string' ? p.who.trim().slice(0, SCENE_NAME_MAX) : '';
+    const en = cleanSceneEn(p.en, 160);
+    if (!who || !en || !cast.includes(who) || people.some((x) => x.who === who)) continue;
+    const pos = typeof p.pos === 'string' && SCENE_EN_POS.includes(p.pos.trim().toLowerCase()) ? p.pos.trim().toLowerCase() : '';
+    people.push({ who, en, pos });
+  }
+  if (!place && !people.length) return null;
+  return { place, light, people };
 }
 
 // 事实校验：非字符串 / 空串忽略，超过 30 字截断，返回可直接入库的文本（无则 ''）。
