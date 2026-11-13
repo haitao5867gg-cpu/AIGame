@@ -1310,9 +1310,6 @@ body[data-font="l"] #stream p.narration,body[data-font="l"] #stream .opening{fon
 body[data-font="xl"] #stream p.narration,body[data-font="xl"] #stream .opening{font-size:21px;line-height:1.85}
 body[data-font="l"] .action-bubble,body[data-font="xl"] .action-bubble{font-size:16px}
 
-/* 回到最新：默认藏起，只在手机上往上翻旧回合时出现 */
-.latest-btn{display:none}
-
 @media(max-width:600px){
   /* 刚进世界正文很短时，输入区也贴在屏幕底部，不悬在半屏 */
   #view-game .stage{min-height:calc(100vh - 150px);min-height:calc(100dvh - 150px)}
@@ -1329,13 +1326,6 @@ body[data-font="l"] .action-bubble,body[data-font="xl"] .action-bubble{font-size
   /* 提示条放到顶栏下面，不再盖住返回 / ⋯ 按钮 */
   .toast{top:calc(var(--head-h) + 10px + env(safe-area-inset-top));max-width:calc(100% - 32px);
     font-size:13px;line-height:1.5;padding:9px 14px;text-align:center}
-
-  /* 回到最新：贴在输入区右上方 */
-  .latest-btn{display:inline-flex;align-items:center;position:absolute;right:12px;bottom:calc(100% + 10px);
-    min-height:40px;padding:0 16px;border-radius:999px;border:0;font-family:var(--sans);font-size:14px;
-    color:var(--g-on-accent,#fff);background:var(--g-accent,var(--accent));box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
-  .latest-btn[hidden]{display:none}
-  body[data-genre][data-read="paper"] .latest-btn{background:var(--g-accent-deep);color:#fff}
 
   /* 去掉点按钮的 300ms 延迟和双击放大 */
   button,.btn,a,.top-chip,.genre-pill,.origin-card,.more-menu-item,textarea{touch-action:manipulation}
@@ -1435,3 +1425,78 @@ body[data-genre] .bgm-bar{color:#f3eee4;text-shadow:0 1px 6px rgba(0,0,0,.7)}
 .bgm-stats-nums{font-size:13px;line-height:1.6;color:var(--muted)}
 .bgm-stats-missing{opacity:.55}
 #bgm-stats-sort{min-height:40px;font-size:16px;padding:0 10px;background:var(--bg-2);color:var(--ink);border:1px solid var(--line);border-radius:8px}
+
+/* ==== 按回合分页：一页一个回合；顶栏回合切换、回合列表、旧回合页脚 ==== */
+.turn-page[hidden]{display:none}
+.turn-nav{display:inline-flex;align-items:center;gap:2px;flex:none;font-family:var(--sans)}
+.turn-nav[hidden]{display:none}
+.turn-nav-btn,.turn-nav-pick{display:inline-flex;align-items:center;justify-content:center;min-height:36px;border:1px solid var(--line);
+  background:var(--bg-2);color:var(--ink);font-family:var(--sans);font-size:13px;cursor:pointer;padding:0}
+.turn-nav-btn{width:34px;font-size:11px;border-radius:10px}
+.turn-nav-btn:disabled{opacity:.35;cursor:default}
+.turn-nav-pick{gap:4px;padding:0 10px;border-radius:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.turn-nav-caret{font-size:12px;opacity:.75}
+body[data-genre] .turn-nav-btn,body[data-genre] .turn-nav-pick{color:#f3eee4;background:rgba(0,0,0,.30);border-color:rgba(255,255,255,.16)}
+.btn-panel-short{display:none}
+
+.page-foot{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:14px 0 12px;padding-top:12px;border-top:1px dashed var(--line)}
+.page-foot[hidden]{display:none}
+.page-foot-btn{min-height:40px;flex:1 1 0;min-width:96px;max-width:200px;white-space:nowrap}
+/* 在看旧回合：不显示输入区和撤回（先回到最新再行动） */
+#view-game[data-page="old"] .composer,#view-game[data-page="old"] .undo-btn{display:none}
+
+/* 「获得 · 物品」标签可点，点开物品介绍 */
+button.badge{cursor:pointer;line-height:inherit;font-family:var(--sans)}
+.badge-item{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+.badge-item::after{content:' ›';opacity:.7}
+.badge-item:hover{filter:brightness(1.15)}
+
+/* 回合列表（复用物品卡片的弹层：电脑居中、手机底部弹出） */
+.turn-list-card{max-width:440px}
+.turn-list-title{margin:0 0 10px;font-size:17px}
+.turn-list{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.turn-row{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;text-align:left;padding:8px 10px;
+  border:1px solid transparent;border-radius:10px;background:transparent;color:var(--ink);font-family:var(--sans);font-size:14px;cursor:pointer}
+.turn-row:hover,.turn-row:active{background:var(--bg-2)}
+.turn-row.current{border-color:var(--accent-2);background:var(--bg-2)}
+.turn-row-no{flex:none;min-width:5.2em;color:var(--muted);font-size:13px;line-height:1.6;font-variant-numeric:tabular-nums}
+.turn-row.current .turn-row-no{color:var(--accent-2)}
+.turn-row-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.turn-row-action{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6;overflow-wrap:anywhere}
+.turn-row-gain{font-size:12px;color:#a9d6ad;overflow-wrap:anywhere}
+
+.compose-fab{display:none}
+
+@media(max-width:600px){
+  /* 顶栏：返回 | ◀ 第 N 回合 ▶ | 角色 ♩ ⋯ ；世界名不常驻，挪到顶栏下面那一行 */
+  .game-head{gap:6px}
+  .game-head-title{display:none}
+  .turn-nav{flex:1;min-width:0;justify-content:center}
+  .turn-nav-btn{width:32px;min-height:40px}
+  .turn-nav-pick{min-height:40px;min-width:0;padding:0 8px;overflow:hidden}
+  #btn-panel{display:inline-flex;align-items:center;justify-content:center;flex:none;padding:8px 10px;border-radius:12px;white-space:nowrap}
+  .btn-panel-full{display:none}
+  .btn-panel-short{display:inline}
+  .more-btn{min-width:40px;min-height:40px}
+  .more-menu-item[data-menu="panel"]{display:none}
+  .turn-page{scroll-margin-top:calc(var(--head-h) + 8px)}
+
+  /* 输入区跟在正文末尾：读到这一回合末尾才出现，滚动中途不占屏 */
+  .stream{padding-bottom:8px}
+  .composer,body[data-genre] .composer{position:static}
+  .page-foot{margin-bottom:calc(14px + env(safe-area-inset-bottom))}
+  /* 没读到末尾时，右下角留一个小按钮直达输入区 */
+  .compose-fab{display:inline-flex;align-items:center;position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:30;
+    min-height:44px;padding:0 16px;border-radius:999px;border:0;font-family:var(--sans);font-size:14px;
+    color:var(--g-on-accent,#fff);background:var(--g-accent,var(--accent));box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer;opacity:.92}
+  .compose-fab[hidden]{display:none}
+  body[data-genre][data-read="paper"] .compose-fab{background:var(--g-accent-deep);color:#fff}
+  /* 朗读播放条：输入区不在屏幕里时贴在屏幕底部，否则留在输入区顶上 */
+  body.composer-away .tts-player-bar{position:fixed;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:31;margin:0;
+    background:var(--panel);box-shadow:0 6px 20px rgba(0,0,0,.45)}
+  body.composer-away:has(.tts-player-bar:not([hidden])) .compose-fab{bottom:calc(64px + env(safe-area-inset-bottom))}
+  #view-game[data-page="old"] .tts-player-bar{position:fixed;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:31;margin:0;
+    background:var(--panel);box-shadow:0 6px 20px rgba(0,0,0,.45)}
+  .badge{padding:4px 10px}
+  button.badge-item{min-height:32px;font-size:13px}
+}

@@ -41,26 +41,19 @@
     toast('正文字号：' + readFontName(next));
   }
 
-  // ---- 手机：往上翻旧回合时，输入框上方出现「↓ 回到最新」，点一下回到最新一回合开头 ----
-  function initLatestButton() {
-    var btn = $('btn-latest');
-    if (!btn) return;
-    var ticking = false;
-    function update() {
-      ticking = false;
-      if (window.innerWidth > 600 || $('view-game').hidden) { btn.hidden = true; return; }
-      var t = typeof lastTurnStart === 'function' ? lastTurnStart() : null;
-      btn.hidden = !(t && t.getBoundingClientRect().top > window.innerHeight * 1.6);
-    }
-    window.addEventListener('scroll', function () {
-      if (!ticking) { ticking = true; requestAnimationFrame(update); }
-    }, { passive: true });
-    window.addEventListener('hashchange', function () { btn.hidden = true; });
-    btn.addEventListener('click', function () {
-      btn.hidden = true;
-      var t = lastTurnStart();
-      if (t) scrollToTurnStart(t);
+  // ---- 回合分页：顶栏「◀ 第 N 回合 ▶」、回合列表、旧回合页脚的上一 / 下一 / 回到最新 ----
+  function initTurnNav() {
+    $('turn-prev').addEventListener('click', function () { stepPage(-1); });
+    $('turn-next').addEventListener('click', function () { stepPage(1); });
+    $('turn-pick').addEventListener('click', function () { openTurnList(); });
+    $('foot-prev').addEventListener('click', function () { stepPage(-1); });
+    $('foot-next').addEventListener('click', function () { stepPage(1); });
+    $('foot-latest').addEventListener('click', function () { showLatestPage(); });
+    window.addEventListener('hashchange', closeTurnList);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('turn-list-modal')) closeTurnList();
     });
+    initComposeFab();
   }
 
   // ---- 浏览器顶栏 / 状态栏颜色跟着题材底色走（iOS Safari、安卓 Chrome）----
@@ -226,7 +219,7 @@
     if ($('g-writing')) $('g-writing').addEventListener('click', function () { cycleWriting(); });
     if ($('g-font')) $('g-font').addEventListener('click', function () { cycleReadFont(); });
     applyReadFont(loadReadFont());
-    initLatestButton();
+    initTurnNav();
     initThemeColor();
     api('/api/me').then(renderPlayerInfo).catch(function () {});
     route();

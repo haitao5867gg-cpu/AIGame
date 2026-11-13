@@ -343,6 +343,8 @@ function relTime(ts, now) {
       }
       return;
     }
+    // 按回合分页：先翻到那一回合所在的页，再对齐到行动行。
+    if (typeof showPageOf === 'function') showPageOf(target);
     // 电脑在 #stream 内滚、手机整页滚，复用 scrollToTurnStart。
     if (typeof scrollToTurnStart === 'function') scrollToTurnStart(target);
     target.classList.add('flash-turn');
@@ -409,6 +411,7 @@ function relTime(ts, now) {
       || ($('timeskip-pop') && !$('timeskip-pop').hidden)
       || !!document.getElementById('prologue-mask')
       || !!document.getElementById('item-card-modal')
+      || !!document.getElementById('turn-list-modal')
       || !!document.getElementById('npc-card-modal')
       || !!document.getElementById('atmosphere-modal')
       || !!document.getElementById('bgm-stats-modal');

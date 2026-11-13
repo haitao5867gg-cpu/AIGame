@@ -92,7 +92,7 @@ test('前端：包含三个视图与 /rebirth 调用', () => {
   assert.ok(/#\/w\//.test(html));
   assert.ok(/#\//.test(html));
   // 进入游戏页恢复叙事：GET log
-  assert.ok(/\/log\?limit=50/.test(html), '应请求 /log 恢复叙事');
+  assert.ok(/\/log\?limit=200/.test(html), '应请求 /log 恢复叙事');
   // 重生接口调用
   assert.ok(/\/rebirth/.test(html), '应调用 /rebirth');
   // 只调用自家 /api/*，不得出现 Key 字样

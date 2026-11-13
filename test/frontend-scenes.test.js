@@ -36,7 +36,7 @@ test('场景插图：appendNarration 支持 sceneId，renderResult / appendLogRe
   // renderResult：res.scene.draw && res.sceneKey 时才用 res.state.life-turn 拼 sceneId 并传入
   assert.ok(/res\.scene && res\.scene\.draw && res\.sceneKey/.test(html), 'renderResult 用 scene.draw 与 sceneKey 判定');
   assert.ok(/res\.state\.life \+ '-' \+ res\.state\.turn/.test(html), 'sceneId 由 life-turn 拼出');
-  assert.ok(/appendNarration\(res\.narration, badgesFromApplied\(res\.applied, res\.stats_drains\), sceneId, sceneCap\)/.test(html),
+  assert.ok(/badgesFromApplied\(res\.applied, res\.stats_drains\)/.test(html) && /appendNarration\(res\.narration, resBadges, sceneId, sceneCap\)/.test(html),
     'renderResult 把 sceneId / sceneCap 传给 appendNarration，并把 stats_drains 交给徽章');
   // appendLogRecord：rec.scene.draw 时用 rec.life-rec.turn
   assert.ok(/rec\.scene && rec\.scene\.draw/.test(html), 'appendLogRecord 用 rec.scene');

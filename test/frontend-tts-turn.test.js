@@ -205,6 +205,8 @@ function makeEnv() {
     document: doc,
     turnStartEl: null,
     scrollToTurnStart() {},
+    pageTarget() { return stream; },   // 分页后正文加到当前页；测试里直接用 #stream
+    lastPage() { return null; },
     Tts: {
       makeTurnButton() {
         const b = doc.createElement('button');

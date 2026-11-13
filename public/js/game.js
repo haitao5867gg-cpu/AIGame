@@ -82,6 +82,181 @@
   function clearStream() {
     $('stream').textContent = '';
     lastChapterShown = 0;
+    pages = [];
+    curPage = -1;
+    closeTurnList();
+    renderTurnNav();
+  }
+
+  // ---- 按回合分页：#stream 里每回合一个 .turn-page，同一时间只显示一页 ----
+  // 开场白、每条回合记录、重生开场各占一页；顶栏「◀ 第 N 回合 ▶」和回合列表在页之间切换。
+  // page: { el, kind: 'opening' | 'turn' | 'rebirth', turn, life, action, gains: [物品名] }
+  var pages = [];
+  var curPage = -1;
+
+  function beginPage(meta) {
+    var p = {
+      el: el('section', 'turn-page'),
+      kind: (meta && meta.kind) || 'turn',
+      turn: meta && meta.turn != null ? meta.turn : null,
+      life: meta && meta.life != null ? meta.life : null,
+      action: '',
+      gains: [],
+    };
+    p.el.hidden = true;
+    $('stream').appendChild(p.el);
+    pages.push(p);
+    return p;
+  }
+
+  // 正文元素一律加到最后一页（还没有页时先开一页，保证不会直接挂在 #stream 下）。
+  function pageTarget() {
+    if (!pages.length) beginPage({ kind: 'opening' });
+    return pages[pages.length - 1].el;
+  }
+
+  function lastPage() { return pages.length ? pages[pages.length - 1] : null; }
+
+  // 发送失败时撤掉刚开的那一页，回到上一页。
+  function dropLastPage() {
+    var p = pages.pop();
+    if (!p) return;
+    if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
+    if (turnStartEl && !turnStartEl.isConnected) turnStartEl = null;
+    showPage(pages.length - 1, { keepScroll: true });
+  }
+
+  function pageLabel(p) {
+    if (!p) return '—';
+    if (p.kind === 'opening') return '开场';
+    if (p.kind === 'rebirth') return '第 ' + (p.life || '?') + ' 世开场';
+    return p.turn != null ? '第 ' + p.turn + ' 回合' : '新回合';
+  }
+
+  function renderTurnNav() {
+    var nav = $('turn-nav');
+    if (!nav) return;
+    var has = pages.length > 0 && curPage >= 0;
+    nav.hidden = !has;
+    var latest = !has || curPage === pages.length - 1;
+    $('view-game').setAttribute('data-page', latest ? 'latest' : 'old');
+    if (!has) return;
+    $('turn-pick-label').textContent = pageLabel(pages[curPage]);
+    $('turn-prev').disabled = curPage <= 0;
+    $('turn-next').disabled = latest;
+    var foot = $('page-foot');
+    if (foot) {
+      foot.hidden = latest;
+      $('foot-prev').disabled = curPage <= 0;
+    }
+  }
+
+  // 显示第 i 页。opts.keepScroll：不动滚动位置（新回合由行动行自己对齐）。
+  function showPage(i, opts) {
+    if (!pages.length) { curPage = -1; renderTurnNav(); return; }
+    i = Math.max(0, Math.min(pages.length - 1, i));
+    for (var k = 0; k < pages.length; k++) pages[k].el.hidden = (k !== i);
+    var changed = (i !== curPage);
+    curPage = i;
+    renderTurnNav();
+    if (typeof syncSceneRail === 'function' && $('panel')) syncSceneRail();
+    if (typeof updateComposeFab === 'function') updateComposeFab();
+    if (!changed || (opts && opts.keepScroll)) return;
+    if (typeof Tts !== 'undefined' && Tts.noteProgrammaticScroll) Tts.noteProgrammaticScroll();
+    if (window.innerWidth <= 600) {
+      // 手机整页滚动：新页开头被顶栏盖住或在屏幕上方时，拉回到顶栏正下方；本来就看得见则不动。
+      var head = document.querySelector('.game-head');
+      var headH = head ? head.getBoundingClientRect().height : 48;
+      var top = pages[i].el.getBoundingClientRect().top - headH - 8;
+      if (top < 0) window.scrollBy(0, top);
+    } else {
+      $('stream').scrollTop = 0;
+    }
+  }
+
+  function showLatestPage() { showPage(pages.length - 1); }
+  function stepPage(d) { showPage(curPage + d); }
+
+  // 让 node 所在的那一页显示出来（线索「跳到那一回合」用）。
+  function showPageOf(node) {
+    for (var k = 0; k < pages.length; k++) {
+      if (pages[k].el.contains(node)) { showPage(k, { keepScroll: true }); return true; }
+    }
+    return false;
+  }
+
+  // ---- 回合列表：点顶栏回合号弹出，新的在上；每行有那一回合的行动和拿到的物品 ----
+  function closeTurnList() {
+    var m = document.getElementById('turn-list-modal');
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+    if (typeof syncBodyScrollLock === 'function') syncBodyScrollLock();
+  }
+
+  function openTurnList() {
+    closeTurnList();
+    if (!pages.length) return;
+    var mask = el('div', 'item-card-mask turn-list-mask');
+    mask.id = 'turn-list-modal';
+    var card = el('div', 'item-card-modal-card turn-list-card');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-label', '回合列表');
+    card.appendChild(el('h2', 'turn-list-title', '回合列表'));
+    var list = el('div', 'turn-list');
+    var cur = null;
+    for (var k = pages.length - 1; k >= 0; k--) {
+      (function (idx) {
+        var p = pages[idx];
+        var row = el('button', 'turn-row' + (idx === curPage ? ' current' : ''));
+        row.type = 'button';
+        row.appendChild(el('span', 'turn-row-no', pageLabel(p)));
+        var body = el('span', 'turn-row-body');
+        body.appendChild(el('span', 'turn-row-action', p.action || (p.kind === 'turn' ? '' : '故事从这里开始')));
+        if (p.gains.length) body.appendChild(el('span', 'turn-row-gain', '获得 · ' + p.gains.join('、')));
+        row.appendChild(body);
+        row.addEventListener('click', function () { closeTurnList(); showPage(idx); });
+        list.appendChild(row);
+        if (idx === curPage) cur = row;
+      })(k);
+    }
+    card.appendChild(list);
+    var close = el('button', 'btn item-card-close', '关闭');
+    close.addEventListener('click', closeTurnList);
+    card.appendChild(close);
+    card.appendChild(sheetCloseButton(closeTurnList));
+    mask.addEventListener('click', function (e) { if (e.target === mask) closeTurnList(); });
+    mask.appendChild(card);
+    document.body.appendChild(mask);
+    if (typeof syncBodyScrollLock === 'function') syncBodyScrollLock();
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'center' });
+  }
+
+  // ---- 手机：输入框跟在正文末尾（读到末尾才出现）；没读到时右下角一个「✎ 行动」可直接跳过去 ----
+  var composerInView = true;
+  function updateComposeFab() {
+    var fab = $('btn-compose');
+    if (!fab) return;
+    var latest = pages.length === 0 || curPage === pages.length - 1;
+    var away = window.innerWidth <= 600 && !$('view-game').hidden && latest && !composerInView;
+    fab.hidden = !away;
+    document.body.classList.toggle('composer-away', window.innerWidth <= 600 && !composerInView);
+  }
+  function initComposeFab() {
+    var fab = $('btn-compose');
+    var composer = document.querySelector('.composer');
+    if (!fab || !composer) return;
+    if (typeof IntersectionObserver !== 'undefined') {
+      new IntersectionObserver(function (entries) {
+        composerInView = entries[entries.length - 1].isIntersecting;
+        updateComposeFab();
+      }, { threshold: 0 }).observe(composer);
+    }
+    fab.addEventListener('click', function () {
+      if (typeof Tts !== 'undefined' && Tts.noteProgrammaticScroll) Tts.noteProgrammaticScroll();
+      composer.scrollIntoView({ block: 'end' });
+      if (!busy) { try { $('action-input').focus({ preventScroll: true }); } catch (_) {} }
+    });
+    window.addEventListener('resize', updateComposeFab);
+    window.addEventListener('hashchange', function () { setTimeout(updateComposeFab, 0); });
   }
 
   function scrollBottom() {
@@ -126,11 +301,13 @@
 
   // 进入世界时定位到最新一回合开头：最后一条行动行，没有则最后一段叙事的开头。
   function lastTurnStart() {
-    var s = $('stream');
+    var lp = lastPage();
+    if (!lp) return null;
+    var s = lp.el;
     var lines = s.querySelectorAll('.action-line');
     if (lines.length) return lines[lines.length - 1];
     var blocks = s.querySelectorAll('.narration-block, .opening');
-    return blocks.length ? blocks[blocks.length - 1] : null;
+    return blocks.length ? blocks[0] : s;
   }
 
   // 回合结束后 2 秒内，若上方有异步插入（插图/物品卡/徽章）把起点推离，重新对齐一次；
@@ -208,7 +385,7 @@
     try {
       var results = await Promise.all([
         api('/api/worlds/' + encodeURIComponent(id)),
-        api('/api/worlds/' + encodeURIComponent(id) + '/log?limit=50'),
+        api('/api/worlds/' + encodeURIComponent(id) + '/log?limit=200'),
       ]);
       var state = results[0];
       var log = results[1];
@@ -216,8 +393,9 @@
       var atmosphereLastLog = Array.isArray(log) && log.length ? log[log.length - 1] : null;
       renderHeader(state, atmosphereLastLog ? { scene: atmosphereLastLog.scene, narration: atmosphereLastLog.narration } : null);
       var sit = state.bible && state.bible.start && state.bible.start.situation;
-      if (sit) appendOpening(sit);
+      if (sit) { beginPage({ kind: 'opening', life: 1 }); appendOpening(sit); }
       (log || []).forEach(appendLogRecord);
+      showPage(pages.length - 1, { keepScroll: true });
       renderPanel(state);
       // 老世界 state.stats 为空：后台补设计，回来后写回并重画（先显示占位文案）。
       if (!Array.isArray(state.stats) || state.stats.length === 0) {
@@ -278,7 +456,8 @@
     $('g-title').textContent = (s.bible && s.bible.title) || '无限世界';
     $('g-life').textContent = '第 ' + s.life + ' 世';
     $('g-turn').textContent = '第 ' + s.turn + ' 回合';
-    $('g-subtitle').textContent = '第 ' + s.life + ' 世 · 第 ' + s.turn + ' 回合';
+    // 手机：顶栏让给回合切换和常用按钮，世界名挪到顶栏下面这一行（不常驻）。
+    $('g-subtitle').textContent = ((s.bible && s.bible.title) || '无限世界') + ' · 第 ' + s.life + ' 世';
     var loc = s.location || (s.bible && s.bible.start && s.bible.start.place) || '—';
     var c = s.clock || {};
     $('g-place').textContent = loc + ' · ' + formatGameDay(c.day) + ' ' + (c.period || '清晨');
@@ -470,7 +649,7 @@
   }
 
   function appendOpening(text) {
-    $('stream').appendChild(el('p', 'opening', text));
+    pageTarget().appendChild(el('p', 'opening', text));
   }
 
   function appendActionLine(action) {
@@ -479,13 +658,15 @@
     bubble.appendChild(el('span', 'action-who', '你'));
     bubble.appendChild(el('span', 'action-text', action));
     line.appendChild(bubble);
-    $('stream').appendChild(line);
+    pageTarget().appendChild(line);
+    var ap = lastPage();
+    if (ap && !ap.action) ap.action = action;
     turnStartEl = line;             // 记住本回合起点
     scrollToTurnStart(line);        // 停在这条行动行，露出下面的「世界在回应…」
   }
 
   function appendDivider(text) {
-    $('stream').appendChild(el('div', 'divider', text));
+    pageTarget().appendChild(el('div', 'divider', text));
   }
 
   // 叙事 v3：正文流里的章名分隔，章名为空时只显示「第 N 章」。
@@ -493,7 +674,7 @@
     var box = el('div', 'chapter-divider');
     box.appendChild(el('span', 'chapter-no', '第 ' + index + ' 章'));
     if (title) box.appendChild(el('span', 'chapter-name', title));
-    $('stream').appendChild(box);
+    pageTarget().appendChild(box);
   }
 
   // 历史回放：/log 记录自带 chapter: { index, title }。
@@ -557,8 +738,12 @@
       s.className = 'badge down drain';
       s.textContent = b.name + ' −' + Math.abs(b.delta || 1) + ' · ' + (b.label || '');
     } else if (b.type === 'item-add') {
-      s.className = 'badge up';
+      // 可点：和角色面板里点物品一样，弹出物品介绍卡片。
+      s = el('button', 'badge up badge-item');
+      s.type = 'button';
       s.textContent = '获得 · ' + b.name;
+      s.setAttribute('aria-label', '查看物品：' + b.name);
+      s.addEventListener('click', function () { if (typeof showItemCard === 'function') showItemCard(b.name); });
     } else if (b.type === 'item-remove') {
       s.className = 'badge down';
       s.textContent = '失去 · ' + b.name;
@@ -581,7 +766,7 @@
     wait.appendChild(el('span', 'narration-wait-label', ($('pending-label') && $('pending-label').textContent) || '世界在回应…'));
     wrap.appendChild(wait);
     wrap.appendChild(el('p', 'narration'));
-    $('stream').appendChild(wrap);
+    pageTarget().appendChild(wrap);
     streamWaitEl = wait;
     return { wrap: wrap, text: '', waitEl: wait };
   }
@@ -619,7 +804,7 @@
       badges.forEach(function (b) { bd.appendChild(makeBadge(b)); });
       wrap.appendChild(bd);
     }
-    $('stream').appendChild(wrap);
+    pageTarget().appendChild(wrap);
     var turn = attachTurnButton(wrap, paras, currentVoiceHints);
     return { paras: paras, hints: currentVoiceHints, wrap: wrap, turn: turn };
   }
@@ -660,7 +845,7 @@
     c.appendChild(el('div', 'event-card-label', '⚠ 世界性事件'));
     c.appendChild(el('div', 'event-card-title', ev.title || ev.theme || '事件'));
     if (ev.desc) c.appendChild(el('div', 'event-card-desc', ev.desc));
-    $('stream').appendChild(c);
+    pageTarget().appendChild(c);
   }
 
   function appendSettlementCard(st) {
@@ -674,13 +859,17 @@
       if (v) parts.push(k + (v > 0 ? ' +' + v : ' −' + Math.abs(v)));
     });
     if (parts.length) c.appendChild(el('div', 'settlement-effects', parts.join('　')));
-    $('stream').appendChild(c);
+    pageTarget().appendChild(c);
   }
 
   function appendLogRecord(rec) {
+    // 每条记录一页；没有行动的重生开场单独成页。
+    var isRebirth = !!(rec.rebirthOpening && rec.narration);
+    var page = beginPage({ kind: isRebirth ? 'rebirth' : 'turn', turn: rec.turn, life: rec.life });
+    (rec.badges || []).forEach(function (b) { if (b && b.type === 'item-add' && b.name) page.gains.push(b.name); });
     showChapterFromRecord(rec); // 叙事 v3：换章时在行动行之前插章名分隔
     // 重生生成的「新一世开场」是该世第一条叙事，回放时用开场样式显示。
-    if (rec.rebirthOpening && rec.narration) { appendOpening(rec.narration); return; }
+    if (isRebirth) { appendOpening(rec.narration); return; }
     if (rec.action) appendActionLine(rec.action);
     // 回放：/log 每条都有 turn，给本回合行动行标上，供「跳到那一回合」定位。
     if (rec.action && rec.turn != null && turnStartEl) {
@@ -1428,8 +1617,10 @@
       hideDeath();
       clearStream();
       // 用后端 LLM 生成（失败时模板兜底）的「新一世开场」作为该世第一条叙事。
+      beginPage({ kind: 'rebirth', life: s.life });
       appendOpening(s.rebirthOpening ||
         ('第 ' + s.life + ' 世，你在陌生的晨光里醒来。名字与面孔都已不同，世界却还是那个世界。'));
+      showPage(pages.length - 1, { keepScroll: true });
       renderHeader(s);
       renderPanel(s);
       renderEventBanner(s.activeEvent);
@@ -1537,6 +1728,8 @@
     if (Date.now() - (rec.at || 0) > PENDING_TURN_MAX_AGE) { clearPendingTurn(id); return; }
     if (busy) {
       // 这一页里的请求还在等（离开世界又回来）：把行动和「构思中」摆回来，写完由 sendAction 重新载入。
+      beginPage({ kind: 'turn', turn: currentState ? currentState.turn + 1 : null });
+      showPage(pages.length - 1, { keepScroll: true });
       appendActionLine(rec.kind === 'timeskip' ? '【时光推进】' + (rec.text || '') : rec.text);
       beginStreamNarration();
       if (!pendingTimer) pendingTimer = setInterval(updatePendingSecs, 1000);
@@ -1548,6 +1741,8 @@
     var lastAction = lines.length ? lines[lines.length - 1].textContent : '';
     setBusy(true);
     setPendingLabel('上一回合还在写，正在取回…');
+    var tempPage = beginPage({ kind: 'turn', turn: currentState ? currentState.turn + 1 : null });
+    showPage(pages.length - 1, { keepScroll: true });
     appendActionLine(rec.kind === 'timeskip' ? '【时光推进】' + (rec.text || '') : rec.text);
     var tempLine = turnStartEl;
     var block = beginStreamNarration();
@@ -1572,6 +1767,7 @@
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
       if (tempLine && tempLine.parentNode) tempLine.parentNode.removeChild(tempLine);
       if (turnStartEl === tempLine) turnStartEl = null;
+      if (lastPage() === tempPage && id === currentWorldId) dropLastPage();
     }
     if (reload && id === currentWorldId) {
       showGame(id);
@@ -1710,8 +1906,16 @@
     if (res.timeSkip && typeof res.timeSkip.label === 'string') {
       appendDivider('—— ' + res.timeSkip.label + '后 ——');
     }
-    var narr = appendNarration(res.narration, badgesFromApplied(res.applied, res.stats_drains), sceneId, sceneCap);
+    var resBadges = badgesFromApplied(res.applied, res.stats_drains);
+    var rp = lastPage();
+    if (rp) {
+      rp.turn = res.state.turn;
+      rp.life = res.state.life;
+      rp.gains = resBadges.filter(function (b) { return b.type === 'item-add'; }).map(function (b) { return b.name; });
+    }
+    var narr = appendNarration(res.narration, resBadges, sceneId, sceneCap);
     if (res.settlement) appendSettlementCard(res.settlement);
+    showPage(pages.length - 1, { keepScroll: true }); // 写完时玩家若翻去了旧回合，带回这一回合
     renderPanel(res.state);
     fetchProfile(); // 每回合刷新跨世界玩家画像（失败静默）
     renderEventBanner(res.state.activeEvent);
@@ -1745,6 +1949,8 @@
     setBusy(true);
     // 撤回按钮保持原状：请求进行中由 busy 守卫拦住点击，result 到来后 renderResult 再按
     // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
+    beginPage({ kind: 'turn', turn: currentState ? currentState.turn + 1 : null, life: currentState ? currentState.life : null });
+    showPage(pages.length - 1, { keepScroll: true });
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine(action);
     usageBeforeTurn = usageTotalNow(usageData);
@@ -1776,6 +1982,7 @@
         renderResult(fb);
       } catch (err2) {
         if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+        if (!stale) dropLastPage(); // 这一回合没写成：撤掉刚开的那一页，回到上一回合
         // 输入内容不丢；再点发送会沿用同一个 ID，服务器若其实已经写完会直接给结果。
         toast(err2 && err2.network ? '网络断了，这一回合可能还在写。网络恢复后再点一次发送，不会重复。' : err2.message);
       }
@@ -1916,6 +2123,8 @@
     // 关闭弹层露出流式叙事：失败时弹层保持关闭、文本框内容保留以便重试。
     closeTimeSkip();
     var label = timeSkipLabel(span);
+    beginPage({ kind: 'turn', turn: currentState ? currentState.turn + 1 : null, life: currentState ? currentState.life : null });
+    showPage(pages.length - 1, { keepScroll: true });
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine('【时光推进·' + label + '】' + (plan || '按眼下的日子过下去'));
     usageBeforeTurn = usageTotalNow(usageData);
@@ -1942,6 +2151,7 @@
         renderResult(fb);
         ok = true;
       } catch (err2) {
+        dropLastPage(); // 没写成：撤掉刚开的那一页
         toast(err2.message); // 失败不清空弹层文本框，重试时内容还在
       }
     } finally {
@@ -1963,7 +2173,12 @@
       rail.id = 'scene-rail';
       panel.insertBefore(rail, panel.firstChild);   // 右侧栏最上方
     }
-    var frames = $('stream').querySelectorAll('.scene-frame');
+    // 分页后「当前插图」= 正在看的这一页（没有就往前找最近一页）的插图。
+    var frames = [];
+    for (var pi = 0; pi < pages.length && pi <= curPage; pi++) {
+      var fs = pages[pi].el.querySelectorAll('.scene-frame');
+      for (var fi = 0; fi < fs.length; fi++) frames.push(fs[fi]);
+    }
     for (var i = 0; i < frames.length; i++) {
       var last = (i === frames.length - 1);
       frames[i].classList.toggle('scene-current', last);
@@ -1989,6 +2204,12 @@
     if (ai && document.activeElement === ai) return;              // 输入框聚焦时不触发
     var t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(t.tagName))) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (e.altKey || e.ctrlKey || e.metaKey || $('view-game').hidden) return;
+      e.preventDefault();
+      stepPage(e.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
     var isSpace = (e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space');
     var dir = 0;
     if (e.key === 'PageDown' || (isSpace && !e.shiftKey)) dir = 1;
