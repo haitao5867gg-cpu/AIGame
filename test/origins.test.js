@@ -59,6 +59,11 @@ test('提示词：建世界要 hero 和 3 个出身，带上「你是谁」；�
   const [sys, user] = prompts.buildWorldMessages('一句话', { identity: '退伍兵，枪法准' });
   assert.match(sys.content, /origins 给 3 个主角出身/);
   assert.match(sys.content, /第一个出身就照玩家写的来/);
+  // 出身要带着世界观给主角的特殊设定，扎根本世界，不给通用身份
+  assert.match(sys.content, /这是三个出身共同的前提：每个出身都必须带着这个设定/);
+  assert.match(sys.content, /扎根在这个世界里/);
+  assert.match(sys.content, /prologue\.me 只写三个出身共通的部分（姓名、世界观给主角的特殊设定/);
+  assert.doesNotMatch(sys.content, /镖局少主|落魄账房/);
   assert.match(sys.content, /"hero"/);
   assert.match(user.content, /退伍兵，枪法准/);
   assert.match(user.content, /请在 hero\.name 里起一个/);
