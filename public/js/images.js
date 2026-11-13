@@ -232,6 +232,23 @@
     box.appendChild(el('span', 'npc-name', '你'));
   }
 
+  // 图下小字：按 data-scene-cap 同步「画面：<desc>」，只用 textContent 写入。
+  function syncSceneCap(frame, visible) {
+    var cap = frame.getAttribute('data-scene-cap');
+    var next = frame.nextSibling;
+    var capEl = (next && next.classList && next.classList.contains('scene-cap')) ? next : null;
+    if (!cap) {
+      if (capEl) capEl.hidden = true;
+      return;
+    }
+    if (!capEl) {
+      capEl = el('div', 'scene-cap');
+      frame.parentNode.insertBefore(capEl, frame.nextSibling);
+    }
+    capEl.textContent = '画面：' + cap;
+    capEl.hidden = !visible;
+  }
+
   // 场景插图：遍历 .scene-frame，按 data-scene 查 imageState.scenes 填图 / 占位 / 隐藏。
   function renderScenes() {
     var scenes = imageState.scenes || {};
@@ -240,11 +257,16 @@
       var key = frame.getAttribute('data-scene');
       var info = scenes[key];
       frame.hidden = false;
-      if (!info || info.status === 'pending') return; // 后端刚排队 / 还在生成：保持占位
-      if (info.status !== 'ready' || !info.url) {     // failed / none：整框隐藏不占位
-        frame.hidden = true;
+      if (!info || info.status === 'pending') {       // 后端刚排队 / 还在生成：保持占位
+        syncSceneCap(frame, false);
         return;
       }
+      if (info.status !== 'ready' || !info.url) {     // failed / none：整框隐藏不占位
+        frame.hidden = true;
+        syncSceneCap(frame, false);
+        return;
+      }
+      syncSceneCap(frame, true);
       var existing = frame.querySelector('img.scene-img');
       if (existing && existing.getAttribute('data-scene-url') === info.url) return; // 同一 url 不重建
       frame.classList.remove('img-pending');

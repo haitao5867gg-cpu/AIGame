@@ -117,7 +117,7 @@ test('GET /images 老存档补图：list 时无索引项会顺手排队，先 pe
     ok: true, json: async () => ({ data: [{ b64_json: JPEG.toString('base64') }] }),
   }));
   configureT(baseCfg({ IMAGE_PROVIDER: 'gateway' }), { fetchImpl: slowFetch });
-  const state = makeState();
+  const state = makeState({ itemInfo: { '无字信': { desc: '一封没有字的信' }, '旧铜灯': { desc: '灯身斑驳的铜灯' } } });
   const first = images.imageList(dataDir, state);
   assert.equal(first.items['无字信'].status, 'pending', '请求时顺手排队，立即返回 pending');
   assert.equal(first.npcs['守夜人'].status, 'pending');

@@ -64,7 +64,7 @@ const DEFAULT_PERIOD = '清晨';
 // role/desc/voice 生成头像，不能删），过滤掉 want 等隐藏动机以及任何未知私有字段。
 // 玩家「已知档案」来自叙事证据（npcProfiles），绝不从这里整体搬 desc/want。
 const BIBLE_PUBLIC_FIELDS = Object.freeze([
-  'name', 'displayName', 'aliases', 'role', 'desc', 'voice', 'portraitName',
+  'name', 'displayName', 'aliases', 'role', 'desc', 'look', 'voice', 'portraitName',
 ]);
 
 // 常见中性属性名：特征标签要么在白名单里，要么在叙事原文中出现，

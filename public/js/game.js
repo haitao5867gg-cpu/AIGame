@@ -601,11 +601,12 @@
   // 一次性渲染完整叙事（历史回放 / result 最终补齐）：按 \n\n 拆成多个 <p>，
   // 旧存档没有分段的长段落按句末标点每约 80 字自动切段。
   // sceneId 为 "<life>-<turn>" 时，块最上面放一个插图框（初始闪烁占位，由 renderScenes 填图）。
-  function appendNarration(text, badges, sceneId) {
+  function appendNarration(text, badges, sceneId, sceneCap) {
     var wrap = el('div', 'narration-block');
     if (sceneId) {
       var frame = el('div', 'scene-frame img-pending');
       frame.setAttribute('data-scene', sceneId);
+      if (typeof sceneCap === 'string' && sceneCap) frame.setAttribute('data-scene-cap', sceneCap);
       wrap.appendChild(frame);
     }
     var paras = [];
@@ -692,8 +693,9 @@
     }
     if (rec.narration) {
       var logSceneId = (rec.scene && rec.scene.draw) ? (rec.life + '-' + rec.turn) : null;
+      var logSceneCap = (rec.scene && rec.scene.draw && typeof rec.scene.desc === 'string') ? rec.scene.desc : '';
       currentVoiceHints = rec.voice_hints || [];
-      appendNarration(rec.narration, rec.badges || [], logSceneId);
+      appendNarration(rec.narration, rec.badges || [], logSceneId, logSceneCap);
     }
     if (rec.settlement) appendSettlementCard(rec.settlement);
     if (rec.death) appendDivider('第 ' + rec.life + ' 世 · 终');
@@ -1702,12 +1704,13 @@
     if (res.event) appendEventCard(res.event);
     var sceneId = (res.scene && res.scene.draw && res.sceneKey)
       ? (res.state.life + '-' + res.state.turn) : null;
+    var sceneCap = (res.scene && typeof res.scene.desc === 'string') ? res.scene.desc : '';
     currentVoiceHints = res.voice_hints || [];
     // 时光推进：在事件卡片之后、叙事之前插一条分隔，label 非字符串时不插。
     if (res.timeSkip && typeof res.timeSkip.label === 'string') {
       appendDivider('—— ' + res.timeSkip.label + '后 ——');
     }
-    var narr = appendNarration(res.narration, badgesFromApplied(res.applied, res.stats_drains), sceneId);
+    var narr = appendNarration(res.narration, badgesFromApplied(res.applied, res.stats_drains), sceneId, sceneCap);
     if (res.settlement) appendSettlementCard(res.settlement);
     renderPanel(res.state);
     fetchProfile(); // 每回合刷新跨世界玩家画像（失败静默）
@@ -1971,6 +1974,8 @@
     rail.textContent = '';
     var mirror = el('div', 'scene-frame img-pending');
     mirror.setAttribute('data-scene', key);
+    var cap = frames[frames.length - 1].getAttribute('data-scene-cap');
+    if (cap) mirror.setAttribute('data-scene-cap', cap);
     rail.appendChild(mirror);
     if (typeof renderScenes === 'function') renderScenes();
   }

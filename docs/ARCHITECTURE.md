@@ -117,6 +117,7 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 - `images-core.test.js` — 出图核心与索引。
 - `images-providers.test.js` — 各提供方与回退链。
 - `images-style.test.js` — 画风生成与缓存。
+- `images-fidelity.test.js` — 图文对得上：内容类失败只换一张、物品图照介绍画、中文提示词写法、人物外貌来源、场景参考图筛选。
 - `cf-budget.test.js` — Cloudflare 额度与冷却。
 - `imgsupervisor.test.js` — 本地画图服务守护。
 - `items-info.test.js` — 物品介绍。
@@ -222,7 +223,7 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 5. **对话模型**：`llm.js` 的 `createClient` 调 OpenAI 兼容 `/chat/completions`；流式走 `completeStream` + `httpChatStream`（SSE），`createNarrationDecoder` 边收边解出 `narration` 增量，由 `server.js` 以 `event: delta` 推给前端，最后 `event: result` / `error`；非流式走 `complete`。`PURPOSES` 区分用途；`LLM_MOCK=1` 时用 `mockFor` 返回固定结构、不联网（mock 可带合法 `npc_updates`，只针对叙事里真实出现的人物与原文）；用量写 `usage.jsonl`。
 6. **引擎裁定**：`engine/turn.js` 的 `resolveTurn` 先用 `proposal.js` 的 `validateProposal` 把模型输出的 JSON 提议消毒成可应用 diff（属性、物品、NPC 态度、场景、`voice_hints`、`focus`、`adult` 等全部 clamp / 白名单校验），再推进状态、结算事件、判定顶点 / 死亡、生成编年史。`proposal.npc_updates` 交给 `npcs.applyNpcMemory` 校验 / 合并成 `result.npc_memory`（私有，只此一处出现），被拒项记入内部日志、不给玩家看。引擎是纯函数，不调 LLM、不读写文件。
 7. **存档与事件日志**：`store.js` 回合前 `backupForUndo` 复制 `state.prev.json`，`saveWorld` 原子覆盖 `state.json`（含 `npcProfiles` / `npcMemoryVersion`），`appendEvent` 追加 `events.jsonl`（含私有 `npc_memory`，绝不进公开 `applied` / 回合 / 日志 / 导出响应），`appendUsage` 追加 `usage.jsonl`；删除移入 `_trash`，撤回用 `.prev` 还原。
-8. **出图**：`server.js` 在写库后、锁外 `triggerImages` / `triggerScene` 异步排队。`images.js` 的 `listForState` 汇总主角 + 当前物品 + NPC，`imageKey` 生成共享缓存键，`createImages` 按 `IMAGE_PROVIDER` 回退链逐家尝试（失败冷却后排到最后）；提示词由 `gatewayPrompt` / `localPrompt` / `scenePromptZh` / `scenePromptEn` 生成并译英文，画风缓存 `styles.json`、结果缓存 `index.json`；场景图由 `collectRefs` 收集 ≤4 张已就绪参考图（主角、≤2 NPC、≤1 物品）走多参考图模型，失败落回文生图。Cloudflare 当日 Neurons 达 `CLOUDFLARE_RESERVE_FROM` 后，物品 / 头像 / 主角让给回退链下一家、把额度留给场景图；收到 `daily free allocation` 429 冷却到下一个 UTC 零点。
+8. **出图**：`server.js` 在写库后、锁外 `triggerImages` / `triggerScene` 异步排队。`images.js` 的 `listForState` 汇总主角 + 当前物品 + NPC（带 `look`：看得见的外貌），`imageKey` 生成共享缓存键（物品有介绍时 key 带介绍，`resolveItemEntry` 兼容只按名字的老图），`createImages` 按 `IMAGE_PROVIDER` 回退链逐家尝试（服务出问题才冷却后排到最后；内容类失败只换这一张）；没介绍的物品由 `server.js` 的 `triggerImagesAfterInfo` 先补介绍再画；提示词由 `gatewayPrompt` / `localPrompt` / `scenePromptZh` / `scenePromptEn` 生成并译英文，画风缓存 `styles.json`、结果缓存 `index.json`；场景图由 `collectRefs` 收集 ≤4 张已就绪参考图（主角、≤2 NPC、≤1 物品）走多参考图模型，失败落回文生图。Cloudflare 当日 Neurons 达 `CLOUDFLARE_RESERVE_FROM` 后，物品 / 头像 / 主角让给回退链下一家、把额度留给场景图；收到 `daily free allocation` 429 冷却到下一个 UTC 零点。
 9. **朗读**：前端 `public/js/tts.js` 按 `voice_hints` 把整回合分段排队；服务端 `tts.js` 的 `buildSsml` / `buildSegmentsSsml` / `segmentInner` 把参数与文本拼成 Azure SSML（`prosody` + `express-as` + `voice`），`/api/tts` 返回 mp3，音频缓存在 `tts/`。每人每日字符上限、Azure 月度额度达停用阈值后回退浏览器 `speechSynthesis`；成人段落只走浏览器朗读。
 
 **近期正文完整保留与旧存档兼容**：`state.recent` 恒为最近 6 条，每条保留引擎已接纳的完整正文，上限 `RECENT_NARRATION_MAX = NARRATION_MAX = 1200`（`engine/constants.js` 中两处上限绑定，避免漂移）；`engine/turn.js` 的 `resolveTurn` 与 `engine/life.js` 的 `applyRebirthOpening` 共用该边界。`events.jsonl` 一直记录完整正文，因此旧存档（正文被截成 300 字）可在编排层补回：`game.js` 的 `restoreRecentNarration(state, events)` 是纯函数，以 `turn + action + rebirthOpening` 匹配、复用 `visibleEventRecords` 的撤回语义（只认当前可见记录、不复活撤回正文）、仅当完整正文以现有前缀开头才替换，并维持 `6×1200` 硬上限、不引入 `raw / proposal / apex / usage` 等内部字段。文件 IO 放在 `maybeRestoreRecent`，仅在 `takeTurn` 拼提示词前、且检测到 300 字疑似截断条目时读一次本世界日志；恢复只读不写盘，完整 `recent` 随本回合正常落库自然沿用。普通读（`getWorld` / `/log` / `export`）不触发扫描；缺日志 / 无匹配 / 异常均沿用原记录、不阻断流程。
@@ -312,7 +313,7 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 | 第一幕衔接 | `src/prompts.js` | `buildTurnMessages` 里 `section('第一幕（开场衔接）', …)`（`plan.opening` 时追加） |
 | 建世界 / 序章 | `src/prompts.js` | `buildWorldMessages` + `WORLD_OUTPUT_FORMAT`（含 `prologue` / `start.items_info`）、`buildPrologueMessages`（老世界补序章）、`buildRebirthOpeningMessages`、`buildChapterMessages` / `buildApexMessages` / `buildEpitaphMessages` |
 | 物品介绍 | `src/prompts.js` | `buildItemsInfoMessages`（批量补介绍）、`TURN_OUTPUT_FORMAT` 的 `items_info` 规则；引擎消毒 `engine/util.js` `cleanItemInfo`；接口 `GET /api/worlds/:id/items` |
-| 出图提示词 | `src/images.js` | `gatewayPrompt`、`localPrompt`、`scenePromptZh`、`scenePromptEn`、`STYLE_RULES`、`DEFAULT_STYLE`、`inferStyle` / `ruleArt` / `styleFromArt`、`cleanEnglish`、`collectRefs`、`FILE_NAME_RE`；模型输出侧 `src/prompts.js` `TURN_OUTPUT_FORMAT` 的 `scene` 字段（`draw` / `cast` / `items` / `action`） |
+| 出图提示词 | `src/images.js` | `gatewayPrompt`、`localPrompt`、`scenePromptZh`、`scenePromptEn`、`negativePromptZh`（负面提示词，正向提示词不写「不要」）、`itemInScene` / `shortNoun`（场景参考图筛选与说明）、`STYLE_RULES`、`DEFAULT_STYLE`、`inferStyle` / `ruleArt` / `styleFromArt`、`cleanEnglish`、`collectRefs`、`FILE_NAME_RE`；模型输出侧 `src/prompts.js` `TURN_OUTPUT_FORMAT` 的 `scene` 字段（`draw` / `cast` / `items` / `action`） |
 | 朗读 SSML | `src/tts.js` | `buildSsml`、`buildSegmentsSsml`、`segmentInner`、`prosodyFor`、`SPEAK_OPEN`、`VOICES` / `MOODS` / `DEFAULT_VOICE`；前端 `public/js/tts.js`（分段排队、音色与情绪） |
 
 ## 7. 测试

@@ -146,7 +146,7 @@ test('别人的世界 GET /items 返回 404', async () => {
 });
 
 // ---- 物品图提示词 ----
-test('物品图中文提示词含介绍文字：listForState 带 desc、gatewayPrompt 附上，缓存 key 不变', () => {
+test('物品图中文提示词含介绍文字：listForState 带 desc、gatewayPrompt 附上，缓存 key 带介绍', () => {
   const desc = '灯身斑驳却不灭的旧铜灯';
   const st = ih.makeState({
     id: 'witeminfo', character: { items: ['旧铜灯'] }, npcAttitude: {},
@@ -156,14 +156,20 @@ test('物品图中文提示词含介绍文字：listForState 带 desc、gatewayP
   const job = list.find((x) => x.kind === 'item' && x.name === '旧铜灯');
   assert.ok(job, 'listForState 应产出物品项');
   assert.equal(job.desc, desc, '物品项应带 itemInfo 的 desc');
-  assert.equal(job.name, '旧铜灯', 'keyName 仍只是物品名（缓存 key 不含 desc）');
+  assert.equal(job.name, '旧铜灯', 'keyName 仍只是物品名');
 
   const zh = images.gatewayPrompt(Object.assign({}, job, { style: { zh: '水墨' }, bibleTitle: '雾港' }));
-  assert.ok(zh.includes('（' + desc + '）'), '中文提示词应含介绍文字');
+  assert.ok(zh.startsWith('旧铜灯：' + desc + '。'), '中文提示词以「物品名：介绍」开头');
 
-  // 缓存 key 只由 kind|name|style 决定，与 desc 无关（已有图不重画）
-  assert.equal(images.imageKey('item', '旧铜灯', '水墨', 'witeminfo'),
-    images.imageKey('item', '旧铜灯', '水墨', 'witeminfo'));
+  // 缓存 key：有介绍时带上介绍（图照着介绍画，介绍变了要重画）；没介绍时仍只按名字（老图不重画）。
+  const bare = images.imageKey('item', '旧铜灯', '水墨', 'witeminfo');
+  assert.equal(bare, images.imageKey('item', '旧铜灯', '水墨', 'wother'), '物品 key 不分世界');
+  assert.equal(bare, images.imageKey('item', '旧铜灯', '水墨', 'witeminfo', ''), '空介绍等于没介绍');
+  assert.notEqual(bare, images.imageKey('item', '旧铜灯', '水墨', 'witeminfo', desc));
+  assert.equal(images.imageKey('item', '旧铜灯', '水墨', 'witeminfo', desc),
+    images.imageKey('item', '旧铜灯', '水墨', 'wother', desc), '同名同画风同介绍跨世界共用');
+  assert.notEqual(images.imageKey('item', '旧铜灯', '水墨', 'witeminfo', desc),
+    images.imageKey('item', '旧铜灯', '水墨', 'witeminfo', desc + '，灯芯已换'));
 });
 
 test('物品图英文翻译 subject 也附上介绍文字', async (t) => {

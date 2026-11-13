@@ -411,6 +411,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .scene-img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in;
   opacity:0;transition:opacity .6s}
 .scene-img.loaded{opacity:1}
+.scene-cap{font-family:var(--sans);font-size:12px;line-height:1.5;color:var(--muted);
+  margin:-6px 2px 12px;white-space:normal;overflow-wrap:anywhere}
 .narration{font-size:17px;line-height:1.9;white-space:pre-wrap;margin:0 0 1.15em}
 .narration-block>.narration:last-of-type{margin-bottom:0}
 .opening{font-size:17px;line-height:1.95;white-space:pre-wrap;color:var(--ink);
@@ -801,6 +803,9 @@ p.narration.tts-speaking{background:rgba(224,84,63,.08);border-left:3px solid va
   #stream .scene-frame.scene-current{display:none}
   /* 历史回合：各回合开头留高 80px 小缩略图，点开放大 */
   #stream .scene-frame.scene-history{width:142px;height:80px;aspect-ratio:auto;max-height:none;margin:4px 0 10px}
+  #stream .scene-frame.scene-current + .scene-cap{display:none}
+  #stream .scene-frame.scene-history + .scene-cap{display:none}
+  #scene-rail .scene-cap{margin:6px 2px 0}
 }
 
 /* ===== 认识的人：两行列表 + 搜索 + 人物档案卡 ===== */

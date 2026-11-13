@@ -243,8 +243,8 @@ async function runTurnOnce(g, images, dataDir, id, player, body, onDelta, hooks)
   delete input.attachOnly;
   const exec = async () => {
     const result = await g.takeTurn(id, input, onDelta, hooks);
-    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
-    triggerImages(images, dataDir, result && result.state);
+    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC（没介绍的物品等介绍补出来再画）。
+    triggerImagesAfterInfo(g, images, dataDir, result && result.state);
     if (result) result.sceneKey = triggerScene(images, dataDir, result);
     return result;
   };
@@ -365,13 +365,41 @@ function serveStatic(req, res, pathname, isHead) {
 
 // 锁外异步触发图片排队：只用公开状态里的 character.items / npcAttitude / bible。
 // 完全不 await（ensureImages 内部同步登记后自行异步出图），异常只写日志，绝不影响响应。
-function triggerImages(images, dataDir, state) {
+// opts.skipBareItems：还没有介绍的物品这次先不画。
+function triggerImages(images, dataDir, state, opts) {
   if (!images || !state) return;
   try {
-    images.ensureImages(dataDir, state, images.listForState(state));
+    images.ensureImages(dataDir, state, images.listForState(state), opts);
   } catch (err) {
     console.warn('[images] 触发异常（已忽略）：' + (err && err.message ? err.message : err));
   }
+}
+
+// 当前物品里有没有还没介绍的。
+function hasBareItems(state) {
+  const items = (state && state.character && Array.isArray(state.character.items)) ? state.character.items : [];
+  const info = (state && state.itemInfo && typeof state.itemInfo === 'object') ? state.itemInfo : {};
+  return items.some((n) => typeof n === 'string' && n.trim()
+    && !(info[n] && typeof info[n] === 'object' && typeof info[n].desc === 'string' && info[n].desc));
+}
+
+// 物品图是照着介绍画的：有物品还没介绍时，先画别的，后台把介绍补出来再画这些物品
+// （以前是只按名字先画一张，之后介绍出来了图也不换，卡片上的介绍和图对不上）。
+// 介绍补不出来（模型报错）也照样按名字画一张，不让物品一直没有图。完全不 await，绝不影响响应。
+function triggerImagesAfterInfo(g, images, dataDir, state) {
+  if (!images || !state) return;
+  if ((images.config && images.config.off) || !hasBareItems(state)) {
+    triggerImages(images, dataDir, state);
+    return;
+  }
+  triggerImages(images, dataDir, state, { skipBareItems: true });
+  const id = state.id;
+  Promise.resolve()
+    .then(() => g.ensureItemInfo(id))
+    .catch(() => { /* 补不出介绍：下面照样按名字画 */ })
+    .then(() => g.getWorld(id))
+    .then((fresh) => triggerImages(images, dataDir, fresh || state))
+    .catch((err) => console.warn('[images] 补物品介绍后出图异常（已忽略）：' + (err && err.message ? err.message : err)));
 }
 
 // 只在 draw=true 的回合触发场景登记，同步拿到 12 位 key（或 null）；异常只写日志，绝不影响响应。
@@ -633,8 +661,8 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
           : await run();
         // 建世界成功后登记归属；无记录的老世界默认归 host。
         accessMod.setOwner(dataDir, world.id, player.id);
-        // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
-        triggerImages(images, dataDir, world);
+        // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs（没介绍的物品等介绍补出来再画）。
+        triggerImagesAfterInfo(g, images, dataDir, world);
         if (key) {
           const timings = tracker.finish(key, world.id);
           if (timings) buildProgress.recordStats(dataDir, timings);
@@ -732,6 +760,8 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
     if (!requireOwner(res, dataDir, id, player)) return;
     const items = await g.ensureItemInfo(id);
+    // 介绍补完（或补不出来）之后，把还没图的物品排上队：GET /images 那边不画没介绍的物品，等的就是这里。
+    try { triggerImages(images, dataDir, await g.getWorld(id)); } catch (_) { /* 绝不影响响应 */ }
     return sendJson(res, 200, { items });
   }
 
@@ -924,7 +954,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
       const body = await readJsonBody(req);
       const result = await g.rebirth(id, body);
       // 重生后排队新的起始物品（及仍在的 NPC）。
-      triggerImages(images, dataDir, result);
+      triggerImagesAfterInfo(g, images, dataDir, result);
       return sendJson(res, 200, result);
     }
     if (sub === 'undo' && method === 'POST') {

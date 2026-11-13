@@ -65,6 +65,7 @@ function rebirth(state, input) {
   const s = cloneState(state);
   s.character.name = name;
   s.character.appearance = appearance;
+  delete s.character.look; // 上一世的画师外貌不再适用：新一世按玩家新填的形象画
   s.character.alive = true;
   // 重生给 1 个符合世界观的基础物品（死亡时已清空，这里补上）。
   s.character.items = [baseItem(s.bible)];

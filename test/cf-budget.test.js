@@ -197,7 +197,7 @@ test('4006 / daily free allocation 的 429 后冷却到下一个 UTC 零点，�
 
 // ---- 5. collectRefs 不带水印 ----
 
-test('collectRefs 只收 cloudflare / local 的图，不收 siliconflow 与缺 provider 的老记录', (t) => {
+test('collectRefs 不挑提供方：带水印的 siliconflow 图、缺 provider 的老记录也当参考图', (t) => {
   const dataDir = tmpDir(t);
   const imgDir = path.join(dataDir, 'images');
   fs.mkdirSync(imgDir, { recursive: true });
@@ -225,10 +225,10 @@ test('collectRefs 只收 cloudflare / local 的图，不收 siliconflow 与缺 p
   fs.writeFileSync(path.join(imgDir, 'index.json'), JSON.stringify(idx));
 
   const refs = images.collectRefs(dataDir, WORLD, style, heroId, castNames, itemNames);
-  assert.equal(refs.length, 2, '只应收 local 头像 + cloudflare 物品图');
-  assert.equal(refs.filter((r) => r.type === 'person').length, 1);
+  assert.equal(refs.length, 4, '主角 + 两个 NPC + 物品都收');
+  assert.equal(refs.filter((r) => r.type === 'person').length, 3);
   assert.equal(refs.filter((r) => r.type === 'item').length, 1);
-  assert.ok(refs.every((r) => !r.path.includes('hero-')), '不得收 siliconflow 的主角形象图');
+  assert.ok(refs.some((r) => r.path.includes('hero-')), 'siliconflow 画的主角形象图也收');
 });
 
 // ---- 6. /api/usage/today ----

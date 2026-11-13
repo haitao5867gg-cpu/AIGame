@@ -256,12 +256,19 @@ test('提示词：安静模式下被强制结算时要求写成背景里发生�
 
 // ---------- 出图提示词 ----------
 
-test('出图提示词：中文含「裸露，色情」，英文场景含 fully clothed characters（只写正面词）', () => {
+test('出图提示词：中文负面词含「裸露，色情」、正向只写「衣着完整」，英文场景含 fully clothed characters（只写正面词）', () => {
   const style = { zh: '水墨', en: 'ink wash', artZh: '水墨', eraZh: '古代', eraEn: 'ancient', avoidZh: '现代物品' };
-  const zh = images.gatewayPrompt({ kind: 'item', name: '旧铜灯', desc: '灯', style, bibleTitle: '雾港' });
-  assert.ok(zh.includes('不要出现裸露，色情'), '中文道具提示词');
+  // 图像模型不懂「不要」：正向提示词只写正面词，「裸露，色情」放进负面提示词。
+  const zhNpc = images.gatewayPrompt({ kind: 'npc', name: '守夜人', role: '引路者', desc: '提灯的人', style, bibleTitle: '雾港' });
+  assert.ok(zhNpc.includes('衣着完整'), '中文人物提示词写正面词');
   const zhScene = images.scenePromptZh({ desc: '两人对坐', cast: [], style });
-  assert.ok(zhScene.includes('不要出现裸露，色情'), '中文场景提示词');
+  assert.ok(zhScene.includes('人物衣着完整'), '中文场景提示词写正面词');
+  for (const p of [zhNpc, zhScene, images.gatewayPrompt({ kind: 'item', name: '旧铜灯', desc: '灯', style })]) {
+    assert.equal(/不要|裸露|色情/.test(p), false, '正向提示词里不出现「不要」和负面词');
+  }
+  for (const job of [{ kind: 'item', name: '旧铜灯', style }, { kind: 'npc', name: '守夜人', style }, { kind: 'scene', desc: '两人对坐', style }]) {
+    assert.ok(images.negativePromptZh(job).includes('裸露，色情'), '负面提示词固定带安全项');
+  }
   const en = images.scenePromptEn('two people talking', style);
   assert.ok(en.includes('fully clothed characters'), '英文场景提示词');
   assert.equal(/nude|nsfw/i.test(en), false, '英文只写正面词');

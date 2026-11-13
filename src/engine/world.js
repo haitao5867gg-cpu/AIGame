@@ -62,6 +62,8 @@ function createWorld(spec, opts) {
     character: {
       name: s.name || '',
       appearance: s.appearance || '',
+      // 给画师看的外貌（建世界时模型写的，只用于出图）；没有就不带这个字段，出图退回 appearance。
+      ...(typeof s.look === 'string' && s.look.trim() ? { look: s.look.trim() } : {}),
       attrs: allocateAttrs(s.alloc),
       items: startItems,
       marks: [],

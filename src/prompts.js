@@ -351,12 +351,12 @@ const WORLD_OUTPUT_FORMAT = [
   '输出 JSON：',
   '{"genre":"xuanhuan|urban|game|horror|cozy|general",',
   ' "bible":{"title":...,"tone":...,"rules":[str],"places":[{name,desc}],',
-  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,want,voice,rank}],',
+  ' "factions":[{name,desc,stance}],"npcs":[{name,role,desc,look,want,voice,rank}],',
   ' "start":{"place","period","situation","items":[str x2~3],"items_info":{"物品名":{"desc","type"}},"facts":[str x2~3]},',
   ' "prologue":{"world":"…","me":"…","goal":"…","now":"…"},',
  ' "stats":[{name,kind:"gauge",icon,desc,max,start,drift,warn},{name,kind:"rank",icon,desc,ranks,start}],"eventThemes":[str x6]},',
   ' "apex":{"title":...,"hint":...,"condition":{"attrs":{"声望":30}}},',
-  ' "hero":{"name":"主角名","appearance":"一句外貌","voice":"主角的说话方式 ≤20 字"},',
+  ' "hero":{"name":"主角名","appearance":"一句外貌","look":"给画师看的外貌 ≤40 字","voice":"主角的说话方式 ≤20 字"},',
   ' "edge":{"name":"≤8 字","look":"≤40 字","rules":["≤30 字 x3~4"],"cost":"≤30 字","secret":"≤30 字"},',
   ' "origins":[{"title":"≤8 字","blurb":"≤40 字","style":"冒险|审慎|共情|权谋|坚韧|秩序","attrs":{"体魄":2,"心智":1,"魅力":1,"气运":0,"声望":1,"资源":1},"item":{"name":"≤12 字","desc":"≤60 字","type":"≤6 字"}}]}',
   'genre 按玩家那句话世界观和 bible 的题材判断，只取 xuanhuan / urban / game / horror / cozy / general 之一；',
@@ -372,6 +372,8 @@ const WORLD_OUTPUT_FORMAT = [
   '基础介绍展示给玩家，所以这里只写能公开看见的，绝不塞入隐藏身份 / 暗线 / 隐秘目标 / 幕后动机；',
   '暗线、隐秘目标、不可告人的欲望一律放进 npcs[].want（只作模型内部驱动反应，不进公开介绍），' +
   '不要混进 role / desc / voice 的公开描述里；',
+  'npcs[].look 是给画师画头像用的外貌，一句话 ≤40 字，只写一眼看得见的：性别、年纪、体型、发型、衣着，再加一处认得出他的标志（疤、眼镜、手里常拿的东西）；' +
+  '不写性格、来历、说话方式（如「四十上下的妇人，圆脸，银簪挽发，青布围裙，手里总拨着算盘」）；每个人长相要拉开差别；',
   'npcs[].want 写清「这个人想要什么」（能驱使他的欲望/立场），每个 NPC 各不相同，用于让反应有差异；',
   'npcs[].voice 写「这个人的说话方式」，≤20 字（如「短句铁令，从不解释」「哄劝式隐喻，句句带笑」「记账式冷语，只报数目」），' +
   '  voice 只描述风格（句式长短、语气、用词习惯），不要写成『句尾加某个字』『每句都以…结尾』这类机械规则；' +
@@ -384,6 +386,8 @@ const WORLD_OUTPUT_FORMAT = [
   '  用来锁定开局时间线与世界规则（例如满月究竟是哪天）；这些会被写入世界事实账本，之后的叙事必须遵守、不得改写或前后矛盾；',
   'apex 是玩家不可见的隐藏长期目标，condition.attrs 用 体魄/心智/魅力/气运/声望/资源 中的键与可达阈值。',
   'hero：玩家给了主角姓名就原样用；没给就起一个符合世界观的名字。appearance 一句话外貌（玩家给了形象就照着写）。voice 是主角说话的腔调（≤20 字，贴合出身和性子，和 NPC 的 voice 一样只写风格）。',
+  'hero.look 是给画师画主角用的外貌，≤40 字，写法和 npcs[].look 一样只写看得见的；玩家给的形象常是「帅气冷酷」「无人能敌」这种画不出来的词，' +
+  '要以它为准落成画得出来的样子（如「二十出头的男子，短发，眉眼冷峻，黑色立领外套」）；性别按玩家的设定，没说明就按世界观里最自然的写，衣着要符合这个世界的时代。',
   'npcs[].rank：修仙题材必填，这个人的修为（≤8 字，用 stats 里境界阶梯的阶名，或更高的境界名），其他题材不填；',
   'edge：只有修仙题材给，其他题材不填。这是主角的金手指——一件只有主角有、能让他比别人修炼得快或活得下去的东西或本事：name 叫什么；look 它刚出现时看上去是什么样（主角最初能感知到的样子）；rules 是 3~4 条它的隐藏规律，主角要靠试探一条条摸清，每条都能换来看得见的好处（由浅到深）；cost 用它的代价或限制；secret 为什么绝不能让人知道。它的来历是全书的核心谜底，不写进 edge。',
   'origins 给 3 个主角出身，玩家开局时从中选一个：',
