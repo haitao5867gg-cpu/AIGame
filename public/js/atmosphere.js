@@ -6,6 +6,7 @@ var Atmosphere = (function () {
   var backdrop = null, catalogFailed = false;
   var sceneArt = null, shownSrc = null, sceneToken = 0;
   var localEdits = {}, voiceState = { active: false, paused: false };
+  var tracks = null, tracksToken = 0, trackQueue = [], trackTimer = null;
   var READING_LABELS = { auto: '跟随时辰', paper: '纸页', night: '夜色' };
   var READING_CYCLE = { auto: 'paper', paper: 'night', night: 'auto' };
   var READING_HINT = { auto: '（白天亮、夜里暗）', paper: '（始终亮色）', night: '（始终暗色）' };
@@ -26,11 +27,83 @@ var Atmosphere = (function () {
       if (catalog) controller.setCatalog(catalog);
       controller.setPrefs(prefs); controller.setHidden(document.hidden === true);
       controller.setVoiceState(voiceState);
+      if (tracks && controller.setTracks) controller.setTracks(tracks);
+      if (controller.onTrack) controller.onTrack(queueTrackEvent);
       controller.onStatus(refreshStatus);
     }
     return controller;
   }
-  function status() { return controller ? controller.getStatus() : { enabled: prefs.enabled, unlocked: false, playing: false, blocked: false, error: false }; }
+  function status() { return controller ? controller.getStatus() : { enabled: prefs.enabled, unlocked: false, playing: false, blocked: false, error: false, track: null, trackCount: 0 }; }
+  // ---- 配乐曲目单与播放统计 ----
+  // 每次进世界重新取一次曲目单：主人往服务器放了新的音频文件，下次进世界就能听到。
+  function loadTracks() {
+    var token = ++tracksToken;
+    return fetch('/api/bgm/catalog', { credentials: 'same-origin', cache: 'no-cache' })
+      .then(function (r) { if (!r.ok) throw Error(); return r.json(); })
+      .then(function (d) {
+        if (token !== tracksToken || !d || !Array.isArray(d.tracks)) return;
+        tracks = d.tracks; if (controller && controller.setTracks) controller.setTracks(tracks); refreshStatus();
+      }).catch(function () { /* 取不到就用自带的每档一首 */ });
+  }
+  function flushTrackEvents() {
+    clearTimeout(trackTimer); trackTimer = null;
+    if (!trackQueue.length) return;
+    var batch = trackQueue.splice(0, 50);
+    // 统计丢一条不要紧，失败不重试、不打扰玩家。
+    try {
+      fetch('/api/bgm/events', { method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: batch }) }).catch(function () {});
+    } catch (_) {}
+    if (trackQueue.length) trackTimer = setTimeout(flushTrackEvents, 500);
+  }
+  function queueTrackEvent(ev) {
+    if (!ev || typeof ev.id !== 'string') return;
+    trackQueue.push({ id: ev.id, seconds: ev.seconds, reason: ev.reason, first: ev.first === true });
+    if (!trackTimer) trackTimer = setTimeout(flushTrackEvents, 1500);
+  }
+  function trackLabel(t) { return t ? t.title + (t.artist ? ' · ' + t.artist : '') : ''; }
+  function stepTrack(step) {
+    var c = audio(); if (!c || !c.next) return;
+    var moved = step > 0 ? c.next() : c.prev();
+    if (!moved) { toast('这个场景目前只有这一首'); return; }
+    var s = status();
+    // 切歌本身是一次点击：声音被浏览器拦着时顺便恢复。
+    if (prefs.enabled && (s.blocked || !s.unlocked)) c.enableFromGesture().then(refreshStatus);
+    refreshStatus();
+  }
+  function renderTrack() {
+    var s = status(), t = s.track, many = s.trackCount > 1;
+    var show = !!(world && prefs.enabled && t && prefs.musicVolume > 0);
+    var bar = document.getElementById('bgm-bar');
+    if (bar) {
+      bar.hidden = !show;
+      var name = document.getElementById('bgm-name'); if (name) name.textContent = show ? '♫ ' + trackLabel(t) : '';
+      ['bgm-prev', 'bgm-next'].forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = !many; });
+    }
+    var line = document.getElementById('atmosphere-track-name');
+    if (line) {
+      line.textContent = t ? t.title : '当前没有配乐';
+      var small = el('small', '', t ? (t.artist || '') + (many ? (t.artist ? ' · ' : '') + '本场景共 ' + s.trackCount + ' 首' : '') : '');
+      line.appendChild(small);
+      ['atmosphere-track-prev', 'atmosphere-track-next'].forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = !many; });
+    }
+    syncMediaSession(show ? t : null, many);
+  }
+  // 手机锁屏 / 耳机线控上的曲名和上一首、下一首。
+  var mediaTrackId = null;
+  function syncMediaSession(t, many) {
+    var ms = typeof navigator !== 'undefined' && navigator.mediaSession;
+    if (!ms || typeof window.MediaMetadata !== 'function') return;
+    try {
+      if (!t) { if (mediaTrackId !== null) { ms.metadata = null; mediaTrackId = null; } return; }
+      if (mediaTrackId !== t.id) {
+        ms.metadata = new window.MediaMetadata({ title: t.title, artist: t.artist || '', album: '无限世界' });
+        mediaTrackId = t.id;
+      }
+      ms.setActionHandler('nexttrack', many ? function () { stepTrack(1); } : null);
+      ms.setActionHandler('previoustrack', many ? function () { stepTrack(-1); } : null);
+    } catch (_) {}
+  }
   function themeReady() { return world && catalog && catalog.themes && catalog.themes[AtmosphereState.resolve(world).theme]; }
   function message() {
     var s = status();
@@ -52,6 +125,7 @@ var Atmosphere = (function () {
       b.title = message(); b.classList.toggle('atmosphere-playing', !!s.playing);
     }
     var line = document.getElementById('atmosphere-status'); if (line) line.textContent = message();
+    renderTrack();
   }
   function safeImage(src) {
     return typeof src === 'string' && (
@@ -118,6 +192,7 @@ var Atmosphere = (function () {
         }
       }
     }
+    if (scene) scene.musicThemes = AtmosphereState.musicThemes(world);
     var c = audio(); if (c) { c.setPrefs(prefs); c.setScene(scene); }
     refreshStatus();
     renderReadingLabels();
@@ -172,10 +247,13 @@ var Atmosphere = (function () {
   }
   function enterWorld(s, opts) {
     if (!s || !s.id || (typeof currentWorldId !== 'undefined' && currentWorldId !== s.id)) return;
+    var entering = !world || world.id !== s.id;
     world = s; turnOptions = opts || {}; applyScene(); loadCatalog(false);
+    if (entering || !tracks) loadTracks();
   }
   function leaveWorld() {
     world = null; turnOptions = {}; if (controller) controller.stop();
+    flushTrackEvents();
     sceneArt = null; shownSrc = null; sceneToken++;
     document.body.removeAttribute('data-genre');
     document.body.removeAttribute('data-period');
@@ -240,13 +318,20 @@ var Atmosphere = (function () {
     var select = el('select'); select.id = 'atmosphere-mode';
     [['auto', '跟随场景'], ['calm', '田间日常'], ['explore', '外出探索'], ['tense', '遇险']].forEach(function (p) { var option = el('option', '', p[1]); option.value = p[0]; select.appendChild(option); });
     select.addEventListener('change', function () { change({ mode: select.value }, true); }); modeLabel.appendChild(select); card.appendChild(modeLabel);
+    var trackRow = el('div', 'atmosphere-track');
+    var prevBtn = el('button', 'btn', '⏮\uFE0E'); prevBtn.type = 'button'; prevBtn.id = 'atmosphere-track-prev'; prevBtn.setAttribute('aria-label', '上一首');
+    prevBtn.addEventListener('click', function () { stepTrack(-1); });
+    var trackName = el('span'); trackName.id = 'atmosphere-track-name'; trackName.setAttribute('role', 'status');
+    var nextBtn = el('button', 'btn', '⏭\uFE0E'); nextBtn.type = 'button'; nextBtn.id = 'atmosphere-track-next'; nextBtn.setAttribute('aria-label', '下一首');
+    nextBtn.addEventListener('click', function () { stepTrack(1); });
+    trackRow.appendChild(prevBtn); trackRow.appendChild(trackName); trackRow.appendChild(nextBtn); card.appendChild(trackRow);
     var statusLine = el('p', 'muted'); statusLine.id = 'atmosphere-status'; statusLine.setAttribute('role', 'status'); card.appendChild(statusLine);
     card.appendChild(el('p', 'muted', '朗读时背景声音会自动降低。切到后台会暂停，返回后可点♫恢复。'));
     var retry = el('button', 'btn', '重新载入声音'); retry.type = 'button';
     retry.addEventListener('click', function () {
       if (controller) { controller.destroy(); controller = null; }
       applyScene(); var c = audio(); if (prefs.enabled && c) c.enableFromGesture().then(refreshStatus);
-      loadCatalog(true);
+      loadCatalog(true); loadTracks();
     }); card.appendChild(retry);
     var credits = el('details', 'atmosphere-credit-list'); credits.appendChild(el('summary', '', '素材致谢'));
     var list = el('div'); list.id = 'atmosphere-credits'; credits.appendChild(list); card.appendChild(credits);
@@ -278,8 +363,18 @@ var Atmosphere = (function () {
     if (e.shiftKey && (active === first || active === modal)) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && (active === last || active === modal)) { e.preventDefault(); first.focus(); }
   });
-  document.addEventListener('visibilitychange', function () { if (controller) controller.setHidden(document.hidden === true); });
-  window.addEventListener('pagehide', function () { flushSave(); if (controller) controller.setHidden(true); });
+  function reportListening() { if (controller && controller.reportListen) controller.reportListen(); flushTrackEvents(); }
+  document.addEventListener('visibilitychange', function () {
+    if (controller) controller.setHidden(document.hidden === true);
+    if (document.hidden === true) reportListening(); // 手机切后台常常不再回来，先把已听的时长报上去
+  });
+  window.addEventListener('pagehide', function () { flushSave(); if (controller) controller.setHidden(true); reportListening(); });
+  ['bgm-prev', 'bgm-next', 'bgm-name'].forEach(function (id) {
+    var node = document.getElementById(id); if (!node) return;
+    node.addEventListener('click', function () {
+      if (id === 'bgm-name') openSettings(); else stepTrack(id === 'bgm-next' ? 1 : -1);
+    });
+  });
   window.addEventListener('pageshow', function () { if (controller) controller.setHidden(document.hidden === true); });
   return { applyPrefs: applyPrefs, enterWorld: enterWorld, leaveWorld: leaveWorld,
     openSettings: openSettings, closeSettings: closeSettings, setVoiceState: setVoiceState, toggle: toggle,

@@ -410,7 +410,8 @@ function relTime(ts, now) {
       || !!document.getElementById('prologue-mask')
       || !!document.getElementById('item-card-modal')
       || !!document.getElementById('npc-card-modal')
-      || !!document.getElementById('atmosphere-modal');
+      || !!document.getElementById('atmosphere-modal')
+      || !!document.getElementById('bgm-stats-modal');
   }
   function syncBodyScrollLock() {
     var locked = window.innerWidth <= 600 && anyOverlayOpen();
