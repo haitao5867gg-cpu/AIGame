@@ -158,6 +158,6 @@ test('前端：行动 / 时光推进带 clientTurnId，断流回退用同一个 
   assert.match(main, /e\.isComposing \|\| e\.keyCode === 229/, '输入法选词时回车不发送');
   const html = pub('index.html');
   assert.match(html, /enterkeyhint="send"/, '手机键盘回车键显示「发送」');
-  assert.match(html, /id="btn-latest"/);
+  assert.match(html, /id="foot-latest"/, '看旧回合时页脚有「回到最新」');
   assert.match(html, /data-menu="font"/);
 });
