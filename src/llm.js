@@ -431,6 +431,12 @@ function mockTurn(m) {
       cast: ['你', '守夜人'],
       items: [],
       action: '你在左，提灯的守夜人在右拦住去路，雾气翻涌',
+      place_en: 'a clock tower street in thick fog',
+      light_en: 'dim lantern glow, swirling mist',
+      people: [
+        { who: '你', en: 'a traveler in an old robe stopping short', pos: 'left' },
+        { who: '守夜人', en: 'a night watchman holding up a lantern, blocking the way', pos: 'right' },
+      ],
     };
   } else {
     out.scene = { draw: false };

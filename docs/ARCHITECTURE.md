@@ -313,7 +313,7 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 | 第一幕衔接 | `src/prompts.js` | `buildTurnMessages` 里 `section('第一幕（开场衔接）', …)`（`plan.opening` 时追加） |
 | 建世界 / 序章 | `src/prompts.js` | `buildWorldMessages` + `WORLD_OUTPUT_FORMAT`（含 `prologue` / `start.items_info`）、`buildPrologueMessages`（老世界补序章）、`buildRebirthOpeningMessages`、`buildChapterMessages` / `buildApexMessages` / `buildEpitaphMessages` |
 | 物品介绍 | `src/prompts.js` | `buildItemsInfoMessages`（批量补介绍）、`TURN_OUTPUT_FORMAT` 的 `items_info` 规则；引擎消毒 `engine/util.js` `cleanItemInfo`；接口 `GET /api/worlds/:id/items` |
-| 出图提示词 | `src/images.js` | `gatewayPrompt`、`localPrompt`、`scenePromptZh`、`scenePromptEn`、`negativePromptZh`（负面提示词，正向提示词不写「不要」）、`itemInScene` / `shortNoun`（场景参考图筛选与说明）、`STYLE_RULES`、`DEFAULT_STYLE`、`inferStyle` / `ruleArt` / `styleFromArt`、`cleanEnglish`、`collectRefs`、`FILE_NAME_RE`；模型输出侧 `src/prompts.js` `TURN_OUTPUT_FORMAT` 的 `scene` 字段（`draw` / `cast` / `items` / `action`） |
+| 出图提示词 | `src/images.js` | `gatewayPrompt`、`localPrompt`、`scenePromptZh`、`scenePromptEn`、`negativePromptZh`（负面提示词，正向提示词不写「不要」）、`itemInScene` / `shortNoun`（场景参考图筛选与说明）、`sceneBoundText` / `sceneEnglish`（记账模型给的英文画面 `scene.en` → 人和参考图一一对应的提示词；引擎侧 `engine/util.js` `normalizeSceneEn`，记账说明在 `prompts.js` `LEDGER_EXTRA`）、`STYLE_RULES`、`DEFAULT_STYLE`、`inferStyle` / `ruleArt` / `styleFromArt`、`cleanEnglish`、`collectRefs`、`FILE_NAME_RE`；模型输出侧 `src/prompts.js` `TURN_OUTPUT_FORMAT` 的 `scene` 字段（`draw` / `cast` / `items` / `action`） |
 | 朗读 SSML | `src/tts.js` | `buildSsml`、`buildSegmentsSsml`、`segmentInner`、`prosodyFor`、`SPEAK_OPEN`、`VOICES` / `MOODS` / `DEFAULT_VOICE`；前端 `public/js/tts.js`（分段排队、音色与情绪） |
 
 ## 7. 测试

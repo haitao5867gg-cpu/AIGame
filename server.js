@@ -412,6 +412,7 @@ function triggerScene(images, dataDir, result) {
     };
     if (Array.isArray(sc.cast)) spec.cast = sc.cast;
     if (Array.isArray(sc.items)) spec.items = sc.items;
+    if (sc.en && typeof sc.en === 'object') spec.en = sc.en; // 记账模型直接写的英文画面（人和动作一一对应）
     return images.ensureScene(dataDir, result.state, spec);
   } catch (err) {
     console.warn('[images] 场景触发异常（已忽略）：' + (err && err.message ? err.message : err));

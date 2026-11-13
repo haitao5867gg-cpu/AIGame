@@ -1432,6 +1432,14 @@ const LEDGER_EXTRA = [
   '- 叙事 v3：marks_add 只记会一直影响后面剧情的处境（受伤、欠人情、被盯上、被通缉之类），一时的情绪、普通的小事不算印记；大多数回合不该有新印记。',
   '- 叙事 v3：未解之谜同时最多 3 条，已满就不要再填 threads_add；正文里推进或解开了某条线索时，及时用 threads_resolve 收掉。',
   '- 叙事 v3：时间用 "clock_end":{"period":"清晨|午后|黄昏|深夜","days_later":0} 记——正文结尾时是哪个时段，比【时与地】里的那天晚了几天（同一天写 0；过了一夜到第二天写 1）。正文里天黑了、到了夜里、第二天一早这类变化一定要记上；正文没写时间变化就照抄【时与地】的时段、days_later 写 0。有了 clock_end 就不用写 time_passes。',
+  '- scene.draw 为 true 时，scene 里再加三项给画师看的英文（只用英文单词，不出现任何汉字和人名）：' +
+  '"place_en"（≤12 个词，画面所在的地方，如 a narrow flooded street between empty wooden houses）；' +
+  '"light_en"（≤8 个词，时间、光线、气氛，如 overcast dusk, murky light）；' +
+  '"people"（画面里最要紧的人，最多 2 个，数组，每项 {"who":"你 或 cast 里的原名","en":"≤16 个词","pos":"left|center|right|background"}）。' +
+  'people[].en 先用几个词说这个人看上去是谁（性别、年纪、身份或衣着），再写他此刻的姿势和动作，' +
+  '如 a barefoot young boatman crouching, pressing down a corner of the cloth；' +
+  '只写正文里这一刻真实发生的事，每个人的动作分开写清，不要把两个人的动作写到一个人身上；' +
+  '地名、店名不要照字面直译（「水下街」写 a flooded street，不要写 underwater street）；物件用常见词（「名册」写 register book）。',
   '- "chapter":{"beats_done":["本章卡里这一节已经达成的节点原文"],"chapter_end":false}：正文已经把本章收住（落在章末问题上、告一段落）时 chapter_end 写 true。',
 ].join('\n');
 

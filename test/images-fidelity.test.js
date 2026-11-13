@@ -446,3 +446,146 @@ test('场景多参考图：画面里没用到的物品不当参考图；说明�
   p = String(form.get('prompt'));
   assert.match(p, /the weathered bamboo punting pole from image 2\. Keep each person's face, hair and clothing exactly as in their reference image and the item exactly/);
 });
+
+// ---- 6. 第二步：记账模型直接写英文画面，人和参考图一一对应 ----
+
+test('normalizeScene：place_en / light_en / people 收成 en；带汉字、过长、不在 cast 里的整项丢掉；没有就不带 en', () => {
+  const sc = engine.normalizeScene({
+    draw: true, place: '排屋屋脊', cast: ['你', '阿橹'], items: [], action: '你俯身辨册，阿橹蹲在右侧按布角',
+    place_en: ' "a tiled roof ridge above a water town". ', light_en: 'slanting sunlight',
+    people: [
+      { who: '你', en: 'a young traveler bending down to read a register', pos: 'Center' },
+      { who: '阿橹', en: 'a barefoot young boatman crouching, pressing down a cloth corner.', pos: 'right' },
+      { who: '路人', en: 'a passer-by', pos: 'left' },
+      { who: '阿橹', en: 'duplicate', pos: 'left' },
+    ],
+  });
+  assert.deepEqual(sc.en, {
+    place: 'a tiled roof ridge above a water town', light: 'slanting sunlight',
+    people: [
+      { who: '你', en: 'a young traveler bending down to read a register', pos: 'center' },
+      { who: '阿橹', en: 'a barefoot young boatman crouching, pressing down a cloth corner', pos: 'right' },
+    ],
+  });
+  const bad = engine.normalizeScene({
+    draw: true, place: '屋脊', cast: ['你'], action: '你俯身',
+    place_en: '水下街 flooded street', light_en: 'x'.repeat(200), people: [{ who: '你', en: '俯身', pos: 'up' }, 'x', null],
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(bad, 'en'), false, '没有可用的英文画面就不带 en（走老的翻译链路）');
+  const old = engine.normalizeScene({ draw: true, place: '屋脊', cast: ['你'], action: '你俯身' });
+  assert.deepEqual(old, { draw: true, desc: '屋脊，你俯身', place: '屋脊', cast: ['你'], items: [], action: '你俯身' });
+  const posless = engine.normalizeScene({ draw: true, place: '屋脊', cast: ['你'], action: '你俯身', people: [{ who: '你', en: 'a man standing', pos: 'up' }] });
+  assert.deepEqual(posless.en, { place: '', light: '', people: [{ who: '你', en: 'a man standing', pos: '' }] });
+});
+
+test('sceneBoundText / sceneEnglish：有参考图的人写明是哪张图，没有的人只写外貌和动作；没有结构化画面返回空串', () => {
+  const en = {
+    place: 'a narrow flooded street between empty wooden houses', light: 'overcast dusk',
+    people: [
+      { who: '你', en: 'a young traveler sunk waist-deep in mud clutching a register book', pos: 'center' },
+      { who: '阿橹', en: 'a barefoot young boatman reaching out from a boat', pos: 'right' },
+      { who: '沈九娘', en: 'a middle-aged woman watching from a doorway', pos: 'background' },
+    ],
+  };
+  const refs = [
+    { type: 'person', who: '你', label: 'the main character' },
+    { type: 'person', who: '阿橹', label: 'barefoot young boatman' },
+    { type: 'item', label: 'weathered bamboo punting pole' },
+  ];
+  assert.equal(images.sceneBoundText({ en, refs }),
+    'A narrow flooded street between empty wooden houses, overcast dusk. '
+    + 'The person from image 0 (the main character), a young traveler sunk waist-deep in mud clutching a register book, in the center. '
+    + 'The person from image 1, a barefoot young boatman reaching out from a boat, on the right. '
+    + 'Also in the scene: a middle-aged woman watching from a doorway, in the background. '
+    + 'The weathered bamboo punting pole from image 2 is in the scene.');
+  // 参考图里有、画面描述里没写到的人：照样带上
+  assert.match(images.sceneBoundText({ en: { place: 'a street', light: '', people: [] }, refs: refs.slice(0, 2) }),
+    /^A street\. The person from image 0 \(the main character\) is also present\. The person from image 1 \(barefoot young boatman\) is also present\.$/);
+  assert.equal(images.sceneEnglish({ en }),
+    'a narrow flooded street between empty wooden houses, overcast dusk. '
+    + 'a young traveler sunk waist-deep in mud clutching a register book, in the center; '
+    + 'a barefoot young boatman reaching out from a boat, on the right; '
+    + 'a middle-aged woman watching from a doorway, in the background');
+  assert.equal(images.sceneBoundText({ en: null, refs }), '');
+  assert.equal(images.sceneBoundText({ en: { place: '', people: [] }, refs }), '');
+  assert.equal(images.sceneEnglish({}), '');
+});
+
+test('场景出图：有英文画面就不再调翻译，多参考图提示词里人和图一一对应；主角名统一成「你」；没有参考图走文生图也用它', async (t) => {
+  const dataDir = tmpDir(t);
+  const WORLD = 'wfid13';
+  const imgDir = path.join(dataDir, 'images');
+  fs.mkdirSync(imgDir, { recursive: true });
+  const idx = {};
+  const put = (kind, key, extra) => {
+    const file = `${kind}-${key}.jpg`;
+    fs.writeFileSync(path.join(imgDir, file), JPEG);
+    idx[`${kind}-${key}`] = Object.assign({ kind, style: STYLE_ZH, worldId: WORLD, file, status: 'ready', ts: 1, prompt: '' }, extra);
+  };
+  put('hero', images.imageKey('hero', '叶峰|青衣', STYLE_ZH, WORLD), { name: '叶峰', provider: 'cloudflare', enPrompt: 'a young man' });
+  // 硅基流动画的头像（带水印、没有英文描述）现在也当参考图
+  put('npc', images.imageKey('npc', '秦霜', STYLE_ZH, WORLD), { name: '秦霜', provider: 'siliconflow', enPrompt: '' });
+  fs.writeFileSync(path.join(imgDir, 'index.json'), JSON.stringify(idx));
+
+  const calls = [];
+  let translated = 0;
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, body: opts && opts.body });
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ success: true, result: { image: JPEG.toString('base64') } }) };
+  };
+  const inst = createT(CF_CFG({ IMAGE_PROVIDER: 'cloudflare', IMAGE_SCENE_REF_MODEL: undefined }), {
+    fetchImpl, translate: async () => { translated += 1; return 'should not be used'; },
+  });
+  const st = makeState({
+    id: WORLD, life: 1, character: { name: '叶峰', appearance: '青衣', items: [] }, npcAttitude: { '秦霜': 0, '温姐': 0 },
+    bible: { title: '测试', tone: '', art: ART, npcs: [{ name: '秦霜', role: '邻居', desc: '短发' }] },
+  });
+  const en = {
+    place: 'inside a high-rise apartment by the front door', light: 'harsh searchlight at dusk',
+    people: [
+      { who: '秦霜', en: 'a short-haired woman gripping the door handle', pos: 'right' },
+      { who: '叶峰', en: 'a young man looking back over his shoulder', pos: 'left' },
+    ],
+  };
+  inst.ensureScene(dataDir, st, {
+    turn: 1, desc: '白鹭公寓1607，秦霜立在门边捏着门把手，叶峰侧身回头', place: '白鹭公寓1607',
+    cast: ['叶峰', '秦霜'], items: [], action: '秦霜立在门边捏着门把手，叶峰侧身回头', en,
+  });
+  await inst.waitIdle();
+  assert.equal(translated, 0, '不再调翻译');
+  const form = calls.find((c) => c.url.includes('flux-2-klein-4b')).body;
+  assert.ok(form.get('input_image_0') && form.get('input_image_1'), '主角 + 硅基画的秦霜头像都当参考图');
+  const p = String(form.get('prompt'));
+  assert.ok(p.includes('Inside a high-rise apartment by the front door, harsh searchlight at dusk. '
+    + 'The person from image 1, a short-haired woman gripping the door handle, on the right. '
+    + 'The person from image 0 (the main character), a young man looking back over his shoulder, on the left. '
+    + "Keep each person's face, hair and clothing exactly as in their reference image. "
+    + 'Period-accurate setting, fully clothed characters, clean image, unsigned.'), p);
+  assert.ok(p.startsWith('painterly illustration. Wide cinematic 16:9 scene, near-future wasteland style. '));
+
+  // 没有任何参考图（人物都还没头像）：文生图也直接用英文画面
+  inst.ensureScene(dataDir, st, {
+    turn: 2, desc: '走廊，温姐提着一串钥匙走来', place: '走廊', cast: ['温姐'], items: [], action: '温姐提着一串钥匙走来',
+    en: { place: 'a dim apartment corridor', light: '', people: [{ who: '温姐', en: 'a woman in her fifties carrying a ring of keys', pos: 'center' }] },
+  });
+  await inst.waitIdle();
+  assert.equal(translated, 0);
+  const t2i = calls.filter((c) => c.url.includes('flux-1-schnell')).pop();
+  assert.ok(t2i, '没有参考图走文生图');
+  assert.match(JSON.parse(t2i.body).prompt, /^painterly illustration\. a dim apartment corridor\. a woman in her fifties carrying a ring of keys, in the center, near-future wasteland style, /);
+
+  // 老格式（没有 en）：照旧翻译
+  inst.ensureScene(dataDir, st, { turn: 3, desc: '走廊尽头，叶峰停下脚步', place: '走廊尽头', cast: ['叶峰'], items: [], action: '叶峰停下脚步' });
+  await inst.waitIdle();
+  assert.equal(translated, 1, '没有英文画面时照旧走翻译');
+});
+
+test('记账说明：出图回合要给 place_en / light_en / people，且每个人的动作分开写', () => {
+  const prompts = require('../src/prompts.js');
+  const st = makeState({ id: 'wfid14', character: { name: '叶峰', items: [], attrs: {}, marks: [] }, npcAttitude: {} });
+  const sys = prompts.buildLedgerMessages(st, { action: '看看', prose: '正文', plan: {} })[0].content;
+  assert.match(sys, /"place_en"/);
+  assert.match(sys, /"light_en"/);
+  assert.match(sys, /"people"/);
+  assert.match(sys, /不要把两个人的动作写到一个人身上/);
+});
