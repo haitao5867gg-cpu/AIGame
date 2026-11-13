@@ -29,10 +29,12 @@ test('画风设定：LLM 生成一次写入 styles.json，提示词带画风 / �
   assert.equal(styles.wart.zh, XIANXIA_ART.zh);
   assert.equal(styles.wart.v, 2);
   const body = calls[0].body;
-  assert.match(body.prompt, /^中国古风水墨仙侠插画。世界背景：杂役百年，中国古代修仙宗门。游戏道具图标：旧铜灯，该时代的器物/);
-  assert.match(body.prompt, /米白宣纸色背景，无文字，无印章，无书法字，无水印，不要出现裸露，色情，现代物品，霓虹，赛博朋克$/);
+  // 要画的东西在最前、画风在最后；世界标题和「不要 / 无」都不进正向提示词（不想要的放负面提示词）。
+  assert.match(body.prompt, /^旧铜灯。游戏道具图标：只画这一件物品，居中特写，完整可辨认，中国古代修仙宗门的器物，/);
+  assert.match(body.prompt, /米白宣纸色背景，画面干净。中国古风水墨仙侠插画风格。$/);
+  assert.doesNotMatch(body.prompt, /世界背景|杂役百年|不要|无文字/);
   assert.match(body.negative_prompt, /^文字，印章，书法，落款，/);
-  assert.match(body.negative_prompt, /现代物品，霓虹，赛博朋克$/);
+  assert.match(body.negative_prompt, /裸露，色情，现代物品，霓虹，赛博朋克$/);
   const e = Object.values(images.readIndex(dataDir))[0];
   assert.equal(e.style, '中国古风水墨仙侠插画｜中国古代修仙宗门｜米白宣纸色背景');
   assert.equal(e.status, 'ready');
@@ -122,7 +124,7 @@ test('画风设定：styles.json 里旧条目（无 v）照用，缓存 key 保�
   assert.equal(directed, 0);
   const e = Object.values(images.readIndex(dataDir))[0];
   assert.equal(e.style, '水墨淡彩写实修仙｜中国古代修仙宗门底层');
-  assert.match(calls[0].body.prompt, /米白宣纸色背景，无文字，无印章/);
+  assert.match(calls[0].body.prompt, /米白宣纸色背景，画面干净/);
 });
 
 test('画风设定：已有旧图（无画风设定、key 只有画风词）的老世界沿用旧 key，不生成设定、不重画', async (t) => {

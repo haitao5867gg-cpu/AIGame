@@ -623,6 +623,8 @@ function createGame(cfg, dataDir) {
       const hero = wp.parsed.hero && typeof wp.parsed.hero === 'object' ? wp.parsed.hero : {};
       const name = givenName || (typeof hero.name === 'string' && hero.name.trim() ? hero.name.trim().slice(0, 12) : '') || '无名旅人';
       const appearance = givenAppearance || (typeof hero.appearance === 'string' && hero.appearance.trim() ? hero.appearance.trim().slice(0, 40) : '') || '一袭布衣';
+      // 给画师看的外貌（只用于出图）：玩家填的形象常是「帅气冷酷」这类画不出来的词。
+      const look = typeof hero.look === 'string' ? hero.look.trim().slice(0, 60) : '';
       const bible = wp.parsed.bible;
       const apex = wp.parsed.apex;
       if (!bible || typeof bible !== 'object' || !apex || typeof apex !== 'object') {
@@ -634,7 +636,7 @@ function createGame(cfg, dataDir) {
       let state;
       try {
         state = engine.createWorld(
-          { id, seed, name, appearance, bible, apex, alloc: data.alloc, genre: rawGenre, origins: wp.parsed.origins },
+          { id, seed, name, appearance, look, bible, apex, alloc: data.alloc, genre: rawGenre, origins: wp.parsed.origins },
           { rng: Math.random, now: Date.now() },
         );
       } catch (err) {

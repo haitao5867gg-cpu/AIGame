@@ -39,10 +39,11 @@
 - 需要用真 Key 测试时：把脚本通过 `ssh win-pc "node -" < 脚本` 在 Windows 上跑，脚本自己读 `D:/AIGame/.env`，输出里把 Key 替换掉。
 - 对话模型：网关 `https://aigw.telecomjs.com/v1`（OpenAI 兼容，用户朋友提供的 Key）。回合叙事 `deepseek-v4.1-flash`，建世界 `deepseek-v4-pro-0813`。
 - **成人模式网关**（只给建世界时勾了成人模式的世界用）：Experiential `https://api.experientiallabs.ai/v1`（OpenAI 兼容），模型 `deepseek-v4.1-flash-uncensored`，Key 是 `.env` 的 `EXPLABS_API_KEY`（用户 2026-11-12 已写进 Windows `.env`；Mac 上没有）。Windows 直连可用。该模型不传思考参数时默认 high（约 7 秒），代码里默认补 `thinking: disabled`；余额查 `GET https://api.experientiallabs.ai/api/v1/credits`。文档 https://platform.experientiallabs.ai/docs 。
-- 出图（全部免费额度）：`IMAGE_PROVIDER=cloudflare,siliconflow,zhipu,modelscope`，按顺序回退，失败的一家冷却 5 分钟。
+- 出图（全部免费额度）：`IMAGE_PROVIDER=cloudflare,siliconflow,zhipu,modelscope`，按顺序回退。服务本身出问题（429、超时、5xx）的一家冷却 5 分钟；只是这一张图的内容问题（翻译里带汉字、被安全审查误判）只让这一张换家，不冷却——否则同一个世界的头像会出自三家、画风对不上。
   - Cloudflare Workers AI：文生图 flux-1-schnell；**场景参考图**用 `@cf/black-forest-labs/flux-2-klein-4b`（最多 4 张参考图：主角形象、在场 NPC 头像、物品图），让插图里的人和物与已有图对得上；只用 Cloudflare 画的无水印图做参考。每天 10,000 Neurons（UTC 零点重置），用超 7000 后物品/头像让给别家，额度留给场景图；收到「daily free allocation」429 时冷却到下一个 UTC 零点。
-  - 硅基流动 Kolors（有「AI生成」水印）、智谱 cogview-3-flash、魔搭 Z-Image-Turbo（慢）。
-  - 每个世界有统一画风（`data/images/styles.json`，有版本号）。出图提示词翻译成英文，翻译失败时跳过只认英文的模型。
+  - 硅基流动 Kolors、智谱 cogview-3-flash（两家的图都带「AI生成」水印，不能当场景参考图；智谱的 `watermark_enabled:false` 没签免责声明不生效）、魔搭 Z-Image-Turbo（慢）。
+  - 每个世界有统一画风（`data/images/styles.json`，有版本号；画风只写媒介和笔触，不写光线和题材）。出图提示词翻译成英文：结果带汉字先重译一次，再不行去掉汉字，实在不行这一张换中文提供方。
+  - 提示词写法（2026-11-13 改，背景和线上反例见本地 `reports/image-mismatch-20261113/`）：中文提示词把要画的东西放最前、画风放最后，不带世界标题，不写「不要 / 无」（图像模型会把这些词画出来），不想要的放负面提示词（只有硅基支持）。物品图照着介绍画（缓存 key 带介绍，没介绍的等介绍补出来再画，老图不重画）。人物头像优先用「看得见的外貌」：建世界时模型给主角 `hero.look`、每个 NPC `npcs[].look`，中途出场的人物用人物档案里写到的外貌。场景参考图只放画面描述里真的出现的物品。
 - 朗读：Azure 语音 F0 免费档（eastasia）。默认旁白晓晓 HD（`zh-CN-Xiaoxiao:DragonHDFlashLatestNeural`，不加 style/pitch，只调语速），NPC 各自音色 + 情绪风格；一回合几段合并成两三次请求；缓存在 `data/tts/`。每月 50 万字，用到 45 万自动改用浏览器朗读；朋友每人每天 1 万字；成人段落只走浏览器朗读。
 - 用量限制：朋友每人每天 100 万 token、场景插图 60 张；主人不限（计入总量）。
 
@@ -60,7 +61,7 @@
 - **叙事写法 v2**（`NARRATIVE_STYLE=v2`，默认）：从用户喜欢的《仙逆》提炼的手法——每回合是一场完整的小戏（想做→阻碍→应对→结果，常先挫后扬）；段短但段数多（关键场景 600~1200 字、过场 150~300 字）；生活化细节和身体感受；信息逐步放；配角有反差；结尾留悬念而不是出选择题。不要把小说原文或其中人名放进提示词（原文在 `reports/novel/`，git 忽略）。
 - **文风预设**：玄幻修仙 / 都市 / 游戏系统 / 恐怖悬疑 / 休闲日常 / 通用（`src/genres.js`）。建世界时自动判断，新世界页可选，游戏里「⋯」菜单随时切换。不限制世界观（「一句话开世界」是卖点）。提示词里不点名模仿作者（参考作者只写在代码注释里，有测试守着）。
 - NPC 说话方式只写风格，不写「句尾加某个字」这种机械规则（曾导致台词末尾出现「问？」；入库前还有 `cleanDialogueTics` 兜底）。
-- 场景插图只在关键回合画；回合模型的 scene 只列在场人物和物品的名字，外貌交给参考图。
+- 场景插图只在关键回合画；回合模型的 scene 只列在场人物和物品的名字，外貌交给参考图。插图下面有一行小字「画面：……」说明画的是哪个瞬间。已知问题（第二步要改）：场景描述经「记账 ≤40 字 → 再翻译成英文」两道，人和动作对不上号，没有参考图的 NPC 常被画丢。
 - 手机端：顶栏一行 +「⋯」菜单，整页滚动，输入框固定底部，可点元素至少 40px，输入框字号 16。电脑端：页面 1440 宽、正文铺满高度、当前插图在右侧栏顶部、空格翻一屏。新回合出来时停在这一回合开头，不要滚到底。
 - 朗读：每回合一个「▶ 朗读」整回合播放 + 播放条，不要回到每段一个按钮。
 - 手机断流（切 App、锁屏、换网络）：每次行动 / 时光推进带 `clientTurnId`，记录存在 localStorage `pendingTurn:<世界ID>`。流式断了就带同一个 ID 走普通 `/turn` 取回；刷新或页面被回收后进世界会用 `attachOnly` 取回；服务器同一个 ID 只执行一次（`src/idempotency.js`）。**不要再加「断流就用同一句行动重新发一次」这种不带 ID 的重试**，会把一句话写成两回合。等待时用 Screen Wake Lock 保持亮屏，前端看门狗靠服务器 10 秒一次的心跳判断连接死活。

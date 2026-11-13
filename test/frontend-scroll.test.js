@@ -24,7 +24,7 @@ function section(src, fromStr, toStr) {
 }
 
 const actBody = section(gameJs, 'function appendActionLine(action) {', 'function appendDivider');
-const deltaBody = section(gameJs, 'function appendStreamDelta(block, text) {', 'function appendNarration(text, badges, sceneId) {');
+const deltaBody = section(gameJs, 'function appendStreamDelta(block, text) {', 'function appendNarration(text, badges, sceneId, sceneCap) {');
 const resultBody = section(gameJs, 'function renderResult(res) {', 'async function sendAction() {');
 const showBody = section(gameJs, 'async function showGame(id) {', 'function renderHeader(s) {');
 const undoBody = section(gameJs, 'async function doUndo() {', '// ---- 游戏页 ----');

@@ -29,18 +29,27 @@ test('场景插图：样式含 .scene-frame / .scene-img 且 aspect-ratio:16/9',
 
 test('场景插图：appendNarration 支持 sceneId，renderResult / appendLogRecord 按 scene 决定 sceneId', () => {
   // appendNarration 第三参数 sceneId：有则在叙事块最上面建 .scene-frame（data-scene + 闪烁占位），无则不建框
-  assert.ok(/function appendNarration\(text, badges, sceneId\)/.test(html), 'appendNarration 应支持 sceneId');
+  assert.ok(/function appendNarration\(text, badges, sceneId, sceneCap\)/.test(html), 'appendNarration 应支持 sceneId 与 sceneCap');
   assert.ok(/if \(sceneId\)/.test(html), '无 sceneId 不显示任何框');
   assert.ok(/scene-frame img-pending/.test(html), '初始复用 img-pending 闪烁占位');
   assert.ok(/setAttribute\('data-scene', sceneId\)/.test(html), '框应带 data-scene');
   // renderResult：res.scene.draw && res.sceneKey 时才用 res.state.life-turn 拼 sceneId 并传入
   assert.ok(/res\.scene && res\.scene\.draw && res\.sceneKey/.test(html), 'renderResult 用 scene.draw 与 sceneKey 判定');
   assert.ok(/res\.state\.life \+ '-' \+ res\.state\.turn/.test(html), 'sceneId 由 life-turn 拼出');
-  assert.ok(/appendNarration\(res\.narration, badgesFromApplied\(res\.applied, res\.stats_drains\), sceneId\)/.test(html),
-    'renderResult 把 sceneId 传给 appendNarration，并把 stats_drains 交给徽章');
+  assert.ok(/appendNarration\(res\.narration, badgesFromApplied\(res\.applied, res\.stats_drains\), sceneId, sceneCap\)/.test(html),
+    'renderResult 把 sceneId / sceneCap 传给 appendNarration，并把 stats_drains 交给徽章');
   // appendLogRecord：rec.scene.draw 时用 rec.life-rec.turn
   assert.ok(/rec\.scene && rec\.scene\.draw/.test(html), 'appendLogRecord 用 rec.scene');
   assert.ok(/rec\.life \+ '-' \+ rec\.turn/.test(html), '回放 sceneId 由 rec.life-rec.turn 拼出');
+});
+
+test('场景插图：图下小字「画面：<desc>」随 data-scene-cap 同步，宽屏历史缩略图隐藏', () => {
+  assert.ok(/setAttribute\('data-scene-cap'/.test(html), '应写入 data-scene-cap');
+  assert.ok(/function syncSceneCap\(/.test(html), '应有 syncSceneCap');
+  assert.ok(/'画面：'/.test(html), '小字前缀「画面：」');
+  assert.ok(/\.scene-cap\{/.test(html), '应有 .scene-cap 样式');
+  assert.ok(/#stream \.scene-frame\.scene-history \+ \.scene-cap\{display:none\}/.test(html),
+    '宽屏历史缩略图不显示小字');
 });
 
 test('场景插图：renderScenes 存在并被 renderImages 调用；hasPendingImage 考虑 scenes；轮询上限 150000', () => {

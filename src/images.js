@@ -25,6 +25,8 @@ const prefs = require('./prefs.js');
 const FILE_NAME_RE = /^(item|npc|hero|scene)-[0-9a-f]{12}\.(jpg|png|svg)$/;
 // 只懂英文的提供方（cloudflare / local）：翻译结果里只要还有一个汉字，就当成失败、跳过该家。
 const HAS_CHINESE = /[一-鿿]/;
+// 提供方因为「这张图的内容」拒绝出图（安全审查），不是服务本身出了问题：只换这一张，不冷却整家。
+const CONTENT_REJECT_RE = /nsfw|sensitive|content.?(?:policy|filter|moderation)|敏感|不安全|违规|审核/i;
 // 场景多参考图出图默认模型；配置成空字符串即停用参考图、直接走文生图回退链。
 const DEFAULT_SCENE_REF_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
 const FAILED_COOLDOWN_MS = 10 * 60 * 1000; // failed 10 分钟后才允许重试
@@ -68,14 +70,26 @@ const DEFAULT_STYLE = Object.freeze({ legacyZh: '手绘插画', zh: '手绘水�
 const ART_FIELDS = ['zh', 'en', 'eraZh', 'eraEn', 'avoidZh', 'bgZh', 'bgEn'];
 // 画风设定版本：新生成的条目带 v=2。为了不让老世界整体重画，旧条目（无 v）照用、缓存 key 保持旧格式。
 const ART_VERSION = 2;
-const NO_TEXT_ZH = '无文字，无印章，无书法字，无水印';
-// 出图安全：所有中文「不要出现」清单固定带上的两项；英文只用正面词描述人物着装。
+// 图像模型不懂「不要」：把「无文字」「不要出现枪械」写进正向提示词，反而会把这些东西画出来
+// （线上实测：近未来世界写了「不要出现古装」，智谱画出一个古装老人）。
+// 所以正向提示词只写要画的东西；不想要的统一放进负面提示词（目前只有硅基流动支持）。
+const NEGATIVE_BASE_ZH = '文字，印章，书法，落款，水印，签名，边框，模糊，畸形';
+// 出图安全：负面提示词固定带上的两项；正向提示词只用正面词描述人物着装。
 const NO_ADULT_ZH = '裸露，色情';
+const CLOTHED_ZH = '衣着完整';
 const FULLY_CLOTHED_EN = 'fully clothed characters';
-function avoidClause(avoidZh) {
-  const items = [NO_ADULT_ZH];
-  if (avoidZh && typeof avoidZh === 'string' && avoidZh.trim()) items.push(avoidZh.trim());
-  return `，不要出现${items.join('，')}`;
+// 世界的「不该出现」清单里，和这张图要画的东西撞字的词要去掉
+// （末世世界禁「刀剑」，可这张图画的就是「新手短刀」）。
+function avoidTerms(avoidZh, subject) {
+  const sub = String(subject == null ? '' : subject);
+  return String(avoidZh == null ? '' : avoidZh).split(/[，,、；;\s]+/).map((t) => t.trim()).filter(Boolean)
+    .filter((t) => !Array.from(t).some((ch) => sub.includes(ch)));
+}
+// 负面提示词：通用项 + 安全项 + 本世界不该出现的东西（已去掉和主体撞字的词）。
+function negativePromptZh(job) {
+  const st = (job && job.style) || {};
+  const subject = job && job.kind === 'scene' ? job.desc : `${(job && job.name) || ''}`;
+  return [NEGATIVE_BASE_ZH, NO_ADULT_ZH].concat(avoidTerms(st.avoidZh, subject)).join('，');
 }
 // flux 会把提示词里提到的东西画出来：写「no calligraphy / no seal stamps」反而招来题字和印章，
 // 「rice paper」也会带出国画题款。所以英文只用正面描述：干净空白背景、无落款。
@@ -178,12 +192,32 @@ function styleFromArt(art) {
   };
 }
 
-// 缓存 key = sha1(kind|name|style[|worldId]) 前 12 位（十六进制）。
+// 缓存 key = sha1(kind|name|style[|worldId][|介绍]) 前 12 位（十六进制）。
 // 物品不带 worldId（跨世界共享）；NPC / 主角带 worldId（重名但长相不同）。
-function imageKey(kind, name, style, worldId) {
+// 物品有介绍时 key 带上介绍：图是照着介绍画的，介绍变了（或后来才补上）就该重画；
+// 没有介绍时沿用只按名字的老 key（老图不重画）。
+function imageKey(kind, name, style, worldId, desc) {
   let s = `${kind}|${name}|${style}`;
   if (kind === 'npc' || kind === 'hero') s += `|${worldId == null ? '' : worldId}`;
+  if (kind === 'item' && typeof desc === 'string' && desc.trim()) s += `|d:${desc.trim()}`;
   return crypto.createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 12);
+}
+
+// 物品图在索引里的位置：有介绍 → 先找「带介绍」的 key；还没有这张图时，
+// 本世界以前只按名字画好的老图（没有 bare 标记的）照用，不为老世界整体重画。
+// 没有介绍 → 只按名字的 key。返回 { ik, key, entry }。
+function resolveItemEntry(idx, name, styleZh, worldId, desc) {
+  const bareKey = imageKey('item', name, styleZh, worldId);
+  const hasDesc = typeof desc === 'string' && !!desc.trim();
+  if (!hasDesc) return { ik: indexKeyOf('item', bareKey), key: bareKey, entry: idx[indexKeyOf('item', bareKey)] };
+  const key = imageKey('item', name, styleZh, worldId, desc);
+  const ik = indexKeyOf('item', key);
+  if (idx[ik]) return { ik, key, entry: idx[ik] };
+  const old = idx[indexKeyOf('item', bareKey)];
+  if (old && old.status === 'ready' && old.file && !old.bare && String(old.worldId) === String(worldId)) {
+    return { ik: indexKeyOf('item', bareKey), key: bareKey, entry: old, legacy: true };
+  }
+  return { ik, key, entry: undefined };
 }
 
 // 场景插图 key：同一世界 / 同一世 / 同一回合 / 同一画面描述共用一张图。
@@ -295,26 +329,41 @@ function clip(s, n) {
 }
 
 // ---- 提示词 ----
-// gateway 用中文。
-// 画风放最前（权重高），再写世界背景 + 时代，锁定器物 / 服饰，最后写主体。
+// 中文提供方（硅基流动 / 智谱 / 魔搭 / gateway）用中文。
+// 要画的东西写在最前面（线上实测：把「世界背景：标题，时代」放在前面，智谱会去画那座城市，
+// 握力器画成街景、三盒酸奶画成城市远景）；世界标题不进提示词（「全球最后一个男人」会被画成一个男人）；
+// 时代只用来限定器物 / 服饰；画风放最后；不写任何「不要 / 无」（见 negativePromptZh）。
+// 去掉句尾标点（后面要自己接句号，免得出现「。。」）。
+function trimEnd(t) {
+  return String(t == null ? '' : t).trim().replace(/[。．.！!？?；;，,、\s]+$/, '');
+}
+function personLookZh(job) {
+  // 有「看得见的外貌」就用外貌；没有才退回人物简介（多半是性格、职业）。
+  const look = typeof job.look === 'string' && job.look.trim() ? job.look.trim() : '';
+  return trimEnd(clip(look || job.desc, 60));
+}
 function gatewayPrompt(job) {
   const st = job.style;
-  const title = job.bibleTitle || '';
   const art = st.artZh || st.zh;
-  const world = `世界背景：${title}${st.eraZh ? '，' + st.eraZh : ''}`;
-  const avoid = avoidClause(st.avoidZh);
+  const era = st.eraZh || '';
   const bg = st.bgZh || DEFAULT_STYLE.bgZh;
   if (job.kind === 'npc' || job.kind === 'hero') {
-    // 主角形象图走 NPC 一样的半身像链路，只是把名字换成「主角」+ 外貌。
-    const who = job.kind === 'hero'
-      ? `主角，${clip(job.desc, 60)}`
-      : `${job.name}，${job.role}，${clip(job.desc, 60)}`;
-    return `${art}。${world}。游戏角色半身肖像：${who}，`
-      + `穿着符合该时代的服饰，面部清晰，${bg}，${NO_TEXT_ZH}${avoid}`;
+    // 主角形象图走 NPC 一样的半身像链路。
+    // 有「看得见的外貌」（里面写了性别年纪）时不写名字（「老刀」会被画成刀）；
+    // 没有外貌时名字要留着：「温姐」「沈九娘」里的称呼是唯一的性别线索（实测去掉后温姐被画成男人）。
+    const hasLook = typeof job.look === 'string' && !!job.look.trim();
+    const bits = job.kind === 'hero'
+      ? [personLookZh(job)]
+      : [hasLook ? '' : job.name, job.role, personLookZh(job)];
+    const who = bits.map((b) => String(b == null ? '' : b).trim()).filter(Boolean).join('，')
+      || (job.kind === 'hero' ? '主角' : job.name);
+    return `一个人物的半身肖像：${who}。`
+      + `${era ? `穿着${era}的服饰，` : ''}${CLOTHED_ZH}，面部清晰，只画这一个人，${bg}，画面干净。${art}风格。`;
   }
-  const itemDesc = job.desc && typeof job.desc === 'string' ? `（${clip(job.desc, 60)}）` : '';
-  return `${art}。${world}。游戏道具图标：${job.name}${itemDesc}，该时代的器物，单个物体居中，完整可辨认，`
-    + `${bg}，${NO_TEXT_ZH}${avoid}`;
+  const d = job.desc && typeof job.desc === 'string' ? trimEnd(clip(job.desc, 60)) : '';
+  const itemDesc = d ? `：${d}` : '';
+  return `${job.name}${itemDesc}。游戏道具图标：只画这一件物品，居中特写，完整可辨认，`
+    + `${era ? `${era}的器物，` : ''}${bg}，画面干净。${art}风格。`;
 }
 
 // local 用英文：翻译出的一句画面描述 + 固定模板。
@@ -330,22 +379,23 @@ function localPrompt(enDesc, kind, styleEn, eraEn, bgEn) {
   return `${styleEn}. ${enDesc}${era}, period-accurate object, single object centered, game item icon, ${bg}, ${NO_TEXT_EN}`;
 }
 
-// 场景插图（中文提供方）：画风 + 世界背景 + 画面描述 + 在场人物 + 电影感构图。
+// 场景插图（中文提供方）：画面描述放最前，再写在场人物的外貌、时代、构图，画风放最后。
+// 图像模型不知道「你」是谁：描述和人物表里的「你」一律写成「主角」。
 function scenePromptZh(job) {
   const st = (job && job.style) || {};
   const art = st.artZh || st.zh || '';
-  const title = (job && job.bibleTitle) || '';
   const era = st.eraZh || '';
-  const world = `世界背景：${title}${era ? '，' + era : ''}`;
-  let s = `${art}。${world}。游戏场景插画：${clip(job && job.desc, 60)}。`;
-  const cast = Array.isArray(job && job.cast) ? job.cast.slice(0, 3) : [];
+  const heroWord = (t) => String(t == null ? '' : t).replace(/你/g, '主角');
+  let s = `${heroWord(trimEnd(clip(job && job.desc, 60)))}。`;
+  const cast = (Array.isArray(job && job.cast) ? job.cast.slice(0, 3) : [])
+    .filter((c) => c && typeof c.look === 'string' && c.look.trim());
   if (cast.length) {
-    const people = cast.map((c) => `${clip(c && c.name, 20)}：${clip(c && c.look, 40)}`).join('；');
-    s += `在场人物：${people}。`;
+    const people = cast.map((c) => `${heroWord(clip(c.name, 20))}是${trimEnd(clip(c.look, 40))}`).join('；');
+    s += `画面里的人：${people}。`;
   }
   const tone = String(st.bgZh || DEFAULT_STYLE.bgZh).replace(/背景/g, '');
-  s += `电影感构图，横幅画面，${tone}色调，无文字，无印章，无水印`;
-  s += avoidClause(st.avoidZh);
+  s += `游戏场景插画，电影感横幅构图，${era ? `${era}的环境和服饰，` : ''}人物${CLOTHED_ZH}，`
+    + `${tone}色调，画面干净。${art}风格。`;
   return s;
 }
 
@@ -369,12 +419,35 @@ function cleanEnglish(text, maxWords) {
 }
 
 // 主角身份：名字 + 形象（形象可能缺失）。key 用「名字|形象」，与 NPC 一样按世界区分。
+// look 是建世界时模型写的「看得见的外貌」（玩家填的形象常是「帅气冷酷」这类画不出来的词），只给提示词用。
 function heroIdentity(state) {
   const ch = (state && state.character && typeof state.character === 'object') ? state.character : {};
   const rawName = typeof ch.name === 'string' ? ch.name.trim() : '';
   const rawDesc = typeof ch.appearance === 'string' ? ch.appearance.trim() : '';
+  const look = typeof ch.look === 'string' ? ch.look.trim() : '';
   const name = rawName || '你';
-  return { name, desc: rawDesc, keyName: `${name}|${rawDesc}`, described: !!(rawName || rawDesc) };
+  return { name, desc: rawDesc, look, keyName: `${name}|${rawDesc}`, described: !!(rawName || rawDesc) };
+}
+
+// NPC 档案里玩家已经看到的外貌（npcProfiles[*].traits.appearance），按名字查，拼成一句。
+function profileLooks(state) {
+  const out = {};
+  const profiles = state && state.npcProfiles && typeof state.npcProfiles === 'object' ? state.npcProfiles : {};
+  for (const id of Object.keys(profiles)) {
+    const p = profiles[id];
+    if (!p || typeof p !== 'object') continue;
+    const ap = p.traits && p.traits.appearance && typeof p.traits.appearance === 'object' ? p.traits.appearance : {};
+    const look = Object.keys(ap).map((k) => (typeof ap[k] === 'string' ? ap[k].trim() : '')).filter(Boolean).join('，');
+    const meta = {
+      look,
+      role: typeof p.role === 'string' ? p.role : '',
+      desc: typeof p.description === 'string' ? p.description : '',
+    };
+    for (const n of [p.name, p.portraitName, p.displayName]) {
+      if (typeof n === 'string' && n.trim() && !out[n.trim()]) out[n.trim()] = meta;
+    }
+  }
+  return out;
 }
 
 // ---- 待生成清单：主角 + 当前物品 + 当前 NPC（role/desc 取自 bible.npcs）----
@@ -388,12 +461,14 @@ function listForState(state) {
       npcMeta[n.name.trim()] = {
         role: typeof n.role === 'string' ? n.role : '',
         desc: typeof n.desc === 'string' ? n.desc : '',
+        look: typeof n.look === 'string' ? n.look.trim() : '',
       };
     }
   }
+  const seen = profileLooks(s); // 中途出场、不在设定里的人物：用档案里已经写到的身份和外貌
   const out = [];
   const hero = heroIdentity(s);
-  out.push({ kind: 'hero', name: hero.name, role: '主角', desc: hero.desc });
+  out.push({ kind: 'hero', name: hero.name, role: '主角', desc: hero.desc, look: hero.look });
   const items = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
   const itemInfo = (s.itemInfo && typeof s.itemInfo === 'object') ? s.itemInfo : {};
   for (const it of items) {
@@ -408,8 +483,10 @@ function listForState(state) {
   for (const name of Object.keys(npc)) {
     const key = name.trim();
     if (!key) continue;
-    const meta = npcMeta[key] || { role: '', desc: '' };
-    out.push({ kind: 'npc', name: key, role: meta.role, desc: meta.desc });
+    const base = npcMeta[key];
+    const prof = seen[key] || { role: '', desc: '', look: '' };
+    const meta = base || { role: prof.role, desc: prof.desc, look: '' };
+    out.push({ kind: 'npc', name: key, role: meta.role, desc: meta.desc, look: meta.look || prof.look });
   }
   return out;
 }
@@ -464,9 +541,11 @@ function statusOfEntry(idx, kind, name, style, worldId) {
 
 // GET /api/worlds/:id/images 的响应。顺手对没有索引项的补排队（老存档补图）。
 // isGenerating(worldId)=true 表示该世界画风设定还在生成：没图的项先报 pending，前端会继续轮询。
-function buildImageList(dataDir, state, ensureFn, isGenerating) {
+// waitBare=true（出图没关时）：还没介绍、也还没图的物品报 pending（等介绍出来再画）。
+function buildImageList(dataDir, state, ensureFn, isGenerating, waitBare) {
   const s = state && typeof state === 'object' ? state : {};
-  ensureFn(dataDir, s, listForState(s));
+  // 还没有介绍的物品先不画（介绍由 GET /items 补，补完那边会再触发出图），这里先报 pending。
+  ensureFn(dataDir, s, listForState(s), { skipBareItems: true });
   const idx = readIndex(dataDir);
   const style = styleForWorld(dataDir, s).style;
   const worldId = String(s.id == null ? '' : s.id);
@@ -478,9 +557,18 @@ function buildImageList(dataDir, state, ensureFn, isGenerating) {
   const items = {};
   const npcs = {};
   const curItems = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
+  const itemInfo = (s.itemInfo && typeof s.itemInfo === 'object') ? s.itemInfo : {};
   for (const it of curItems) {
     if (typeof it !== 'string' || !it.trim()) continue;
-    items[it.trim()] = statusOf(idx, 'item', it.trim(), style.zh, worldId);
+    const name = it.trim();
+    const meta = itemInfo[name];
+    const desc = meta && typeof meta === 'object' && typeof meta.desc === 'string' ? meta.desc : '';
+    const e = resolveItemEntry(idx, name, style.zh, worldId, desc).entry;
+    let r = { status: 'none', url: null };
+    if (e && e.status === 'ready' && e.file) r = { status: 'ready', url: '/api/images/' + e.file };
+    else if (e && (e.status === 'pending' || e.status === 'failed')) r = { status: e.status, url: null };
+    else if (!desc.trim() && waitBare) r = { status: 'pending', url: null }; // 等介绍
+    items[name] = gen && r.status !== 'ready' ? { status: 'pending', url: null } : r;
   }
   const npc = s.npcAttitude && typeof s.npcAttitude === 'object' ? s.npcAttitude : {};
   for (const name of Object.keys(npc)) {
@@ -492,14 +580,35 @@ function buildImageList(dataDir, state, ensureFn, isGenerating) {
   return { hero, items, npcs };
 }
 
+// 参考图说明里用的短名词：取英文描述的第一小段（到第一个逗号 / 介词短语为止），最多 6 个词，去掉冠词。
+// 以前是硬截前 8 / 12 个词，会截成半句（「the A cracked-screen old smartphone, still usable, holding … from image 1」）。
+function shortNoun(en, fallback) {
+  let t = String(en == null ? '' : en).trim();
+  t = t.split(/[,.;]|\s(?:in|with|wearing|standing|holding|sitting|carrying|who|at|on|from|under|as|for)\s/i)[0].trim();
+  t = t.replace(/^(?:an?|the)\s+/i, '').split(/\s+/).filter(Boolean).slice(0, 6).join(' ');
+  return t || fallback;
+}
+
+// 物品名是否真的出现在画面描述里：整名、去掉开头数量词（一根 / 半块 / 三盒）后的名字、或名字的最后两个字。
+// 记账模型常把「身上带着但这一幕没用到」的物品也填进 items，照单全收会让主角平白拿着它。
+function itemInScene(name, text) {
+  const n = String(name == null ? '' : name).trim();
+  const t = String(text == null ? '' : text);
+  if (!n || !t) return false;
+  if (t.includes(n)) return true;
+  const core = n.replace(/^[一二两三四五六七八九十半几数][一-鿿]/, '');
+  if (core.length >= 2 && t.includes(core)) return true;
+  return core.length >= 2 && t.includes(core.slice(-2));
+}
+
 // 场景多参考图：只收集 status=ready 且文件真实存在的图。顺序固定：主角、NPC(≤2)、物品(≤1)，共 ≤4 张。
-function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames) {
+// itemDescs：物品名 → 介绍（物品图的 key 带介绍，见 resolveItemEntry）；不传按没有介绍处理。
+function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, itemDescs) {
   const refs = [];
   const idx = readIndex(dataDir);
-  const ready = (ik) => {
-    const e = idx[ik];
+  const usable = (e) => {
     if (!e || e.status !== 'ready' || typeof e.file !== 'string' || !e.file) return null;
-    // 参考图不能带水印：硅基流动（及 provider 缺失的老记录）的图右下角有「AI生成」水印，
+    // 参考图不能带水印：硅基流动、智谱（及 provider 缺失的老记录）的图右下角有「AI生成」水印，
     // 会被带进场景图；只收 cloudflare / local 生成的图作参考。
     const prov = String(e.provider || '');
     if (prov !== 'cloudflare' && prov !== 'local') return null;
@@ -507,15 +616,14 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames) {
     if (!fs.existsSync(p)) return null;
     return { p, e };
   };
-  const firstWords = (t, n) => String(t == null ? '' : t).trim()
-    .split(/\s+/).filter(Boolean).slice(0, n).join(' ');
+  const ready = (ik) => usable(idx[ik]);
   // 主角形象图
   if (castNames.some((n) => n === '你' || n === heroId.name)) {
     const ik = indexKeyOf('hero', imageKey('hero', heroId.keyName, style.zh, worldId));
     const r = ready(ik);
-    if (r) refs.push({ path: r.p, label: 'the main character', type: 'person', enFirst: '' });
+    if (r) refs.push({ path: r.p, label: 'the main character', type: 'person' });
   }
-  // NPC 头像：除主角外最多 2 个；说明优先用该头像当初的英文描述，保证提示词是英文
+  // NPC 头像：除主角外最多 2 个；说明用该头像当初英文描述里的短名词，保证提示词是英文
   let npcUsed = 0;
   for (const name of castNames) {
     if (npcUsed >= 2 || refs.length >= 4) break;
@@ -523,18 +631,16 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames) {
     const ik = indexKeyOf('npc', imageKey('npc', name, style.zh, worldId));
     const r = ready(ik);
     if (!r) continue;
-    const enFirst = firstWords(r.e.enPrompt, 8);
-    refs.push({ path: r.p, label: enFirst ? `${enFirst} (NPC)` : 'the NPC', type: 'person', enFirst: '' });
+    refs.push({ path: r.p, label: shortNoun(r.e.enPrompt, 'another character'), type: 'person' });
     npcUsed += 1;
   }
-  // 物品图：最多 1 个；说明优先用该物品索引项的 enPrompt 前 12 个词，没有就 the item
+  // 物品图：最多 1 个
+  const descs = itemDescs && typeof itemDescs === 'object' ? itemDescs : {};
   for (const name of itemNames) {
     if (refs.length >= 4) break;
-    const ik = indexKeyOf('item', imageKey('item', name, style.zh, worldId));
-    const r = ready(ik);
+    const r = usable(resolveItemEntry(idx, name, style.zh, worldId, descs[name]).entry);
     if (!r) continue;
-    const enFirst = firstWords(r.e.enPrompt, 12);
-    refs.push({ path: r.p, label: enFirst ? `the ${enFirst} (item)` : 'the item', type: 'item', enFirst });
+    refs.push({ path: r.p, label: shortNoun(r.e.enPrompt, 'item'), type: 'item' });
     break;
   }
   return refs.slice(0, 4);
@@ -623,6 +729,8 @@ function createImages(cfg, opts) {
           + '"bgZh":"所有图共用的纯色背景，≤10字","bgEn":"shared plain background in English, ≤8 words"}。'
           + '画风只能是一种媒介加一种笔触（如「水墨淡彩插画」「铜版线描淡彩」「厚涂油画」），'
           + '不要把互相冲突的词并列（如「写实」和「水墨」、「照片」和「插画」），也不要写「写实」「照片」。'
+          + '画风只写媒介和笔触，不要把光线、氛围、题材写进去（不要写 neon lighting、moody、cyberpunk、霓虹、赛博朋克这类词：'
+          + '它们会渗进这个世界的每一张图，连白天的室内都画成霓虹夜景），题材和时代只写在 eraZh / eraEn 里。'
           + '背景是一种与画风相配的纯色或纸张色，物品和人物共用。'
           + 'en 画风里不要出现 Chinese painting、Chinese ink-wash、guohua、sumi-e、scroll 这类国画暗示词'
           + '（图像模型看到会自动加题字和印章），时代只写在 eraEn 里；bgEn 只写纯色（如 plain light beige background），'
@@ -647,7 +755,7 @@ function createImages(cfg, opts) {
   }
 
   // 返回 {style, ready}。ready=false 表示正在生成画风设定，本次先不排队（生成后会自动重新 ensure）。
-  function resolveStyle(dataDir, state, list) {
+  function resolveStyle(dataDir, state, list, opts) {
     const worldId = String(state.id == null ? '' : state.id);
     const sw = styleForWorld(dataDir, state);
     if (!sw.needsArt) return { style: sw.style, ready: true };
@@ -672,7 +780,7 @@ function createImages(cfg, opts) {
         }
       })().finally(() => {
         artJobs.delete(worldId);
-        ensureImages(dataDir, state, list);
+        ensureImages(dataDir, state, list, opts);
         notifyIdle();
       });
       artJobs.set(worldId, job);
@@ -696,7 +804,7 @@ function createImages(cfg, opts) {
   // 非流式翻译（local / cloudflare 用）：让回合模型把中文信息翻成一句 ≤25 词的英文画面描述。
   // 失败一律返回空串（由上层用兜底短语），绝不抛错。
   // subjectOverride：多参考图场景改翻 place + action（不再翻外貌），其余走默认口径。
-  async function translate(job, subjectOverride) {
+  async function translate(job, subjectOverride, strict) {
     try {
       const isScene = job.kind === 'scene';
       const eraZh = job.style && job.style.eraZh ? job.style.eraZh : '';
@@ -716,10 +824,13 @@ function createImages(cfg, opts) {
           + 'and objects period-accurate to the world\'s era, never modern or futuristic unless the world '
           + 'itself is. Do NOT include any person name or quotation marks. No explanation.';
       } else {
+        // 有「看得见的外貌」就给外貌；人物简介（多半是性格、职业）只在没有外貌时才给。
+        const look = typeof job.look === 'string' && job.look.trim() ? clip(job.look.trim(), 60) : '';
         if (job.kind === 'npc') {
-          subject = `人物：${job.name}；身份：${job.role}；描述：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
+          subject = `人物：${job.name}；身份：${job.role}；${look ? `外貌：${look}` : `描述：${clip(job.desc, 60)}`}；`
+            + `世界：${job.bibleTitle}${era}`;
         } else if (job.kind === 'hero') {
-          subject = `主角：${clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
+          subject = `主角：${look || clip(job.desc, 60)}；世界：${job.bibleTitle}${era}`;
         } else {
           const itemDesc = job.desc && typeof job.desc === 'string' ? `（${clip(job.desc, 60)}）` : '';
           subject = `物品：${job.name}${itemDesc}；世界：${job.bibleTitle}${era}`;
@@ -728,6 +839,11 @@ function createImages(cfg, opts) {
           + 'for an image generator. The subject MUST fit the world\'s era and setting: objects are made '
           + 'of that era\'s materials and craft, people wear that era\'s clothing; never modern or futuristic '
           + 'unless the world itself is. Do NOT include any person name or quotation marks. No explanation.';
+      }
+      // 第二次翻译（上一次结果里带了汉字）：明确要求全英文。
+      if (strict) {
+        system += ' Use English words only: the output must not contain a single Chinese character; '
+          + 'describe people and places in English instead of naming them.';
       }
       const messages = [
         { role: 'system', content: system },
@@ -750,11 +866,23 @@ function createImages(cfg, opts) {
     }
   }
 
-  // 只懂英文的提供方用的翻译：结果里只要还有汉字就视为失败并抛错，让回退链换下一家中文提供方，
-  // 绝不把中文提示词喂给 flux / local。返回空串表示真正的翻译失败，由上层用英文兜底短语。
+  // 只懂英文的提供方用的翻译：绝不把带汉字的提示词喂给 flux / local。
+  // 结果里带汉字 → 重译一次（明确要求全英文）→ 还带就把汉字去掉，剩下的英文够用（≥4 个词）就用；
+  // 实在不行才抛错，让这一张换下一家中文提供方。这是这一张图的内容问题，不是这家服务坏了：
+  // 错误带 contentOnly，generate 不会因此把整家冷却 5 分钟（以前会，后面排队的图就全换了家、画风对不上）。
+  // 返回空串表示真正的翻译失败，由上层用英文兜底短语。
   async function englishDesc(job, subjectOverride) {
-    const e = await translate(job, subjectOverride);
-    if (HAS_CHINESE.test(e)) throw new Error('翻译结果含中文，跳过只懂英文的提供方');
+    let e = await translate(job, subjectOverride);
+    if (HAS_CHINESE.test(e)) e = await translate(job, subjectOverride, true);
+    if (HAS_CHINESE.test(e)) {
+      const rest = e.replace(/[（(][^（）()]*[一-鿿][^（）()]*[）)]/g, ' ')
+        .replace(/[一-鿿　-〿＀-￯]+/g, ' ')
+        .replace(/\s+([,.;])/g, '$1').replace(/\s+/g, ' ').trim();
+      if (rest.split(/\s+/).filter(Boolean).length >= 4) return rest;
+      const err = new Error('翻译结果含中文，跳过只懂英文的提供方');
+      err.contentOnly = true;
+      throw err;
+    }
     return e;
   }
 
@@ -823,11 +951,11 @@ function createImages(cfg, opts) {
   }
 
   // 硅基流动（Kolors，免费）：返回 images[0].url，需再下载。
-  async function callSiliconflow(prompt, style, size) {
+  async function callSiliconflow(prompt, negative, size) {
     if (!sfKey) throw new Error('未配置 SILICONFLOW_API_KEY');
     const data = await postJson(SILICONFLOW_URL, { Authorization: `Bearer ${sfKey}` }, {
       model: sfModel, prompt,
-      negative_prompt: '文字，印章，书法，落款，水印，签名，边框，模糊，畸形' + (style && style.avoidZh ? '，' + style.avoidZh : ''),
+      negative_prompt: negative || `${NEGATIVE_BASE_ZH}，${NO_ADULT_ZH}`,
       image_size: size || FREE_SIZE, batch_size: 1, num_inference_steps: 20, guidance_scale: 7.5,
     });
     const u = data && Array.isArray(data.images) && data.images[0] && data.images[0].url;
@@ -980,12 +1108,9 @@ function createImages(cfg, opts) {
         + `世界：${job.bibleTitle || ''}；时代背景：${eraZh}`
       : `场景：${clip(desc, 60)}；世界：${job.bibleTitle || ''}；时代背景：${eraZh}`;
     const enDesc = (await englishDesc(job, subject)) || 'a dramatic game scene';
-    const parts = job.refs.map((r, i) => {
-      if (r.type === 'item') {
-        return r.enFirst ? `the ${r.enFirst} from image ${i} (item)` : `the item from image ${i}`;
-      }
-      return `the person from image ${i} (${r.label})`;
-    });
+    const parts = job.refs.map((r, i) => (r.type === 'item'
+      ? `the ${r.label} from image ${i}`
+      : `the person from image ${i} (${r.label})`));
     const hasItem = job.refs.some((r) => r.type === 'item');
     const keep = "Keep each person's face, hair and clothing exactly as in their reference image"
       + (hasItem ? ' and the item exactly as in its reference image' : '');
@@ -1010,7 +1135,10 @@ function createImages(cfg, opts) {
       : localPrompt(e, job.kind, job.style.en, job.style.eraEn, job.style.bgEn));
     if (p === 'siliconflow') {
       const prompt = zhPrompt();
-      return { bytes: await callSiliconflow(prompt, job.style, isScene ? '1024x576' : undefined), prompt, enPrompt: '', model: sfModel };
+      return {
+        bytes: await callSiliconflow(prompt, negativePromptZh(job), isScene ? '1024x576' : undefined),
+        prompt, enPrompt: '', model: sfModel,
+      };
     }
     if (p === 'cloudflare') {
       // flux 看不懂中文（会画成书法字），复用 local 的翻译 + 英文提示词。
@@ -1061,11 +1189,14 @@ function createImages(cfg, opts) {
         const msg = err && err.message ? err.message : String(err);
         errors.push(`${p}：${msg}`);
         if (chain.length > 1) {
+          // 内容类失败（翻译里带汉字、被安全审查误判）只是这一张图的问题：只让这一张换家，不冷却整家。
+          // 以前一律冷却 5 分钟，后面排队的头像 / 物品全去了别家，同一个世界三种画风。
+          const contentOnly = !!(err && err.contentOnly) || CONTENT_REJECT_RE.test(msg);
           // 已冷却到 UTC 零点的 cloudflare 不要被 5 分钟冷却覆盖。
-          if (!(p === 'cloudflare' && cfExhaustedUntil > nowFn())) {
+          if (!contentOnly && !(p === 'cloudflare' && cfExhaustedUntil > nowFn())) {
             providerCooldown.set(p, nowFn() + PROVIDER_COOLDOWN_MS);
           }
-          console.warn(`[images] ${p} 出图失败，换下一家：${msg}`);
+          console.warn(`[images] ${p} 出图失败，${contentOnly ? '这一张' : ''}换下一家：${msg}`);
         }
       }
     }
@@ -1183,12 +1314,14 @@ function createImages(cfg, opts) {
   }
 
   // 完全异步、不阻塞：仅同步地把待生成项登记为 pending 并入队，随后 kick off 队列。
-  function ensureImages(dataDir, state, list) {
+  // opts.skipBareItems：还没有介绍的物品这次先不画（等介绍生成后再画，免得只按名字画一张对不上介绍的图）。
+  function ensureImages(dataDir, state, list, opts) {
     try {
       if (off) return; // 什么都不生成
+      const skipBare = !!(opts && opts.skipBareItems);
       const s = state && typeof state === 'object' ? state : {};
       const worldId = String(s.id == null ? '' : s.id);
-      const resolved = resolveStyle(dataDir, s, list);
+      const resolved = resolveStyle(dataDir, s, list, opts);
       if (!resolved.ready) return; // 画风设定生成中，完成后会自动重新 ensure
       const style = resolved.style;
       const idx = readIndex(dataDir);
@@ -1214,17 +1347,30 @@ function createImages(cfg, opts) {
         const name = item && typeof item.name === 'string' ? item.name.trim() : '';
         if (!name) continue;
         const desc = item && typeof item.desc === 'string' ? item.desc : '';
-        // 主角 key 用「名字|形象」，与 NPC 一样带 worldId。
-        const keyName = kind === 'hero' ? `${name}|${desc}` : name;
-        const key = imageKey(kind, keyName, style.zh, worldId);
-        const ik = indexKeyOf(kind, key);
-        const cur = idx[ik];
+        let key;
+        let ik;
+        let cur;
+        let bare = false;
+        if (kind === 'item') {
+          // 物品：有介绍 → key 带介绍（本世界以前只按名字画好的老图照用）；没介绍 → 只按名字，标 bare。
+          bare = !desc.trim();
+          const r = resolveItemEntry(idx, name, style.zh, worldId, desc);
+          key = r.key; ik = r.ik; cur = r.entry;
+          if (bare && skipBare && !(cur && cur.status === 'ready')) continue;
+        } else {
+          // 主角 key 用「名字|形象」，与 NPC 一样带 worldId。
+          const keyName = kind === 'hero' ? `${name}|${desc}` : name;
+          key = imageKey(kind, keyName, style.zh, worldId);
+          ik = indexKeyOf(kind, key);
+          cur = idx[ik];
+        }
         if (!shouldQueue(cur, ik, dataDir)) continue;
         if (paid && wcount >= maxPerWorld) continue; // 花钱上限（链里有付费 gateway 时生效）
         idx[ik] = Object.assign({}, cur || {}, {
           kind, name, style: style.zh, worldId,
           file: null, status: 'pending', ts: nowFn(),
         });
+        if (bare) idx[ik].bare = true; else delete idx[ik].bare;
         changed = true;
         inFlight.add(ik);
         if (paid) { wcount += 1; worldCount.set(worldId, wcount); }
@@ -1232,6 +1378,7 @@ function createImages(cfg, opts) {
           dataDir, indexKey: ik, kind, key, name, style, worldId,
           role: item && typeof item.role === 'string' ? item.role : '',
           desc,
+          look: item && typeof item.look === 'string' ? item.look : '',
           bibleTitle: (s.bible && s.bible.title) || '',
           bibleTone: (s.bible && s.bible.tone) || '',
           llmRoute: adultMode.routeOf(s),
@@ -1290,7 +1437,10 @@ function createImages(cfg, opts) {
       // items：新签名传物品名数组；缺失时按 desc 里出现的物品名匹配。
       let itemNames;
       if (Array.isArray(q.items)) {
-        itemNames = q.items.filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim());
+        // 只留画面描述里真的出现的物品（见 itemInScene）。
+        const sceneText = `${typeof q.place === 'string' ? q.place : ''} ${typeof q.action === 'string' ? q.action : ''} ${desc}`;
+        itemNames = q.items.filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim())
+          .filter((n) => itemInScene(n, sceneText));
       } else {
         itemNames = [];
         const curItems = (s.character && Array.isArray(s.character.items)) ? s.character.items : [];
@@ -1298,18 +1448,31 @@ function createImages(cfg, opts) {
           if (typeof it === 'string' && it.trim() && desc.includes(it.trim())) itemNames.push(it.trim());
         }
       }
-      // 中文提示词 / 非参考图翻译用的 cast（{name, look}）：主角用外貌，NPC 用设定里的描述。
+      // 中文提示词 / 非参考图翻译用的 cast（{name, look}）：优先用「看得见的外貌」
+      //（主角 look、设定里的 npcs[].look、人物档案里写到的外貌），没有才退回形象 / 人物简介。
       const npcLook = {};
       for (const n of bibleNpcs) {
         if (n && typeof n.name === 'string') npcLook[n.name.trim()] = clip(n.desc, 40);
       }
+      for (const e of listForState(s)) {
+        if (e.kind === 'npc' && (e.look || e.desc)) npcLook[e.name] = clip(e.look || e.desc, 40);
+      }
       const cast = [];
       for (const name of castNames.slice(0, 3)) {
-        cast.push({ name, look: (name === '你' || name === heroId.name) ? heroId.desc : (npcLook[name] || '') });
+        cast.push({
+          name,
+          look: (name === '你' || name === heroId.name) ? (heroId.look || heroId.desc) : (npcLook[name] || ''),
+        });
       }
 
       // 参考图：主角形象 + NPC 头像(≤2) + 物品图(≤1)，只取 ready 且文件存在的。
-      const refs = collectRefs(dataDir, worldId, style, heroId, castNames, itemNames);
+      const itemInfo = (s.itemInfo && typeof s.itemInfo === 'object') ? s.itemInfo : {};
+      const itemDescs = {};
+      for (const n of itemNames) {
+        const meta = itemInfo[n];
+        itemDescs[n] = meta && typeof meta === 'object' && typeof meta.desc === 'string' ? meta.desc : '';
+      }
+      const refs = collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, itemDescs);
 
       const idx = readIndex(dataDir);
       const cur = idx[ik];
@@ -1338,7 +1501,7 @@ function createImages(cfg, opts) {
   }
 
   function imageList(dataDir, state) {
-    return buildImageList(dataDir, state, ensureImages, (wid) => artJobs.has(wid));
+    return buildImageList(dataDir, state, ensureImages, (wid) => artJobs.has(wid), !off);
   }
 
   function waitIdle() {
@@ -1375,7 +1538,7 @@ function configure(cfg, opts) {
 }
 function reset() { _default = null; }
 
-function ensureImages(dataDir, state, list) { return defaultInstance().ensureImages(dataDir, state, list); }
+function ensureImages(dataDir, state, list, opts) { return defaultInstance().ensureImages(dataDir, state, list, opts); }
 function ensureScene(dataDir, state, spec) { return defaultInstance().ensureScene(dataDir, state, spec); }
 function imageList(dataDir, state) { return defaultInstance().imageList(dataDir, state); }
 function waitIdle() { return defaultInstance().waitIdle(); }
@@ -1384,6 +1547,7 @@ module.exports = {
   createImages, configure, reset,
   // 纯函数
   inferStyle, imageKey, sceneKey, scenePromptZh, scenePromptEn, gatewayPrompt, listForState, readIndex, serveImage, collectRefs, coverForWorlds,
+  negativePromptZh, resolveItemEntry, itemInScene, shortNoun,
   FILE_NAME_RE, FAILED_COOLDOWN_MS, IMAGE_TIMEOUT_MS, PROVIDER_COOLDOWN_MS,
   SILICONFLOW_URL, ZHIPU_URL, MODELSCOPE_URL, MODELSCOPE_TASK_URL, CLOUDFLARE_API_BASE,
   DEFAULT_SCENE_REF_MODEL,

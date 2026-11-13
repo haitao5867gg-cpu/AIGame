@@ -119,7 +119,7 @@ const SCENE_SPEC = {
   place: '雾中长街',
   cast: ['你', '守夜人'],
   items: ['旧铜灯'],
-  action: '主角在左侧，守夜人提灯在右侧，暖黄灯光',
+  action: '主角在左侧，守夜人提着旧铜灯在右侧，暖黄灯光',
 };
 
 test('主角形象图：listForState 首项 hero、文件名 hero-xxx、GET /images 列表含 hero', async (t) => {

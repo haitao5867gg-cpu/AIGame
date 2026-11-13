@@ -130,11 +130,13 @@ test('智谱场景插图：size 1344x768，中文场景提示词，scene-*.jpg�
   assert.ok(zp, '应请求智谱');
   assert.equal(zp.body.size, '1344x768');
   const p = zp.body.prompt;
-  assert.match(p, /^复古铜版线描淡彩/);
-  assert.match(p, /世界背景/);
+  // 画面描述在最前、画风在最后；不带世界标题，也不写「不要 / 无」。
+  assert.ok(p.startsWith(SCENE_DESC + '。'), '以画面描述开头');
+  assert.match(p, /复古铜版线描淡彩风格。$/);
+  assert.doesNotMatch(p, /世界背景|不要|无文字/);
   assert.match(p, /游戏场景插画/);
   assert.match(p, /横幅/);
-  assert.match(p, /在场人物/);
+  assert.match(p, /画面里的人：守夜人是/);
   const e = Object.values(images.readIndex(dataDir))[0];
   assert.equal(e.kind, 'scene');
   assert.equal(e.status, 'ready');
