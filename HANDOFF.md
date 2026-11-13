@@ -38,6 +38,7 @@
 - 密钥只在：Windows `D:\AIGame\.env`、Mac `~/.aigame_llm_key`。**`.env` 由用户自己改**，主脑和 Hy4 都不写、不打印、不进仓库、不进日志（Mac 上的权限检查也会拦远程写 `.env`）。变量清单见 `.env.example` 和 `src/env.js` 的 DEFAULTS。
 - 需要用真 Key 测试时：把脚本通过 `ssh win-pc "node -" < 脚本` 在 Windows 上跑，脚本自己读 `D:/AIGame/.env`，输出里把 Key 替换掉。
 - 对话模型：网关 `https://aigw.telecomjs.com/v1`（OpenAI 兼容，用户朋友提供的 Key）。回合叙事 `deepseek-v4.1-flash`，建世界 `deepseek-v4-pro-0813`。
+- **成人模式网关**（只给建世界时勾了成人模式的世界用）：Experiential `https://api.experientiallabs.ai/v1`（OpenAI 兼容），模型 `deepseek-v4.1-flash-uncensored`，Key 是 `.env` 的 `EXPLABS_API_KEY`（用户 2026-11-12 已写进 Windows `.env`；Mac 上没有）。Windows 直连可用。该模型不传思考参数时默认 high（约 7 秒），代码里默认补 `thinking: disabled`；余额查 `GET https://api.experientiallabs.ai/api/v1/credits`。文档 https://platform.experientiallabs.ai/docs 。
 - 出图（全部免费额度）：`IMAGE_PROVIDER=cloudflare,siliconflow,zhipu,modelscope`，按顺序回退，失败的一家冷却 5 分钟。
   - Cloudflare Workers AI：文生图 flux-1-schnell；**场景参考图**用 `@cf/black-forest-labs/flux-2-klein-4b`（最多 4 张参考图：主角形象、在场 NPC 头像、物品图），让插图里的人和物与已有图对得上；只用 Cloudflare 画的无水印图做参考。每天 10,000 Neurons（UTC 零点重置），用超 7000 后物品/头像让给别家，额度留给场景图；收到「daily free allocation」429 时冷却到下一个 UTC 零点。
   - 硅基流动 Kolors（有「AI生成」水印）、智谱 cogview-3-flash、魔搭 Z-Image-Turbo（慢）。
@@ -62,6 +63,10 @@
 - 场景插图只在关键回合画；回合模型的 scene 只列在场人物和物品的名字，外貌交给参考图。
 - 手机端：顶栏一行 +「⋯」菜单，整页滚动，输入框固定底部，可点元素至少 40px，输入框字号 16。电脑端：页面 1440 宽、正文铺满高度、当前插图在右侧栏顶部、空格翻一屏。新回合出来时停在这一回合开头，不要滚到底。
 - 朗读：每回合一个「▶ 朗读」整回合播放 + 播放条，不要回到每段一个按钮。
+- 手机断流（切 App、锁屏、换网络）：每次行动 / 时光推进带 `clientTurnId`，记录存在 localStorage `pendingTurn:<世界ID>`。流式断了就带同一个 ID 走普通 `/turn` 取回；刷新或页面被回收后进世界会用 `attachOnly` 取回；服务器同一个 ID 只执行一次（`src/idempotency.js`）。**不要再加「断流就用同一句行动重新发一次」这种不带 ID 的重试**，会把一句话写成两回合。等待时用 Screen Wake Lock 保持亮屏，前端看门狗靠服务器 10 秒一次的心跳判断连接死活。
+- 建世界等待弹窗：全屏遮罩挡住页面（防乱点），显示进度条、当前步骤（读懂设定 → 构思世界 → 规划大纲（v3）→ 落笔）、已写字数、预计剩余时间、「多久没动静」提示，失败给「重试 / 关闭」。前端带 `clientRequestId`，每秒查 `GET /api/build-progress?cid=`（`src/build-progress.js`，进度只在内存）；断网或隧道 524 时带同一个 ID 重发，服务器同一个 ID 只建一个世界。每步预计耗时取 `data/build-stats.json` 最近 10 次的中位数（≥3 次才用）。建世界的模型调用走流式（为了报字数），流式出错或 90 秒没新内容就退回非流式。
+- 手机顶栏**不要加 `backdrop-filter` / `filter` / `transform`**：会让顶栏成为 `position:fixed` 子元素的定位容器，顶栏里的「用量」底部面板、「时光推进」弹层会被困成浏览器顶上一条（2026-11-12 用户报过）。
+- 手机输入：回车发送要避开输入法选词（`isComposing` / keyCode 229），输入框 `enterkeyhint="send"`；灵感按钮在手机上只显示 ✦ 图标。正文字号四档（⋯ 菜单「正文字号」，存 localStorage `readFont`）。
 
 ## 7. 现在的进度
 
@@ -107,6 +112,15 @@
 - 2026-11-12 用户改分工：没有 hy4free 额度时直接用付费 hy4（`HY4_ALLOW_PAID=1`），复杂的 Claude 自己写、简单的交 Hy4；真模型测试不设金额上限（约 2 元/百万 token）。
 
 2026-11-12 出身与节奏（`da92a67`，PR #6，用户说「可以部署」后已部署；54 个存档/配置文件哈希前后一致，访问密码未变）：建世界不再分属性点，改为「你是谁」+ AI 给 3 个出身在序章卡上选；v3 关掉坊间传闻、线索 ≤3 条、印记从严；线索 / 印记可点跳回出现的回合；右侧插图不再钉在面板顶上。详见 `docs/STORY_V3.md` 末节。
+
+2026-11-12 成人模式（`634d7b7`，PR #8，用户说「可以部署」后已部署；39 个存档/配置文件哈希前后一致，访问密码未变；线上 `/api/health` 显示 `adultMode: true`）：
+- 新世界页「成人模式（18+）」默认关，勾选弹 18 岁确认；网关没配 Key 或来客没被主人总开关放行时不显示、接口也拒绝（400 / 403 / 503）。`state.adultMode` 建后不改，首页卡片标 18+。
+- 路由：`server.js` 按 `/api/worlds/:id` 查世界（`src/adult-mode.js` 的 `worldRoute`，按 ID 缓存），在请求上下文放 `llmRoute:'adult'`；`src/llm.js` 据此换网关 / Key / 模型，并在第一条 system 末尾追加成人模式规则（出图翻译传 `adultPolicy:false` 不加）。出图队列按任务里的 `llmRoute` 走，不看队列在谁的请求里跑。
+- 记账：`usage.jsonl` 成人模式行带 `route:'adult'`；「今日对话 token」与原上限只算默认网关，成人模式另有 `ADULT_LLM_DAILY_TOKEN_LIMIT`（全局，默认 200 万）/ `ADULT_LLM_PLAYER_DAILY_TOKEN_LIMIT`（每位来客，默认 100 万）；用量面板单列「成人模式 token」，主人的玩家列表多「成人 N」。
+- 模型设置：成人模式世界「⋯ → 模型设置」/ 桌面「思考·低」标签，按玩家存 `prefs.adultLlm`（思考 关/低/中/高/最高 → thinking + reasoning_effort；发挥 稳 0.7 / 默认 / 放开 1.2），只作用于每回合写正文（purpose=story）；该世界隐藏「写作」菜单。
+- 真网关实测（部署前，Windows）：建世界约 31 秒，首回合 10 秒出字、26 秒写完；建世界 + 首回合约 $0.013，之后每回合约 $0.005。
+- 部署方式（11-12 起）：从 Mac 远程会话 ssh 重启会被 Mac 自动模式拦（Production Deploy），由用户在 Mac 终端跑 `ssh win-pc 'powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIGame\scripts\restart.ps1'`；Mac 本地 main 落后时不要跑 `deploy.sh`（第一步 push 会被拒）。
+- 底线：规则写死在提示词（未成年红线、只限成年、你情我愿、不写真实人物；暴力可直写）；代码里 `src/adult-mode.js` 关键词过滤「未成年 × 性内容」：世界观 / 身份在建世界前拦，行动在调模型前拦，正文在落库前拦（流式已出的半成品前端会撤掉），世界设定按字段拦。成人模式世界的行动不进跨世界玩家画像。测试 `test/adult-mode.test.js`。
 
 ## 8. 已知问题和待办
 

@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#14130f">
+<meta name="apple-mobile-web-app-title" content="无限世界">
+<meta name="format-detection" content="telephone=no">
 <title>无限世界</title>
 <link rel="stylesheet" href="/app.css">
 </head>
@@ -71,6 +74,12 @@
       <label for="char-appearance">形象</label>
       <input id="char-appearance" type="text" placeholder="可不填">
 
+      <!-- 成人模式：默认关；服务器配好成人模式网关、且这位玩家可用时才显示 -->
+      <div id="adult-mode-row" class="adult-mode-row" hidden>
+        <label class="adult-mode-check"><input id="adult-mode" type="checkbox"> 成人模式（18+）</label>
+        <div class="adult-mode-note">会有露骨的性爱和暴力描写，只限已满 18 岁。这个世界改用单独的模型写，token 单独计算；建好后不能改回普通世界。</div>
+      </div>
+
       <button id="btn-create" class="btn primary" style="margin-top:14px">创世</button>
       <div id="creating" class="creating" hidden>世界正在成形<span class="dots">…</span></div>
     </div>
@@ -97,11 +106,14 @@
         <button type="button" id="menu-genre" class="more-menu-item" data-menu="genre">文风：<span id="menu-genre-name">识别中</span></button>
         <button type="button" class="more-menu-item" data-menu="atmosphere">氛围设置</button>
         <button type="button" id="menu-read" class="more-menu-item" data-menu="read">阅读底色：<span id="menu-read-name">跟随时辰</span></button>
+        <button type="button" id="menu-font" class="more-menu-item" data-menu="font">正文字号：<span id="menu-font-name">标准</span></button>
         <button type="button" id="menu-writing" class="more-menu-item" data-menu="writing" hidden>写作：<span id="menu-writing-name">精写</span></button>
+        <button type="button" id="menu-adult-llm" class="more-menu-item" data-menu="adult-llm" hidden>模型设置：<span id="menu-adult-llm-name">思考低</span></button>
         <button type="button" id="menu-logout" class="more-menu-item" data-menu="logout">退出</button>
       </div>
       <div id="usage-pop" class="usage-pop" hidden></div>
       <div id="genre-pop" class="genre-pop" hidden></div>
+      <div id="adult-llm-pop" class="genre-pop adult-llm-pop" role="dialog" aria-label="成人模式模型设置" hidden></div>
       <div id="timeskip-pop" class="timeskip-pop" role="dialog" aria-modal="true" aria-labelledby="timeskip-title" hidden></div>
     </header>
     <div id="g-subtitle" class="g-subtitle"></div>
@@ -114,7 +126,9 @@
         <button type="button" id="g-timeskip" class="genre-tag">时光推进</button>
         <button type="button" id="g-genre" class="genre-tag">文风·识别中</button>
         <button type="button" id="g-read" class="genre-tag" aria-label="切换阅读底色">底色·跟随时辰</button>
+        <button type="button" id="g-font" class="genre-tag" aria-label="切换正文字号">字号·标准</button>
         <button type="button" id="g-writing" class="genre-tag" aria-label="切换写作模式" hidden>写作·精写</button>
+        <button type="button" id="g-adult-llm" class="genre-tag" aria-label="成人模式模型设置" hidden>思考·低</button>
         <button type="button" id="g-atmosphere-settings" class="genre-tag" aria-label="打开氛围设置">氛围设置</button>
       </div>
       <div id="top-attrs" class="top-attrs"></div>
@@ -125,8 +139,9 @@
         <div id="stream" class="stream"></div>
         <button id="btn-undo" class="undo-btn" hidden>↶ 撤回这一步</button>
         <div class="composer">
+          <button type="button" id="btn-latest" class="latest-btn" hidden>↓ 回到最新</button>
           <div class="composer-row">
-            <textarea id="action-input" rows="2" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
+            <textarea id="action-input" rows="2" enterkeyhint="send" autocomplete="off" placeholder="你要做什么？（Enter 发送，Shift+Enter 换行）"></textarea>
             <button type="button" id="btn-idea" class="btn idea-btn" aria-label="让 AI 根据当前场景想一个下一步" title="没主意？让 AI 根据当前场景想一个下一步，不满意再点一次">✦ 灵感</button>
             <button id="btn-send" class="btn primary">发送</button>
           </div>
@@ -147,6 +162,7 @@
 <script src="/js/core.js"></script>
 <script src="/js/sky.js"></script>
 <script src="/js/home.js"></script>
+<script src="/js/build-modal.js"></script>
 <script src="/js/images.js"></script>
 <script src="/js/prologue.js"></script>
 <script src="/js/items.js"></script>

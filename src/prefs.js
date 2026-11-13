@@ -157,6 +157,20 @@ function normalizeWriting(v) {
   return WRITING_MODES.includes(v) ? v : 'fine';
 }
 
+// 成人模式世界写正文时的模型参数（玩家在游戏「⋯」菜单里选）：
+// effort 思考强度 none 关 / low / medium / high / max；temperature 发挥 steady 稳 / default 默认 / free 放开。
+const ADULT_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high', 'max']);
+const ADULT_TEMPERATURES = Object.freeze(['steady', 'default', 'free']);
+const DEFAULT_ADULT_LLM = Object.freeze({ effort: 'low', temperature: 'default' });
+function normalizeAdultLlm(v, base) {
+  const b = base || DEFAULT_ADULT_LLM;
+  const t = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return {
+    effort: ADULT_EFFORTS.includes(t.effort) ? t.effort : b.effort,
+    temperature: ADULT_TEMPERATURES.includes(t.temperature) ? t.temperature : b.temperature,
+  };
+}
+
 function getPrefs(dataDir, playerId) {
   const id = typeof playerId === 'string' && playerId ? playerId : 'host';
   const p = readAll(dataDir)[id];
@@ -165,6 +179,7 @@ function getPrefs(dataDir, playerId) {
     tts: normalizeTts(p && p.tts),
     atmosphere: normalizeAtmosphere(p && p.atmosphere), // GET 始终附完整归一化对象
     writing: normalizeWriting(p && p.writing),
+    adultLlm: normalizeAdultLlm(p && p.adultLlm),
     adult: !!(p && p.adult === true),            // 该玩家是否自己开启了成人内容
     adultAllowed: getAdultAllowed(dataDir),      // 主人总开关是否开放
   };
@@ -191,6 +206,8 @@ function setPrefs(dataDir, playerId, patch) {
   if (hasAdult) next.adult = patch.adult;
   const hasWriting = !!(patch && WRITING_MODES.includes(patch.writing));
   if (hasWriting) next.writing = patch.writing;
+  const hasAdultLlm = !!(patch && patch.adultLlm && typeof patch.adultLlm === 'object' && !Array.isArray(patch.adultLlm));
+  if (hasAdultLlm) next.adultLlm = normalizeAdultLlm(patch.adultLlm, normalizeAdultLlm(cur.adultLlm));
   all[id] = next;
   store.atomicWriteJson(prefsPath(dataDir), all);
   const out = { scenes: !(next.scenes === false) };
@@ -198,6 +215,7 @@ function setPrefs(dataDir, playerId, patch) {
   if (hasAtmosphere) out.atmosphere = normalizeAtmosphere(next.atmosphere);
   if (hasAdult) out.adult = next.adult === true;
   if (hasWriting) out.writing = next.writing;
+  if (hasAdultLlm) out.adultLlm = normalizeAdultLlm(next.adultLlm);
   return out;
 }
 
@@ -206,4 +224,5 @@ module.exports = {
   normalizeAtmosphere, mergeAtmosphere, DEFAULT_ATMOSPHERE,
   getAdultAllowed, setGlobalAdultAllowed, adultModeOn,
   WRITING_MODES, normalizeWriting,
+  ADULT_EFFORTS, ADULT_TEMPERATURES, DEFAULT_ADULT_LLM, normalizeAdultLlm,
 };

@@ -71,6 +71,8 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .wc-status{font-family:var(--sans);font-size:11px;letter-spacing:.15em;
   padding:3px 10px;border-radius:999px;color:#ffb9ad;
   border:1px solid rgba(224,84,63,.6);background:rgba(110,20,10,.5)}
+.wc-adult{font-family:var(--sans);font-size:11px;letter-spacing:.08em;font-weight:600;
+  padding:3px 9px;border-radius:999px;color:#fff;background:rgba(192,57,43,.85);border:1px solid rgba(255,255,255,.2)}
 .wc-recent{position:absolute;top:12px;right:12px;z-index:2;
   font-family:var(--sans);font-size:11px;letter-spacing:.1em;
   padding:3px 10px;border-radius:999px;color:#fff;
@@ -309,6 +311,13 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
 .identity-row{display:flex;align-items:stretch;gap:8px}
 .identity-row input{flex:1;min-width:0}
 .identity-row .btn{flex:none;white-space:nowrap}
+/* 成人模式（新世界页）：默认关，勾选前弹 18 岁确认 */
+.adult-mode-row{margin-top:10px;padding:10px 12px;border:1px solid rgba(224,84,63,.45);border-radius:10px;
+  background:rgba(110,20,10,.18)}
+.adult-mode-check{display:flex;align-items:center;gap:8px;min-height:40px;font-family:var(--sans);font-size:15px;
+  color:var(--ink);cursor:pointer}
+.adult-mode-check input{width:20px;height:20px;margin:0;accent-color:var(--accent-2)}
+.adult-mode-note{font-family:var(--sans);font-size:12px;line-height:1.6;color:var(--muted)}
 .creating{font-family:var(--sans);font-size:14px;color:var(--accent-2);margin-top:12px;letter-spacing:1px}
 .dots{animation:blink 1.1s infinite}
 @keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
@@ -362,6 +371,17 @@ label{display:block;font-family:var(--sans);font-size:13px;color:var(--muted);ma
   font-size:14px;color:var(--ink);background:transparent;border:0;border-radius:6px;padding:8px 12px}
 .genre-option:hover,.genre-option:active{background:var(--bg-2)}
 .genre-option.selected{color:var(--accent-2);font-weight:600}
+/* 成人模式模型设置弹层：两排分段按钮（思考强度 / 发挥） */
+.adult-llm-pop{min-width:260px;max-width:min(340px,calc(100vw - 32px))}
+.adult-llm-model{font-family:var(--sans);font-size:12px;color:var(--ink);padding:0 12px 6px;word-break:break-all}
+.adult-llm-row{padding:6px 12px}
+.adult-llm-label{font-family:var(--sans);font-size:12px;color:var(--muted);margin-bottom:6px}
+.adult-llm-opts{display:flex;flex-wrap:wrap;gap:6px}
+.adult-llm-opt{min-height:40px;min-width:48px;padding:6px 12px;font-family:var(--sans);font-size:14px;color:var(--ink);
+  background:var(--bg-2);border:1px solid var(--line);border-radius:8px}
+.adult-llm-opt:hover{border-color:var(--accent-2)}
+.adult-llm-opt.selected{border-color:var(--accent-2);color:var(--accent-2);font-weight:600}
+.adult-llm-note{font-family:var(--sans);font-size:12px;line-height:1.6;color:var(--muted);padding:6px 12px 4px}
 @keyframes dangerFlash{from{opacity:.42}to{opacity:1}}
 #btn-panel{display:none}
 .event-banner{display:flex;gap:10px;align-items:flex-start;background:rgba(192,57,43,.14);
@@ -1070,8 +1090,10 @@ body[data-genre][data-read="paper"] .img-fallback{color:#5b4326;background:radia
   body[data-genre] .world-backdrop{filter:blur(6px) brightness(.85);transform:scale(1.08)}
   body[data-genre] .world-backdrop[data-period="dusk"]{filter:blur(6px) brightness(.72) sepia(.12)}
   body[data-genre] .world-backdrop[data-period="night"]{filter:blur(6px) brightness(.55)}
-  body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:rgba(var(--g-tint),.80);
-    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0 -14px 6px;padding:0 10px}
+  /* 顶栏不用 backdrop-filter：它会让顶栏变成 position:fixed 子元素的定位容器，顶栏里的「用量」底部面板、
+     「跳过时间」弹层会被困在 48px 高的顶栏里，成了浏览器顶上一条很窄、关不掉的窗口。改用几乎不透明的底色。 */
+  body[data-genre] .game-head,body.atmosphere-background[data-genre] .game-head{background:rgba(var(--g-tint),.96);
+    -webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid rgba(255,255,255,.08);border-radius:0;margin:0 -14px 6px;padding:0 10px}
   body[data-genre] .stage,body.atmosphere-background[data-genre] .stage{background:rgba(var(--g-tint),.66);-webkit-backdrop-filter:none;backdrop-filter:none;
     border:0;border-radius:16px;box-shadow:none;padding:2px 14px 0}
   body[data-genre] .composer{background:rgba(var(--g-tint),.97);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);margin:8px -14px 0;padding-left:14px;padding-right:14px;border-radius:0 0 16px 16px}
@@ -1264,3 +1286,122 @@ body[data-genre] .g-chapter{color:#f3eee4;background:rgba(0,0,0,.34);
 @media(max-width:600px){
   .mark-chip[data-clue],.thread-item[data-clue],.rumor-item[data-clue]{min-height:40px}
 }
+
+/* ===== 手机游玩体验（第 3 轮）：等待占位、输入区贴底、灵感图标、字号、回到最新、提示条位置 ===== */
+/* 正文还没到时，正文位置的「构思中」：一小段来回走的墨线 + 当前提示文字 */
+.narration-wait{display:flex;align-items:center;gap:10px;margin:8px 0 16px;font-family:var(--sans);
+  font-size:14px;color:var(--muted);letter-spacing:.04em}
+.narration-wait-ink{position:relative;flex:none;width:46px;height:3px;border-radius:2px;overflow:hidden;
+  background:rgba(var(--g-accent-rgb,192,57,43),.18)}
+.narration-wait-ink::after{content:'';position:absolute;top:0;bottom:0;left:0;width:40%;border-radius:2px;
+  background:var(--g-accent,var(--accent));animation:inkRun 1.4s ease-in-out infinite}
+@keyframes inkRun{0%{transform:translateX(-100%)}100%{transform:translateX(260%)}}
+@media(prefers-reduced-motion:reduce){.narration-wait-ink::after{animation:none;width:100%;opacity:.5}}
+body[data-genre][data-read="paper"] .narration-wait-ink::after{background:var(--g-accent-deep)}
+
+/* 正文字号：小 / 标准(17px) / 大 / 特大，⋯ 菜单或桌面「字号」标签切换 */
+body[data-font="s"] #stream p.narration,body[data-font="s"] #stream .opening{font-size:15px;line-height:1.9}
+body[data-font="l"] #stream p.narration,body[data-font="l"] #stream .opening{font-size:19px;line-height:1.9}
+body[data-font="xl"] #stream p.narration,body[data-font="xl"] #stream .opening{font-size:21px;line-height:1.85}
+body[data-font="l"] .action-bubble,body[data-font="xl"] .action-bubble{font-size:16px}
+
+/* 回到最新：默认藏起，只在手机上往上翻旧回合时出现 */
+.latest-btn{display:none}
+
+@media(max-width:600px){
+  /* 刚进世界正文很短时，输入区也贴在屏幕底部，不悬在半屏 */
+  #view-game .stage{min-height:calc(100vh - 150px);min-height:calc(100dvh - 150px)}
+  #view-game .stream{flex:1 0 auto}
+
+  /* 灵感按钮只留 ✦ 图标，把宽度让给输入框；构思中图标慢慢转 */
+  .composer .idea-btn{font-size:0;width:44px;min-width:44px;padding:0;display:inline-flex;
+    align-items:center;justify-content:center}
+  .composer .idea-btn::before{content:'✦';font-size:19px;line-height:1;display:inline-block}
+  .composer .idea-btn[aria-busy="true"]::before{animation:ideaSpin 1.2s linear infinite}
+  @keyframes ideaSpin{to{transform:rotate(360deg)}}
+  #btn-send{padding:0 16px}
+
+  /* 提示条放到顶栏下面，不再盖住返回 / ⋯ 按钮 */
+  .toast{top:calc(var(--head-h) + 10px + env(safe-area-inset-top));max-width:calc(100% - 32px);
+    font-size:13px;line-height:1.5;padding:9px 14px;text-align:center}
+
+  /* 回到最新：贴在输入区右上方 */
+  .latest-btn{display:inline-flex;align-items:center;position:absolute;right:12px;bottom:calc(100% + 10px);
+    min-height:40px;padding:0 16px;border-radius:999px;border:0;font-family:var(--sans);font-size:14px;
+    color:var(--g-on-accent,#fff);background:var(--g-accent,var(--accent));box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
+  .latest-btn[hidden]{display:none}
+  body[data-genre][data-read="paper"] .latest-btn{background:var(--g-accent-deep);color:#fff}
+
+  /* 去掉点按钮的 300ms 延迟和双击放大 */
+  button,.btn,a,.top-chip,.genre-pill,.origin-card,.more-menu-item,textarea{touch-action:manipulation}
+}
+
+/* ==== 建世界等待弹窗：全屏遮罩防乱点 + 进度条 + 步骤 + 卡住提示 ==== */
+.build-mask{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  padding:20px 16px calc(20px + env(safe-area-inset-bottom));
+  background:rgba(10,9,7,.78);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  animation:build-fade .25s ease both;touch-action:none;overscroll-behavior:contain}
+@keyframes build-fade{from{opacity:0}to{opacity:1}}
+body.build-open{overflow:hidden}
+.build-card{position:relative;width:min(440px,100%);max-height:100%;overflow-y:auto;
+  background:linear-gradient(180deg,rgba(32,30,23,.98),rgba(24,22,17,.98));
+  border:1px solid rgba(212,169,90,.32);border-radius:18px;padding:26px 22px 20px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);
+  font-family:var(--sans);color:var(--ink);text-align:center;touch-action:pan-y}
+.build-orb{position:relative;width:64px;height:64px;margin:0 auto 12px}
+.build-orb i{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(212,169,90,.35)}
+.build-orb i:nth-child(1){border-style:dashed;animation:build-spin 9s linear infinite}
+.build-orb i:nth-child(2){inset:14px;border-color:rgba(224,84,63,.55);animation:build-spin 4s linear infinite reverse}
+.build-orb i::before{content:'';position:absolute;top:-3px;left:50%;width:6px;height:6px;margin-left:-3px;
+  border-radius:50%;background:var(--gold-2);box-shadow:0 0 10px 2px rgba(212,169,90,.7)}
+.build-orb::after{content:'';position:absolute;inset:27px;border-radius:50%;background:var(--gold);
+  box-shadow:0 0 14px 4px rgba(212,169,90,.45);animation:dot-breathe 2.4s ease-in-out infinite alternate}
+@keyframes build-spin{to{transform:rotate(360deg)}}
+.build-title{margin:0;font-family:var(--serif);font-size:21px;letter-spacing:.12em;color:var(--gold-2)}
+.build-seed{margin:6px 0 0;font-family:var(--serif);font-size:14px;line-height:1.6;color:var(--muted);
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.build-bar{position:relative;height:8px;margin-top:20px;border-radius:999px;overflow:hidden;
+  background:rgba(232,226,208,.08);box-shadow:inset 0 0 0 1px rgba(212,169,90,.18)}
+.build-bar-fill{position:relative;height:100%;width:0;border-radius:inherit;overflow:hidden;
+  background:linear-gradient(90deg,#a52c1f,#d64a33 55%,var(--gold));transition:width .35s linear}
+.build-bar-fill::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  transform:translateX(-100%);animation:inkRun 1.8s ease-in-out infinite}
+.build-meta{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:8px;
+  font-size:13px;color:var(--muted)}
+.build-pct{font-variant-numeric:tabular-nums;color:var(--gold-2);font-weight:600}
+.build-eta{text-align:right}
+.build-steps{list-style:none;margin:18px 0 0;padding:0;text-align:left}
+.build-step{display:flex;align-items:center;gap:10px;min-height:34px;font-size:14px;color:var(--muted)}
+.build-step-dot{flex:none;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1}
+.build-step-label{flex:1;min-width:0}
+.build-step-detail{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.build-step[data-state="done"]{color:rgba(232,226,208,.72)}
+.build-step[data-state="done"] .build-step-dot{border-color:var(--gold);background:var(--gold);color:#1b1a14}
+.build-step[data-state="done"] .build-step-dot::before{content:'✓'}
+.build-step[data-state="active"]{color:var(--ink);font-weight:600}
+.build-step[data-state="active"] .build-step-dot{border-color:var(--accent-2);
+  box-shadow:0 0 0 4px rgba(224,84,63,.16)}
+.build-step[data-state="active"] .build-step-dot::before{content:'';width:8px;height:8px;border-radius:50%;
+  background:var(--accent-2);animation:blink 1.2s ease-in-out infinite}
+.build-step[data-state="active"] .build-step-detail{color:var(--gold)}
+.build-status{margin:14px 0 0;min-height:1.6em;font-size:13px;line-height:1.6;color:var(--muted)}
+.build-status.warn{color:#e8b86a}
+.build-card.failed .build-status{color:#e39a90}
+.build-card.failed .build-orb i,.build-card.failed .build-orb::after{animation:none}
+.build-card.failed .build-bar-fill{background:rgba(224,84,63,.55)}
+.build-card.failed .build-bar-fill::after{display:none}
+.build-actions{display:flex;gap:10px;justify-content:center;margin-top:16px}
+.build-actions .btn{min-width:96px;min-height:44px}
+@media (max-width:600px){
+  .build-card{padding:22px 18px 18px;border-radius:16px}
+  .build-title{font-size:19px}
+}
+@media (prefers-reduced-motion:reduce){
+  .build-mask{animation:none}
+  .build-orb i,.build-orb::after,.build-bar-fill::after,
+  .build-step[data-state="active"] .build-step-dot::before{animation:none}
+  .build-bar-fill{transition:none}
+}
+

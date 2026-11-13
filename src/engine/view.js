@@ -43,8 +43,10 @@ function toPublicState(state) {
     // pendingEventTheme 是提前锁定的内部主题，绝不能以主题名暴露给玩家；
     // twist 是导演的强制转折信号，只写进 events.jsonl，绝不出现在公开状态里。
     // outline / threadMeta / _chapterUndo 是叙事 v3 的作者笔记与内部账本，同样绝不公开。
+    // edge / edgeProgress（修仙金手指的设定与进度）、pressure（压扬计数）也是作者笔记。
     if (key === 'apex' || key === 'pendingEventTheme' || key === 'twist' || key === 'outline'
-      || key === 'threadMeta' || key === '_chapterUndo' || /api.?key/i.test(key)) {
+      || key === 'threadMeta' || key === '_chapterUndo' || key === 'edge' || key === 'edgeProgress'
+      || key === 'pressure' || /api.?key/i.test(key)) {
       delete out[key];
     }
   }

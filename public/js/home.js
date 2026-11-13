@@ -268,6 +268,7 @@
       var tags = el('div', 'wc-tags');
       var gname = genreName(w.genre);
       if (gname) tags.appendChild(el('span', 'wc-genre', gname));
+      if (w.adultMode) tags.appendChild(el('span', 'wc-adult', '18+'));
       var statusParts = [];
       if (!w.alive) statusParts.push('已终');
       if (w.awaitingRebirth) statusParts.push('待重生');
@@ -350,8 +351,24 @@
     $('char-identity').value = pick;
   }
 
+  // 成人模式选项：/api/me 说网关配好了且这位玩家可用才显示；每次进新世界页都重置为关。
+  function syncAdultModeRow() {
+    var info = myPrefs.adultMode || {};
+    var row = $('adult-mode-row');
+    var cb = $('adult-mode');
+    if (!row || !cb) return;
+    row.hidden = !(info.configured && info.allowed);
+    cb.checked = false;
+  }
+
+  function onAdultModeToggle() {
+    var cb = $('adult-mode');
+    if (cb.checked && !window.confirm('成人模式会出现露骨的性爱和暴力描写。\n确认你已年满 18 岁？')) cb.checked = false;
+  }
+
   function showNew() {
     $('view-new').hidden = false;
+    syncAdultModeRow();
     window.scrollTo(0, 0); // 进入新世界页时回到顶部，避免停在首页的滚动位置
     var bd = $('home-backdrop');
     bd.hidden = false;
@@ -405,9 +422,61 @@
     });
   }
 
-  function setCreating(b) {
+  // 建世界要几十秒：显示已等秒数，手机上不至于以为卡死；等待期间保持亮屏（锁屏会掐断请求）。
+  var creatingTimer = null;
+  var creatingWake = null;
+  function setCreating(b, label) {
     $('creating').hidden = !b;
     $('btn-create').disabled = b;
+    clearInterval(creatingTimer);
+    creatingTimer = null;
+    if (creatingWake) { try { creatingWake.release().catch(function () {}); } catch (_) {} creatingWake = null; }
+    if (!b) return;
+    var box = $('creating');
+    var start = Date.now();
+    var text = label || '世界正在成形';
+    function tick() {
+      var secs = Math.floor((Date.now() - start) / 1000);
+      box.textContent = text + '… 已等 ' + secs + ' 秒' + (secs >= 8 ? '（通常要半分钟到一分钟，可以先去做别的）' : '');
+    }
+    tick();
+    creatingTimer = setInterval(tick, 1000);
+    try {
+      if (navigator.wakeLock && !document.hidden) {
+        navigator.wakeLock.request('screen').then(function (s) {
+          if (!creatingTimer) { s.release().catch(function () {}); return; }
+          creatingWake = s;
+        }).catch(function () {});
+      }
+    } catch (_) {}
+  }
+
+  // 建世界请求 ID：服务器同一个 ID 只建一次，并按它记进度（弹窗轮询）。
+  function newBuildRequestId() {
+    var r = '';
+    while (r.length < 12) r += Math.random().toString(36).slice(2);
+    return 'w' + Date.now().toString(36) + r.slice(0, 12);
+  }
+
+  // 发建世界请求：网络断了（切后台 / 锁屏 / 换网络）或隧道网关超时（524 等），
+  // 带同一个 ID 再发——服务器还在建就等它、建好了直接给同一个世界，不会建出两个。最多等 4 分钟。
+  async function postWorldOnce(body, onRetry) {
+    var deadline = Date.now() + 240000;
+    var lastErr = null;
+    for (var attempt = 0; Date.now() < deadline; attempt++) {
+      if (attempt) {
+        await new Promise(function (r) { setTimeout(r, 3000); });
+        if (typeof onRetry === 'function') onRetry(attempt);
+      }
+      try {
+        return await api('/api/worlds', { method: 'POST', body: JSON.stringify(body) });
+      } catch (err) {
+        lastErr = err;
+        var gateway = err && (err.status === 504 || (err.status >= 520 && err.status <= 524));
+        if (!(err && err.network) && !gateway) throw err;
+      }
+    }
+    throw lastErr || new Error('网络断了，请检查网络后再试');
   }
 
   async function createWorld() {
@@ -417,19 +486,73 @@
     var appearance = $('char-appearance').value.trim();
     var identity = $('char-identity').value.trim();
     var body = { seed: seed, genre: selectedGenre };
+    // 成人模式：勾选时已在 onAdultModeToggle 里确认过满 18 岁。
+    var amRow = $('adult-mode-row');
+    var amCb = $('adult-mode');
+    if (amRow && !amRow.hidden && amCb && amCb.checked) {
+      body.adultMode = true;
+      body.confirm18 = true;
+    }
     if (name) body.name = name;
     if (appearance) body.appearance = appearance;
     if (identity) body.identity = identity;
+    var cid = newBuildRequestId();
+    body.clientRequestId = cid;
     setCreating(true);
+    BuildModal.open(seed);
+    // 每秒查一次进度；查到「建好了」直接进世界（POST 连接可能已经断了）。
+    var settled = false;
+    var polling = true;
+    function enter(id) {
+      if (settled) return;
+      settled = true;
+      BuildModal.done();
+      setTimeout(function () {
+        BuildModal.close();
+        if (location.hash === '#/new') location.hash = '#/w/' + id;
+      }, 500);
+    }
+    (async function pollProgress() {
+      var misses = 0;
+      // 稍等一下再查：服务器收到请求、开始记进度之前查会是 404。
+      await new Promise(function (r) { setTimeout(r, 700); });
+      while (polling && !settled) {
+        try {
+          var snap = await api('/api/build-progress?cid=' + encodeURIComponent(cid));
+          misses = 0;
+          BuildModal.update(snap);
+          if (snap.done && snap.worldId) { enter(snap.worldId); break; }
+        } catch (err) {
+          misses++;
+          if (err && err.network && misses >= 2) BuildModal.setNote('网络断了，正在重连…世界还在服务器上照常生成。');
+        }
+        if (!polling || settled) break;
+        await new Promise(function (r) { setTimeout(r, 1000); });
+      }
+    })();
+    // 离开新世界页（返回 / 切别的页面）：收起弹窗，世界照常在服务器上建好，之后出现在「我的世界」里。
+    function onLeave() {
+      if (location.hash === '#/new') return;
+      polling = false;
+      if (!settled) BuildModal.close();
+    }
+    window.addEventListener('hashchange', onLeave);
     try {
-      var w = await api('/api/worlds', {
-        method: 'POST',
-        body: JSON.stringify(body),
+      var w = await postWorldOnce(body, function () {
+        BuildModal.setNote('连接断了一下，正在接回刚才那次建世界…');
       });
-      location.hash = '#/w/' + w.id;
+      BuildModal.setNote('');
+      enter(w.id);
     } catch (err) {
-      toast(err.message);
+      polling = false;
+      if (!settled && BuildModal.isOpen()) {
+        BuildModal.fail((err && err.message) || '建世界失败，请重试', function () { createWorld(); });
+      } else if (!settled) {
+        toast(err.message);
+      }
     } finally {
+      polling = false;
+      window.removeEventListener('hashchange', onLeave);
       setCreating(false);
     }
   }

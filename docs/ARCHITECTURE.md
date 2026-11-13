@@ -27,6 +27,8 @@
 - `event-log.js` — 单一来源的 canonical 可见事件过滤：`visibleEventEntries(events)`（保留原始 `eventIndex`、排除撤回分支）/ `visibleEventRecords(events)`；撤回按「位置」而非回合号裁剪。被 `game.js`、`npcs.js`、导出共用。
 - `game.js` — 编排层 `createGame`：建世界、回合、重生、撤回、日志、序章 / 物品介绍 / 章节，串联 prompts / llm / engine / store / images；另含旧档 NPC 只读回填缓存、`getNpcDetail`、公开档案导出 `npcArchive`。
 - `genres.js` — 题材 → 文风预设（`GENRE_STYLES` 等），供提示词追加文风段。
+- `build-progress.js` — 建世界进度：按 `玩家:clientRequestId` 记步骤（prepare / world / outline / save）、已写字数、开始与最近动静时间，`GET /api/build-progress?cid=` 给前端弹窗；成功后各步耗时写 `data/build-stats.json`（留 20 次），预计耗时取最近 10 次中位数。`POST /api/worlds` 带合法 `clientRequestId` 时经 `idempotency.js` 防重（同一个 ID 只建一个世界）。
+- `idempotency.js` — 回合防重：同一个 `clientTurnId` 只执行一次（进行中就等同一个 Promise、写完缓存 30 分钟、失败不缓存）。`server.js` 的 `/turn`、`/turn/stream` 经 `runTurnOnce` 使用；`/turn` 带 `attachOnly:true` 时只取回不执行（不认识返回 404 `turn_unknown`）。流式回合每 10 秒发一行 SSE 注释心跳。
 - `images.js` — 出图：物品 / NPC 头像 / 主角 / 场景（含多参考图）、提供方回退链、画风与图片缓存、静态服务。
 - `imgsupervisor.js` — 本地 GPU 画图服务（`imgserver.py`）的进程守护，仅 `local` 出图时启用。
 - `llm.js` — 对话模型客户端：OpenAI 兼容 `/chat/completions`、流式 SSE、narration 增量解码、用量统计、mock（mock 回合可带合法 `npc_updates`）。
@@ -60,6 +62,7 @@
 - `core.js` — 公共常量（属性 / 性格 / 预设世界观）、DOM 与请求辅助。
 - `game.js` — 主游戏界面：回合输入、叙事渲染、状态、导出世界、朗读提示接线（最大前端模块）。
 - `home.js` — 视图路由与首页 / 新建 / 游戏视图切换；首页首屏、题材之门、世界封面卡。
+- `build-modal.js` — 建世界等待弹窗 `BuildModal`（遮罩、进度条、步骤、预计剩余、卡住 / 失败提示）和纯函数 `buildProgressMath` / `formatEta`；`home.js` 的 `createWorld` 开弹窗并每秒轮询进度。
 - `sky.js` — 首页与登录页共用的星空画布（独立脚本，`window.Sky.start/stop`）。
 - `images.js` — 物品卡片 / NPC 头像 / 主角 / 场景图的请求、轮询与占位。
 - `items.js` — 随身物品介绍卡片（缺介绍时请求 `/items` 补齐）。
@@ -171,7 +174,8 @@ NPC 长期档案（引擎 + 接线，详见 `docs/NPC_MEMORY.md`）
 | GET | `/api/usage/today` | 今日用量；主人额外得到全局与玩家明细、访问信息、隧道地址 | 需登录（明细仅主人） |
 | POST | `/api/admin/claim-worlds` | 把某来客名下世界收回主人 | 仅主人 |
 | GET | `/api/worlds` | 列出当前玩家名下世界（按 `ownerOf` 过滤） | 需登录 |
-| POST | `/api/worlds` | 建世界并登记归属 | 需登录 |
+| POST | `/api/worlds` | 建世界并登记归属（可带 `clientRequestId`：记进度 + 同一个 ID 只建一次） | 需登录 |
+| GET | `/api/build-progress?cid=` | 建世界进度快照（步骤、预计耗时、已写字数、done / worldId / error）；不认识 404 `build_unknown` | 需登录 |
 | POST | `/api/worlds/:id/turn/stream` | 流式回合（`text/event-stream`：`delta` → `result` / `error`） | 需登录 + 归属 |
 | POST | `/api/worlds/:id/turn` | 非流式回合 | 需登录 + 归属 |
 | GET | `/api/worlds/:id/export` | 导出 `state` + `events` 的 JSON 附件 | 归属 |

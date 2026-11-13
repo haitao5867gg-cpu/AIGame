@@ -240,6 +240,7 @@
       else hideDeath();
       scrollToTurnStart(lastTurnStart());
       requestImages();
+      resumePendingTurn(id); // 上次切后台 / 刷新时没拿到的回合：去服务器取回（不会重复执行）
 
       // 序章：首次进入（turn 0、未看过、四段齐全）弹出；缺失则后台补生成，
       // 供面板入口使用。老世界（turn > 0）不自动弹出，卡片也不阻塞上面的回放。
@@ -290,9 +291,15 @@
       if (s.chapter) gc.textContent = '第 ' + s.chapter.index + ' 章' + (s.chapterTitle ? ' · ' + s.chapterTitle : '');
     }
     var isV3 = !!s.chapter;
-    if ($('menu-writing')) $('menu-writing').hidden = !isV3;
-    if ($('g-writing')) $('g-writing').hidden = !isV3;
+    // 成人模式世界：写作模式换成「模型设置」（思考强度 / 发挥），两者都是在调写正文的参数，只留一个。
+    var isAdult = s.adultMode === true;
+    if ($('menu-writing')) $('menu-writing').hidden = !isV3 || isAdult;
+    if ($('g-writing')) $('g-writing').hidden = !isV3 || isAdult;
+    if ($('menu-adult-llm')) $('menu-adult-llm').hidden = !isAdult;
+    if ($('g-adult-llm')) $('g-adult-llm').hidden = !isAdult;
+    if (!isAdult && $('adult-llm-pop')) $('adult-llm-pop').hidden = true;
     renderWritingLabels(); // 按 myPrefs.writing 刷新两处文字
+    renderAdultLlmLabels();
     renderGenreLabels(); // 每次拉取状态（含每回合 result 后）都刷新文风标签
     if (typeof Atmosphere !== 'undefined') Atmosphere.enterWorld(s, atmosphereOptions);
   }
@@ -372,6 +379,93 @@
       toast(WRITING_TOASTS[myPrefs.writing] || WRITING_TOASTS.fine);
     } catch (err) {
       toast(err.message || '设置失败'); // 失败：文字不变
+    }
+  }
+
+  // ---- 成人模式：写正文的模型设置（⋯ 菜单 + 桌面标签共用一个弹层，仅成人模式世界显示）----
+  // 模型固定 deepseek-v4.1-flash-uncensored；玩家可调思考强度和发挥（temperature），只影响每回合写正文。
+  var ADULT_EFFORTS = [
+    { value: 'none', label: '关', note: '不思考，最快最省' },
+    { value: 'low', label: '低', note: '默认：简单构思再写' },
+    { value: 'medium', label: '中', note: '' },
+    { value: 'high', label: '高', note: '' },
+    { value: 'max', label: '最高', note: '最慢最贵' },
+  ];
+  var ADULT_TEMPS = [
+    { value: 'steady', label: '稳', note: '少跑偏' },
+    { value: 'default', label: '默认', note: '' },
+    { value: 'free', label: '放开', note: '更敢写、更跳' },
+  ];
+
+  function adultLlmPrefs() {
+    var p = myPrefs.adultLlm || {};
+    return { effort: p.effort || 'low', temperature: p.temperature || 'default' };
+  }
+
+  function labelOf(list, value) {
+    for (var i = 0; i < list.length; i++) if (list[i].value === value) return list[i].label;
+    return list[0].label;
+  }
+
+  function renderAdultLlmLabels() {
+    var p = adultLlmPrefs();
+    var effort = labelOf(ADULT_EFFORTS, p.effort);
+    var text = '思考' + effort + (p.temperature !== 'default' ? ' · ' + labelOf(ADULT_TEMPS, p.temperature) : '');
+    if ($('menu-adult-llm-name')) $('menu-adult-llm-name').textContent = text;
+    if ($('g-adult-llm')) $('g-adult-llm').textContent = '思考·' + effort;
+  }
+
+  function adultLlmRow(title, list, current, key) {
+    var wrap = el('div', 'adult-llm-row');
+    wrap.appendChild(el('div', 'adult-llm-label', title));
+    var opts = el('div', 'adult-llm-opts');
+    list.forEach(function (o) {
+      var on = o.value === current;
+      var b = el('button', 'adult-llm-opt' + (on ? ' selected' : ''), o.label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (o.note) b.title = o.note;
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var patch = {};
+        patch[key] = o.value;
+        setAdultLlm(patch);
+      });
+      opts.appendChild(b);
+    });
+    wrap.appendChild(opts);
+    return wrap;
+  }
+
+  function renderAdultLlmPop() {
+    var pop = $('adult-llm-pop');
+    if (!pop) return;
+    var p = adultLlmPrefs();
+    pop.textContent = '';
+    pop.appendChild(el('div', 'genre-pop-title', '成人模式 · 模型设置'));
+    pop.appendChild(el('div', 'adult-llm-model', 'deepseek-v4.1-flash-uncensored'));
+    pop.appendChild(adultLlmRow('思考强度', ADULT_EFFORTS, p.effort, 'effort'));
+    pop.appendChild(adultLlmRow('发挥', ADULT_TEMPS, p.temperature, 'temperature'));
+    pop.appendChild(el('div', 'adult-llm-note', '只影响每回合写正文：思考越高第一句出来越慢、越费 token；关掉最快。下一回合生效。'));
+  }
+
+  function openAdultLlmPop() {
+    var pop = $('adult-llm-pop');
+    if (!pop) return;
+    if (!pop.hidden) { pop.hidden = true; return; }
+    renderAdultLlmPop();
+    pop.hidden = false;
+  }
+
+  async function setAdultLlm(patch) {
+    var next = Object.assign(adultLlmPrefs(), patch);
+    try {
+      var r = await api('/api/prefs', { method: 'POST', body: JSON.stringify({ adultLlm: next }) });
+      myPrefs.adultLlm = (r && r.prefs && r.prefs.adultLlm) ? r.prefs.adultLlm : next;
+      renderAdultLlmLabels();
+      renderAdultLlmPop();
+    } catch (err) {
+      toast(err.message || '设置失败');
     }
   }
 
@@ -478,14 +572,26 @@
   }
 
   // 流式叙事：先建一个空叙事块，delta 到来时边到边按 \n\n 实时拆成多个 <p>。
+  // 正文还没到之前，在正文的位置放一行「构思中」：手机上眼睛就停在这里，不用盯着底部的小字。
   function beginStreamNarration() {
     var wrap = el('div', 'narration-block');
+    var wait = el('div', 'narration-wait');
+    wait.setAttribute('aria-live', 'polite');
+    wait.appendChild(el('span', 'narration-wait-ink'));
+    wait.appendChild(el('span', 'narration-wait-label', ($('pending-label') && $('pending-label').textContent) || '世界在回应…'));
+    wrap.appendChild(wait);
     wrap.appendChild(el('p', 'narration'));
     $('stream').appendChild(wrap);
-    return { wrap: wrap, text: '' };
+    streamWaitEl = wait;
+    return { wrap: wrap, text: '', waitEl: wait };
   }
 
   function appendStreamDelta(block, text) {
+    if (block.waitEl) {
+      if (block.waitEl.parentNode) block.waitEl.parentNode.removeChild(block.waitEl);
+      if (streamWaitEl === block.waitEl) streamWaitEl = null;
+      block.waitEl = null;
+    }
     block.text += text;
     var paras = splitByBlankLines(block.text);
     renderParagraphs(block.wrap, paras.length ? paras : ['']);
@@ -1340,10 +1446,139 @@
   function setPendingLabel(text) {
     var n = $('pending-label');
     if (n) n.textContent = text;
+    if (streamWaitEl && streamWaitEl.isConnected) {
+      var lab = streamWaitEl.querySelector('.narration-wait-label');
+      if (lab) lab.textContent = text;
+    }
+  }
+
+  // ---- 手机：等回合时保持亮屏（Screen Wake Lock，iOS 16.4+ / 安卓 Chrome）----
+  // 锁屏会掐断流式连接；等待期间不让屏幕自己熄灭。不支持或被拒绝就算了，不影响游戏。
+  var streamWaitEl = null;
+  var wakeLockSentinel = null;
+  function holdWakeLock(on) {
+    try {
+      if (!on) {
+        if (wakeLockSentinel) { wakeLockSentinel.release().catch(function () {}); }
+        wakeLockSentinel = null;
+        return;
+      }
+      if (wakeLockSentinel || !navigator.wakeLock || document.hidden) return;
+      navigator.wakeLock.request('screen').then(function (s) {
+        if (!busy) { s.release().catch(function () {}); return; }
+        wakeLockSentinel = s;
+        s.addEventListener('release', function () { if (wakeLockSentinel === s) wakeLockSentinel = null; });
+      }).catch(function () {});
+    } catch (_) { /* 不支持就算了 */ }
+  }
+  // 切回前台：浏览器会自动释放亮屏锁，还在等回合就重新拿一次。
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && busy) holdWakeLock(true);
+  });
+
+  // ---- 回合防重：每次行动带一个 clientTurnId，断流重试 / 刷新取回都用同一个 ID ----
+  // 记录存在 localStorage（按世界）：页面被系统回收、刷新后还能把上一回合取回来，
+  // 服务器那边同一个 ID 只执行一次（src/idempotency.js），所以不会把一句话写成两回合。
+  var PENDING_TURN_KEY = 'pendingTurn:';
+  var PENDING_TURN_MAX_AGE = 30 * 60 * 1000;
+  function newClientTurnId() {
+    var r = '';
+    while (r.length < 12) r += Math.random().toString(36).slice(2);
+    return 't' + Date.now().toString(36) + r.slice(0, 12);
+  }
+  function loadPendingTurn(worldId) {
+    try {
+      var rec = JSON.parse(localStorage.getItem(PENDING_TURN_KEY + worldId) || 'null');
+      return rec && typeof rec.cid === 'string' ? rec : null;
+    } catch (_) { return null; }
+  }
+  function savePendingTurn(worldId, rec) {
+    try { localStorage.setItem(PENDING_TURN_KEY + worldId, JSON.stringify(rec)); } catch (_) {}
+  }
+  function clearPendingTurn(worldId) {
+    try { localStorage.removeItem(PENDING_TURN_KEY + worldId); } catch (_) {}
+  }
+  // 取回 / 回退用的普通 /turn：同一个 ID 服务器只执行一次，所以遇到网关超时（Cloudflare 隧道
+  // 约 100 秒没响应就回 524）、网关错误时可以放心再问一次，最多 3 次。
+  async function postTurnOnce(worldId, body) {
+    var lastErr = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise(function (r) { setTimeout(r, 2500); });
+      try {
+        return await api('/api/worlds/' + encodeURIComponent(worldId) + '/turn', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        lastErr = err;
+        var gateway = err && (err.status === 502 || err.status === 503 || err.status === 504 || (err.status >= 520 && err.status <= 524));
+        if (!gateway) throw err;
+      }
+    }
+    throw lastErr;
+  }
+
+  // 同一句行动（上次没成功、内容没改）重发时沿用上次的 ID。
+  function pendingTurnIdFor(worldId, kind, text) {
+    var rec = loadPendingTurn(worldId);
+    if (rec && rec.kind === kind && rec.text === text && Date.now() - (rec.at || 0) < PENDING_TURN_MAX_AGE) return rec.cid;
+    return newClientTurnId();
+  }
+
+  // 进入世界时：上次发出的回合还没拿到结果（切后台 / 刷新 / 页面被回收）→ 去服务器取回。
+  //   还在写：先把行动和「构思中」摆出来，写完重新载入本世界；
+  //   已写完：日志里已经有了就只清记录，没有就重新载入；
+  //   服务器不认识（重启过 / 失败了）：行动放回输入框，不自动重发。
+  async function resumePendingTurn(id) {
+    var rec = loadPendingTurn(id);
+    if (!rec) return;
+    if (Date.now() - (rec.at || 0) > PENDING_TURN_MAX_AGE) { clearPendingTurn(id); return; }
+    if (busy) {
+      // 这一页里的请求还在等（离开世界又回来）：把行动和「构思中」摆回来，写完由 sendAction 重新载入。
+      appendActionLine(rec.kind === 'timeskip' ? '【时光推进】' + (rec.text || '') : rec.text);
+      beginStreamNarration();
+      if (!pendingTimer) pendingTimer = setInterval(updatePendingSecs, 1000);
+      return;
+    }
+    var baseTurn = currentState ? currentState.turn : null;
+    // 日志里最后一句行动（回放的行动行都带 data-turn）：服务器忘了这个 ID 时用来判断其实已经写完。
+    var lines = $('stream').querySelectorAll('.action-line[data-turn] .action-text');
+    var lastAction = lines.length ? lines[lines.length - 1].textContent : '';
+    setBusy(true);
+    setPendingLabel('上一回合还在写，正在取回…');
+    appendActionLine(rec.kind === 'timeskip' ? '【时光推进】' + (rec.text || '') : rec.text);
+    var tempLine = turnStartEl;
+    var block = beginStreamNarration();
+    var reload = false;
+    try {
+      var res = await postTurnOnce(id, { clientTurnId: rec.cid, attachOnly: true });
+      clearPendingTurn(id);
+      reload = !(res && res.state && baseTurn != null && res.state.turn <= baseTurn);
+    } catch (err) {
+      if (err && err.status === 404) {
+        clearPendingTurn(id);
+        var input = $('action-input');
+        if (rec.kind === 'action' && input && !input.value.trim() && rec.text !== lastAction) {
+          input.value = rec.text;
+          toast('上一回合没写完，行动已放回输入框，可以直接再发一次');
+        }
+      } else {
+        toast('还没取回上一回合：' + ((err && err.message) || '网络不通') + '，稍后回到这个世界会再试');
+      }
+    } finally {
+      setBusy(false);
+      if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      if (tempLine && tempLine.parentNode) tempLine.parentNode.removeChild(tempLine);
+      if (turnStartEl === tempLine) turnStartEl = null;
+    }
+    if (reload && id === currentWorldId) {
+      showGame(id);
+    }
   }
 
   function setBusy(b) {
     busy = b;
+    holdWakeLock(b);
     $('btn-send').disabled = b;
     $('btn-idea').disabled = b || ideaLoading;
     $('pending').hidden = !b;
@@ -1360,7 +1595,7 @@
   }
 
   // POST 不能用 EventSource，只能自己解析 fetch 返回的 text/event-stream。
-  async function readEventStream(res, onEvent) {
+  async function readEventStream(res, onEvent, onBytes) {
     var reader = res.body.getReader();
     var decoder = new TextDecoder('utf-8');
     var buf = '';
@@ -1382,6 +1617,7 @@
     while (true) {
       var r = await reader.read();
       if (r.done) break;
+      if (onBytes) onBytes();
       buf += decoder.decode(r.value, { stream: true });
       var idx;
       while ((idx = buf.indexOf('\n')) >= 0) {
@@ -1396,11 +1632,38 @@
 
   // 发起流式回合：body 为完整请求体对象（{action} 或 {timeSkip}），
   // delta 边到边显示，返回最后的 result（与普通 /turn 响应体相同）。
+  // 断流看门狗：服务器每 10 秒发一行心跳。手机切后台回来后，连接常常「看着还在、其实已死」，
+  // 这时不等系统超时：回到前台 12 秒内没收到任何字节、或连续 35 秒没动静，就主动断开，
+  // 交给 sendAction 用同一个 clientTurnId 去取回（服务器写完了直接拿结果，不会再写一遍）。
+  var STREAM_SILENCE_MS = 35000;
+  var STREAM_RESUME_MS = 12000; // 比服务器心跳间隔（10 秒）长，活着的连接不会被误断
   async function streamTurn(body, block) {
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var lastByte = Date.now();
+    var shownAt = 0;
+    function onVisible() { if (!document.hidden) shownAt = Date.now(); }
+    document.addEventListener('visibilitychange', onVisible);
+    var dog = setInterval(function () {
+      if (!ctrl || document.hidden) return;
+      var now = Date.now();
+      if (now - lastByte > STREAM_SILENCE_MS || (shownAt && lastByte < shownAt && now - shownAt > STREAM_RESUME_MS)) {
+        ctrl.abort();
+      }
+    }, 2000);
+    try {
+      return await streamTurnInner(body, block, ctrl, function () { lastByte = Date.now(); });
+    } finally {
+      clearInterval(dog);
+      document.removeEventListener('visibilitychange', onVisible);
+    }
+  }
+
+  async function streamTurnInner(body, block, ctrl, onBytes) {
     var res = await fetch('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: ctrl ? ctrl.signal : undefined,
     });
     // 未登录 / 会话失效：跳到登录页。
     if (res.status === 401) {
@@ -1426,7 +1689,7 @@
           streamError = new Error(e.error || '流式回合失败');
         }
       } catch (_) { /* 忽略单条解析错误，继续读流 */ }
-    });
+    }, onBytes);
     if (streamError) throw streamError;
     if (!result) throw new Error('流式响应缺少 result');
     return result;
@@ -1473,30 +1736,45 @@
     var input = $('action-input');
     var action = input.value.trim();
     if (!action) { toast('写点什么再发送吧'); return; }
+    var worldId = currentWorldId;
+    var cid = pendingTurnIdFor(worldId, 'action', action);
+    savePendingTurn(worldId, { cid: cid, kind: 'action', text: action, at: Date.now() });
     setBusy(true);
     // 撤回按钮保持原状：请求进行中由 busy 守卫拦住点击，result 到来后 renderResult 再按
     // 后端 undoAvailable 显隐；回合失败时不至于把按钮错误地卡在隐藏状态。
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine(action);
-    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
+    usageBeforeTurn = usageTotalNow(usageData);
     var block = beginStreamNarration();
     try {
-      var res = await streamTurn({ action: action }, block);
+      var res = await streamTurn({ action: action, clientTurnId: cid }, block);
+      clearPendingTurn(worldId);
+      if (worldId !== currentWorldId) return; // 已切到别的世界：结果已落库，回来时从日志显示
+      // 等待期间离开又回到了这个世界：正文区已经重画过，直接按日志重新载入。
+      if (!block.wrap.isConnected) { showGame(worldId); return; }
       input.value = ''; // 成功后才清空，失败时保留输入
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
       renderResult(res);
     } catch (err) {
-      // 流式失败：移除半成品叙事块，自动回退普通 /turn。
+      // 流式断了（切后台、锁屏、换网络）：带同一个 clientTurnId 走普通 /turn 取回——
+      // 服务器已写完就直接拿结果、还在写就等它写完，都不会把这句行动再执行一遍。
+      if (worldId !== currentWorldId) return;
+      var stale = !block.wrap.isConnected;
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      block = beginStreamNarration();
+      setPendingLabel('连接断了一下，正在取回这一回合…');
       try {
-        var fb = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
-          method: 'POST',
-          body: JSON.stringify({ action: action }),
-        });
+        var fb = await postTurnOnce(worldId, { action: action, clientTurnId: cid });
+        clearPendingTurn(worldId);
+        if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+        if (worldId !== currentWorldId) return;
+        if (stale) { showGame(worldId); return; }
         input.value = '';
         renderResult(fb);
       } catch (err2) {
-        toast(err2.message); // 输入内容不丢
+        if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+        // 输入内容不丢；再点发送会沿用同一个 ID，服务器若其实已经写完会直接给结果。
+        toast(err2 && err2.network ? '网络断了，这一回合可能还在写。网络恢复后再点一次发送，不会重复。' : err2.message);
       }
     } finally {
       setBusy(false);
@@ -1637,23 +1915,27 @@
     var label = timeSkipLabel(span);
     showChapterForTurn(); // 叙事 v3：本回合换章时先插章名分隔
     appendActionLine('【时光推进·' + label + '】' + (plan || '按眼下的日子过下去'));
-    usageBeforeTurn = usageData && usageData.tokens ? usageData.tokens.total : null;
+    usageBeforeTurn = usageTotalNow(usageData);
     var block = beginStreamNarration();
-    var body = { timeSkip: { span: span, plan: plan } };
+    var worldId = currentWorldId;
+    var skipText = label + '·' + (plan || '');
+    var cid = pendingTurnIdFor(worldId, 'timeskip', skipText);
+    savePendingTurn(worldId, { cid: cid, kind: 'timeskip', text: skipText, at: Date.now() });
+    var body = { timeSkip: { span: span, plan: plan }, clientTurnId: cid };
     var ok = false;
     try {
       var res = await streamTurn(body, block);
+      clearPendingTurn(worldId);
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
       renderResult(res);
       ok = true;
     } catch (err) {
-      // 流式失败：移除半成品叙事块，自动回退普通 /turn。
+      // 流式失败：移除半成品叙事块，带同一个 clientTurnId 回退普通 /turn（取回，不会重复推进）。
       if (block.wrap.parentNode) block.wrap.parentNode.removeChild(block.wrap);
+      setPendingLabel('连接断了一下，正在取回…');
       try {
-        var fb = await api('/api/worlds/' + encodeURIComponent(currentWorldId) + '/turn', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        });
+        var fb = await postTurnOnce(worldId, body);
+        clearPendingTurn(worldId);
         renderResult(fb);
         ok = true;
       } catch (err2) {

@@ -18,6 +18,7 @@ const profiles = require('./profiles.js');
 const outlineMod = require('./outline.js');
 const historyMod = require('./history.js');
 const writingMode = require('./writing-mode.js');
+const adultMode = require('./adult-mode.js');
 
 // 正在后台总结画像的玩家（key = dataDir + playerId，避免多个 createGame 实例互相误判）。
 // 后台总结在 takeTurn 里「不 await」发起，靠 finally 从这里移除，防止同一玩家重复触发。
@@ -54,6 +55,8 @@ function epitaphFromParsed(parsed, info) {
 }
 
 // 新一世开场：150~300 字。
+// 正文里单独成行的写作说明（收章提示、「未完待续」之类），cleanProse 整行去掉。
+const META_PROSE_LINE = /^\s*[（(【]?\s*(?:本章完|本节完|全章完|未完待续|待续|这一?[章节](?:就)?(?:收|停|写)(?:在这里|到这里|到此)|本[章节](?:就)?(?:收|停|写)(?:在这里|到这里|到此))\s*[。.！!…]*\s*[）)】]?\s*$/;
 const REBIRTH_OPENING_MIN = 150;
 const REBIRTH_OPENING_MAX = 300;
 
@@ -396,6 +399,30 @@ function createGame(cfg, dataDir) {
     throw httpError(502, '模型输出无法解析为 JSON，本回合未推进，请稍后重试');
   }
 
+  // 带进度的 callParsed：有 onProgress 时走流式，边写边报告已写字数（建世界进度条用）；
+  // 流式输出解析失败再非流式试一次。没有 onProgress 时和 callParsed 完全一样。
+  // 流式本身出错（网关不支持、流停住 90 秒等）：退回原来的非流式调用，进度条按时间走，不让建世界因此失败。
+  // 用量超限（429）直接抛出。
+  async function callParsedLive(purpose, model, messages, mockCtx, usages, extra, onProgress) {
+    if (typeof onProgress !== 'function') return callParsed(purpose, model, messages, mockCtx, usages, extra);
+    let res;
+    try {
+      res = await client.completeStream(Object.assign({}, extra || {}, {
+        purpose, model, messages, responseFormat: 'json_object', mock: mockCtx, onProgress, idleTimeoutMs: 90000,
+      }), null);
+    } catch (err) {
+      if (err && err.status === 429) throw err;
+      return callParsed(purpose, model, messages, mockCtx, usages, extra);
+    }
+    if (usages) usages.push(res.usage);
+    const parsed = prompts.parseJson(res.content);
+    if (parsed) return { parsed, content: res.content };
+    const retry = await call(purpose, model, messages, mockCtx, usages, extra);
+    const parsed2 = prompts.parseJson(retry.content);
+    if (parsed2) return { parsed: parsed2, content: retry.content };
+    throw httpError(502, '模型输出无法解析为 JSON，请稍后重试');
+  }
+
   // 后台画像总结：据最近亲手写的行动归纳「你是什么样的玩家」。
   // 全程 try/catch 静默失败，画像出错绝不影响回合；调用方不 await。
   async function summarizeProfile(playerId) {
@@ -548,25 +575,50 @@ function createGame(cfg, dataDir) {
     return cloneForRead(hydrated);
   }
 
+  // 修仙金手指（作者笔记）：只留约定字段，逐项截断。
+  function sanitizeEdge(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    // 超长就在上限内最后一个标点处收住，不在半句话处截断。
+    const str = (v, n) => {
+      const t = typeof v === 'string' ? v.trim() : '';
+      if (t.length <= n) return t;
+      const head = t.slice(0, n);
+      const cut = Math.max(head.lastIndexOf('。'), head.lastIndexOf('；'), head.lastIndexOf('，'), head.lastIndexOf('！'), head.lastIndexOf('？'));
+      return (cut >= n / 2 ? head.slice(0, cut) : head).replace(/[，；、]$/, '');
+    };
+    const name = str(raw.name, 12);
+    if (!name) return null;
+    const rules = (Array.isArray(raw.rules) ? raw.rules : []).map((r) => str(r, 60)).filter(Boolean).slice(0, 4);
+    return { name, look: str(raw.look, 80), rules, cost: str(raw.cost, 60), secret: str(raw.secret, 60) };
+  }
+
   // ---- 建世界 ----
-  async function buildWorld(input) {
+  // hooks（可选，建世界进度条用）：onStage('world'|'outline'|'save')、onProgress({chars, think})。
+  async function buildWorld(input, hooks) {
     const data = input || {};
+    const hk = hooks || {};
+    const stageHook = (k) => { if (typeof hk.onStage === 'function') { try { hk.onStage(k); } catch (_) { /* 忽略 */ } } };
     const seed = typeof data.seed === 'string' ? data.seed.trim() : '';
     if (!seed) throw httpError(400, '请用一句话描述世界观（seed 不能为空）');
     // 2026-11-12 起建世界不再手动分点：名字、形象可空（AI 起名），另收一句「你是谁」，AI 据此给 3 个出身。
     const givenName = (typeof data.name === 'string' && data.name.trim()) ? data.name.trim().slice(0, 12) : '';
     const givenAppearance = (typeof data.appearance === 'string' && data.appearance.trim()) ? data.appearance.trim().slice(0, 40) : '';
     const identity = (typeof data.identity === 'string' && data.identity.trim()) ? data.identity.trim().slice(0, 80) : '';
+    // 成人模式：权限 / 年龄确认 / 网关配置由 server.js 先查；这里只拦涉及未成年人的性内容。
+    const adult = data.adultMode === true;
+    if (adult) adultMode.assertSeedAllowed([seed, identity, givenName, givenAppearance]);
     const id = newWorldId();
 
     return store.withWorldLock(id, async () => {
       const usages = [];
-      const wp = await callParsed(
+      stageHook('world');
+      const wp = await callParsedLive(
         'world', worldModel,
         prompts.buildWorldMessages(seed, { name: givenName, appearance: givenAppearance, identity }),
         { seed, name: givenName, appearance: givenAppearance, identity }, usages,
         // 建世界也用低强度思考：深度思考加上出身、大纲要等好几分钟。
         { extraBody: writingMode.writingCall(cfg, 'fine').extraBody },
+        hk.onProgress,
       );
       const hero = wp.parsed.hero && typeof wp.parsed.hero === 'object' ? wp.parsed.hero : {};
       const name = givenName || (typeof hero.name === 'string' && hero.name.trim() ? hero.name.trim().slice(0, 12) : '') || '无名旅人';
@@ -588,6 +640,10 @@ function createGame(cfg, dataDir) {
       } catch (err) {
         throw httpError(400, err && err.message ? err.message : '属性点分配非法');
       }
+      if (adult) {
+        state.adultMode = true; // 建世界时定下，之后不再改（路由按世界 ID 缓存）
+        adultMode.assertWorldAllowed(state, bible);
+      }
       // 新世界继承玩家画像：画像已成熟（turns≥10）时用 seedPersona 覆盖初始 persona。
       // 只改新世界的初始 persona，不动引擎；读取失败一律忽略，绝不影响建世界。
       try {
@@ -596,10 +652,19 @@ function createGame(cfg, dataDir) {
         );
         if (seedPersona) state.persona = seedPersona;
       } catch (_) { /* 画像读取失败不影响建世界 */ }
+      // 主角说话的腔调（公开，写正文时用）；修仙题材的金手指是作者笔记（私有，见 view.js）。
+      const heroVoice = typeof hero.voice === 'string' ? hero.voice.trim().slice(0, 20) : '';
+      if (heroVoice && state.character) state.character.voice = heroVoice;
+      if (genres.normalizeGenre(state.genre) === 'xuanhuan') {
+        const edge = sanitizeEdge(wp.parsed.edge);
+        if (edge) state.edge = edge;
+      }
       // 叙事 v3：建世界时顺带生成作者自用的隐藏大纲；失败不阻断建世界，第一回合再补。
       if (cfg.NARRATIVE_STYLE === 'v3') {
-        await ensureOutlineOnState(state, [], usages);
+        stageHook('outline');
+        await ensureOutlineOnState(state, [], usages, hk.onProgress);
       }
+      stageHook('save');
       store.saveWorld(dataDir, state);
       return publicWorld(state);
     });
@@ -608,7 +673,7 @@ function createGame(cfg, dataDir) {
   // 叙事 v3：确保 state 上有合法的隐藏大纲（调用方须已持有该世界的锁，这里不再加锁）。
   // 新世界：按设定规划；老世界：带上已发生的故事，从眼下接着规划，第 1 章就是正在进行的这一章。
   // 成功写回 state.outline 和 state.chapter；任何失败都不抛错，返回 false，下一回合再试。
-  async function ensureOutlineOnState(state, events, usages) {
+  async function ensureOutlineOnState(state, events, usages, onProgress) {
     try {
       const existing = outlineMod.normalizeOutline(state.outline);
       if (existing) {
@@ -623,10 +688,11 @@ function createGame(cfg, dataDir) {
       });
       // 大纲用写正文的强模型、低强度思考（深度思考要等好几分钟，建世界等不起）。
       const wc = writingMode.writingCall(cfg, 'fine');
-      const op = await callParsed(
+      const op = await callParsedLive(
         'outline', wc.model,
         prompts.buildOutlineMessages(state, { history }),
         { title: state.bible && state.bible.title }, usages || [], { extraBody: wc.extraBody },
+        onProgress,
       );
       const outline = outlineMod.normalizeOutline(op.parsed);
       if (!outline) return false;
@@ -878,6 +944,11 @@ function createGame(cfg, dataDir) {
     return client.usageToday(Date.now(), playerId);
   }
 
+  // 成人模式单独的 token 账本（不传 playerId = 全局）。
+  function adultUsageToday(playerId) {
+    return client.adultUsageToday(Date.now(), playerId);
+  }
+
   // 收集某位已公开人物的「全部」履历：复用 getNpcHistory 的排他 eventIndex 游标逐页翻，
   // 直到 hasMore=false，绝不只取前 20/50 条。任何「声称还有记录却无法安全推进」的异常
   // （空页、hasMore 与 nextCursor 不一致、游标不前进 / 倒退循环、guard 耗尽、实收条目
@@ -1006,6 +1077,8 @@ function createGame(cfg, dataDir) {
         if (!timeSkip) throw httpError(400, '时光推进参数无效');
         action = `【时光推进·${timeSkip.label}】${timeSkip.plan || '按眼下的日子过下去'}`;
       }
+      // 成人模式：行动里出现涉及未成年人的性内容，直接拒绝、不调模型。
+      adultMode.assertInputAllowed(state, action);
       // 叙事 v3：先按五段任务书写纯正文（流式），再从正文里记账，最后照旧交给引擎结算。
       let writingPref = 'fine';
       try { writingPref = prefs.getPrefs(dataDir, context.currentPlayerId() || 'host').writing; } catch (_) { writingPref = 'fine'; }
@@ -1025,7 +1098,7 @@ function createGame(cfg, dataDir) {
 
       const usages = [];
       // 成人模式按当前请求的玩家判定：主人总开关开 且 该玩家 adult 为 true 才用「开」档。
-      const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
+      const adultPrompt = adultMode.isAdultWorld(state) || prefs.adultModeOn(dataDir, context.currentPlayerId());
 
       // 1) 主回合调用：叙事 + 提议 + （开启事件时）event / （结算事件时）event_check。
       // 数值槽名字列表：供 LLM_MOCK 的回合夹具产出 stats_diff（真实模型不需要）。
@@ -1052,6 +1125,7 @@ function createGame(cfg, dataDir) {
         turnCtx, usages, onDelta,
       );
       const out = tp.parsed;
+      adultMode.assertProseAllowed(state, out.narration);
       const proposal = {
         narration: out.narration,
         state_diff: out.state_diff,
@@ -1193,7 +1267,7 @@ function createGame(cfg, dataDir) {
           action,
           genre: finalState.genre,
           title: bible.title,
-          adult: resolved.result.adult === true,
+          adult: resolved.result.adult === true || adultMode.isAdultWorld(finalState), // 成人模式世界的行动不进跨世界画像
           now,
         });
         maybeSummarizeProfile(playerId, updated);
@@ -1218,7 +1292,9 @@ function createGame(cfg, dataDir) {
     t = t.replace(/^```[a-z]*\n?/i, '').replace(/\n?```\s*$/, '');
     const lines = t.split('\n');
     while (lines.length && /^\s*(#{1,6}\s|第\s*[0-9一二三四五六七八九十百]+\s*[节章回]|正文[：:]|\*\*[^*]{1,30}\*\*\s*$)/.test(lines[0])) lines.shift();
-    t = lines.join('\n').trim();
+    // 模型偶尔把写作说明当正文写出来（「这章收在这里。」「本章完」），整行去掉。
+    t = lines.filter((l) => !META_PROSE_LINE.test(l)).join('\n').trim();
+    t = t.replace(/(?:这一?[章节]|本[章节])就?(?:收|停|写)(?:在这里|到这里|到此)[。！!…]*$/, '').trim();
     const jsonTail = t.search(/\n\s*\{\s*"[a-z_]+"\s*:/);
     if (jsonTail > 0) t = t.slice(0, jsonTail).trim();
     t = t.replace(/\n{3,}/g, '\n\n');
@@ -1230,6 +1306,43 @@ function createGame(cfg, dataDir) {
       t = (cut > max * 0.6 ? head.slice(0, cut + 1) : head).trim();
     }
     return t;
+  }
+
+  // 记账的 clock_end（正文结尾的时段 + 晚了几天）→ 新时钟和推进的时段数。非法或倒退返回 null。
+  function clockEndOf(clock, raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const periods = ['清晨', '午后', '黄昏', '深夜'];
+    const end = periods.indexOf(raw.period);
+    if (end < 0) return null;
+    const day = clock && Number.isSafeInteger(clock.day) && clock.day >= 1 ? clock.day : 1;
+    const start = Math.max(0, periods.indexOf(clock && clock.period));
+    let later = Number.isSafeInteger(Number(raw.days_later)) ? Math.max(0, Math.min(3, Number(raw.days_later))) : 0;
+    if (later === 0 && end < start) later = 1; // 时段往回走只能是到了第二天
+    const passes = later * 4 + end - start;
+    if (passes < 0) return null;
+    return { clock: { day: day + later, period: periods[end] }, passes: Math.min(2, passes) };
+  }
+
+  // 修仙：压扬计数（连着吃亏几节，供写手「该扬一次了」的提醒）和金手指进度（露过面没有、摸清了哪几条）。
+  // 都是私有作者笔记；主角死了就随这一世清掉。
+  function applyXianxiaLedger(prev, next, ledger, died) {
+    if (died) {
+      delete next.edge; delete next.edgeProgress; delete next.pressure;
+      return;
+    }
+    if (genres.normalizeGenre(next.genre) !== 'xuanhuan') return;
+    const streak = prev.pressure && Number.isSafeInteger(prev.pressure.streak) ? prev.pressure.streak : 0;
+    if (ledger.pressure === 'down') next.pressure = { streak: Math.min(streak + 1, 20) };
+    else if (ledger.pressure === 'up') next.pressure = { streak: 0 };
+    if (!prompts.edgeOf(next)) return;
+    const ep = prompts.edgeProgress(prev);
+    const learned = ep.learned.slice();
+    // 一节最多摸清一条，和写正文的规则一致。
+    for (const n of Array.isArray(ledger.edge_learned) ? ledger.edge_learned : []) {
+      const i = Number(n) - 1;
+      if (Number.isSafeInteger(i) && i >= 0 && i < ep.rules.length && !learned.includes(i)) { learned.push(i); break; }
+    }
+    next.edgeProgress = { shown: ep.shown || ledger.edge_shown === true || learned.length > 0, learned };
   }
 
   // 到期伏笔：活跃线索里预计回收章 <= 当前章的那些。
@@ -1257,7 +1370,7 @@ function createGame(cfg, dataDir) {
     const card = outlineMod.currentCard(state);
     const chapterIndex = state.chapter.index;
     const chapterTurn = (Number(state.chapter.turns) || 0) + 1;
-    const adultPrompt = prefs.adultModeOn(dataDir, context.currentPlayerId());
+    const adultPrompt = adultMode.isAdultWorld(state) || prefs.adultModeOn(dataDir, context.currentPlayerId());
     let mode = 'fine';
     try { mode = prefs.getPrefs(dataDir, playerId).writing; } catch (_) { mode = 'fine'; }
     const wc = writingMode.writingCall(cfg, mode);
@@ -1282,6 +1395,7 @@ function createGame(cfg, dataDir) {
     usages.push(sr.usage);
     const prose = cleanProse(sr.content);
     if (prose.length < engine.NARRATION_MIN) throw httpError(502, '这一节没写出来，请重试');
+    adultMode.assertProseAllowed(state, prose); // 成人模式：涉及未成年人的性内容不落库（前端会撤掉已流出的半成品）
 
     // 2) 记账：快速模型从正文里抽字段；失败不阻断——正文已经写好，回合照样落库。
     const lc = writingMode.ledgerCall(cfg);
@@ -1314,6 +1428,7 @@ function createGame(cfg, dataDir) {
       threadDue[text.trim()] = due;
     }
 
+    const clockEnd = timeSkip ? null : clockEndOf(state.clock, ledger.clock_end);
     const proposal = {
       narration: prose,
       state_diff: ledger.state_diff,
@@ -1332,7 +1447,8 @@ function createGame(cfg, dataDir) {
       rumor: undefined, // v3：坊间传闻先关掉（玩家反馈要记的太多）
       move_to: ledger.move_to,
       // v3：记账没写时间就按「没过多久」处理（引擎缺省是推进一个时段，会让时钟比正文跑得快）。
-      time_passes: ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes,
+      time_passes: clockEnd ? clockEnd.passes
+        : (ledger.time_passes === undefined || ledger.time_passes === null ? 0 : ledger.time_passes),
       overstep: ledger.overstep,
       scene: ledger.scene,
       voice_hints: ledger.voice_hints,
@@ -1383,6 +1499,9 @@ function createGame(cfg, dataDir) {
       else if (!prevMarks.includes(m)) markMeta[m] = { turn: nextTurn };
     }
     finalState.markMeta = markMeta;
+    applyXianxiaLedger(state, finalState, ledger, !!resolved.result.death);
+    // 记账给了正文结尾的时段：时钟按它落（引擎一回合最多推两个时段，跨一夜会落不准）。
+    if (clockEnd && !resolved.result.death) finalState.clock = clockEnd.clock;
 
     store.backupForUndo(dataDir, worldId);
     store.saveWorld(dataDir, finalState);
@@ -1432,7 +1551,7 @@ function createGame(cfg, dataDir) {
       const bible = finalState.bible || {};
       const updated = profiles.recordTurn(dataDir, playerId, {
         tags, action, genre: finalState.genre, title: bible.title,
-        adult: resolved.result.adult === true, now,
+        adult: resolved.result.adult === true || adultMode.isAdultWorld(finalState), now,
       });
       maybeSummarizeProfile(playerId, updated);
     } catch (_) { /* 画像出错绝不影响回合 */ }
@@ -1616,7 +1735,7 @@ function createGame(cfg, dataDir) {
   }
 
   return {
-    buildWorld, getWorld, chooseOrigin, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, getWorldLog,
+    buildWorld, getWorld, chooseOrigin, ensurePrologue, ensureStats, ensureItemInfo, ensureGenre, setGenre, listWorlds, takeTurn, rebirth, deleteWorld, usage, usageToday, adultUsageToday, getWorldLog,
     exportWorld, undoTurn, listScenes, getNpcDetail, suggestActions,
   };
 }

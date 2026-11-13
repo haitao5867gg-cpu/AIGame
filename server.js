@@ -17,6 +17,9 @@ const llmMod = require('./src/llm.js');
 const prefs = require('./src/prefs.js');
 const profiles = require('./src/profiles.js');
 const ttsMod = require('./src/tts.js');
+const adultMode = require('./src/adult-mode.js');
+const { createIdempotency, validId: validClientId } = require('./src/idempotency.js');
+const buildProgress = require('./src/build-progress.js');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORLD_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -171,12 +174,21 @@ function sseEvent(res, event, data) {
 
 // POST /api/worlds/:id/turn/stream：多次 event: delta，最后 event: result / event: error。
 // result 的 data 与普通 /turn 的响应体完全相同（来自同一个 takeTurn）。
-async function handleStreamTurn(req, res, g, id, images, dataDir) {
+// 每 SSE_PING_MS 发一行注释心跳：模型构思 / 记账期间没有 delta 也保持连接不被代理判空闲，
+// 前端也靠它判断连接是否还活着（手机切后台回来常见「连接还在但已经死了」）。
+const SSE_PING_MS = 10000;
+async function handleStreamTurn(req, res, g, id, images, dataDir, player) {
   startEventStream(res);
+  const ping = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
+  }, SSE_PING_MS);
+  if (ping.unref) ping.unref();
+  res.on('close', () => clearInterval(ping));
   let body;
   try {
     body = await readJsonBody(req);
   } catch (err) {
+    clearInterval(ping);
     const message = err && err.expose && err.message ? err.message : '请求体不是合法 JSON';
     sseEvent(res, 'error', { error: String(message) });
     res.end();
@@ -184,19 +196,61 @@ async function handleStreamTurn(req, res, g, id, images, dataDir) {
   }
   try {
     // 叙事 v3：写正文前模型先构思，期间推送 thinking（只有累计字数，不带思考内容）。
-    const result = await g.takeTurn(id, body, (text) => sseEvent(res, 'delta', { text }), {
+    const result = await runTurnOnce(g, images, dataDir, id, player, body, (text) => sseEvent(res, 'delta', { text }), {
       onThinking: (chars) => sseEvent(res, 'thinking', { chars }),
     });
-    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
-    triggerImages(images, dataDir, result && result.state);
-    if (result) result.sceneKey = triggerScene(images, dataDir, result);
     sseEvent(res, 'result', result);
     res.end();
   } catch (err) {
     const message = err && err.expose && err.message ? err.message : '服务器内部错误';
     sseEvent(res, 'error', { error: String(message) });
     res.end();
+  } finally {
+    clearInterval(ping);
   }
+}
+
+// ---- 回合防重（见 src/idempotency.js）：每个 game 实例一份，key = 玩家 + 世界 + clientTurnId ----
+const turnOnceByGame = new WeakMap();
+function turnOnceFor(g) {
+  let t = turnOnceByGame.get(g);
+  if (!t) {
+    t = createIdempotency({ ttlMs: 30 * 60 * 1000, max: 120 });
+    turnOnceByGame.set(g, t);
+  }
+  return t;
+}
+// 建世界进度（见 src/build-progress.js）：每个 game 实例一份，key = 玩家 + clientRequestId。
+const buildProgressByGame = new WeakMap();
+function buildProgressFor(g) {
+  let t = buildProgressByGame.get(g);
+  if (!t) {
+    t = buildProgress.createBuildProgress();
+    buildProgressByGame.set(g, t);
+  }
+  return t;
+}
+function turnKey(player, id, cid) {
+  return (player && player.id ? player.id : '') + ':' + id + ':' + cid;
+}
+
+// 执行一回合（含锁外排队出图）。带合法 clientTurnId 时同一个 ID 只执行一次：
+// 断流后重试、刷新后取回都拿同一份结果，不会把同一句行动执行两遍。
+async function runTurnOnce(g, images, dataDir, id, player, body, onDelta, hooks) {
+  const input = Object.assign({}, body);
+  const cid = input.clientTurnId;
+  delete input.clientTurnId;
+  delete input.attachOnly;
+  const exec = async () => {
+    const result = await g.takeTurn(id, input, onDelta, hooks);
+    // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
+    triggerImages(images, dataDir, result && result.state);
+    if (result) result.sceneKey = triggerScene(images, dataDir, result);
+    return result;
+  };
+  if (!validClientId(cid)) return exec();
+  const r = await turnOnceFor(g).run(turnKey(player, id, cid), exec);
+  return r.value;
 }
 
 // ---- 氛围素材（public/assets/atmosphere）：目录级缓存 + 音频单段 Range ----
@@ -337,10 +391,22 @@ function triggerScene(images, dataDir, result) {
   }
 }
 
+// 成人模式：/api/worlds/:id/... 的请求，世界是成人模式就返回 'adult'，否则 null。
+function llmRouteOf(req, dataDir) {
+  const m = /^\/api\/worlds\/([^/?#]+)/.exec(String(req.url || ''));
+  if (!m) return null;
+  let id;
+  try { id = decodeURIComponent(m[1]); } catch (_) { return null; }
+  if (!WORLD_ID_PATTERN.test(id)) return null;
+  return adultMode.worldRoute(dataDir, id);
+}
+
 function handle(req, res, cfg, g, images, dataDir, access, runtime) {
   const player = access.playerOf(req);
-  // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家。
-  return context.run({ playerId: player ? player.id : null },
+  // 整个请求处理放进 ALS 上下文：同一请求触发的 LLM / 出图用量都能带上当前玩家；
+  // 成人模式世界的请求再带上 llmRoute:'adult'，这次请求里的全部 LLM 调用改走成人模式网关。
+  const llmRoute = player ? llmRouteOf(req, dataDir) : null;
+  return context.run({ playerId: player ? player.id : null, llmRoute },
     () => route(req, res, cfg, g, images, dataDir, access, player, runtime));
 }
 
@@ -398,6 +464,11 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     return sendJson(res, 200, {
       id: player.id, name: player.name, host: !!(player && player.host),
       prefs: prefs.getPrefs(dataDir, player.id),
+      // 新世界页据此显示「成人模式」选项：网关配好了（configured）且这位玩家可以用（allowed）。
+      adultMode: {
+        configured: adultMode.isConfigured(cfg),
+        allowed: adultMode.playerAllowed(dataDir, player),
+      },
     });
   }
   if (pathname === '/api/prefs' && method === 'POST') {
@@ -458,7 +529,10 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
 
   // ---- 无世界 ID 的接口 ----
   if (pathname === '/api/health' && method === 'GET') {
-    return sendJson(res, 200, { ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK, story: cfg.NARRATIVE_STYLE });
+    return sendJson(res, 200, {
+      ok: true, model: cfg.LLM_MODEL, mock: !!cfg.LLM_MOCK, story: cfg.NARRATIVE_STYLE,
+      adultMode: adultMode.isConfigured(cfg), // 只报配没配好，绝不带 Key
+    });
   }
   if (pathname === '/api/usage' && method === 'GET') {
     return sendJson(res, 200, g.usage());
@@ -468,6 +542,9 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     const isHost = !!(player && player.host);
     // 来客：只看自己（按 player.id 过滤，用每人上限）；主人：保持原来的全局视图（全局上限）。
     const u = isHost ? g.usageToday() : g.usageToday(player.id);
+    // 成人模式单独记账：主人看全局，来客只看自己。
+    u.adult = isHost ? g.adultUsageToday() : g.adultUsageToday(player.id);
+    u.adult.configured = adultMode.isConfigured(cfg);
     const st = images.providerStatus();
     u.images.chain = st.chain;
     u.images.cooling = st.cooling;
@@ -488,7 +565,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
       u.global = g.usageToday().tokens;
       const names = access.playerNames();
       u.players = llmMod.summarizePlayers(store.readJsonl(store.usagePath(dataDir)), now)
-        .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total }));
+        .map((p) => ({ id: p.id, name: names[p.id] || p.id, total: p.total, adult: p.adult }));
       u.access = { password: access.password(), hostPassword: access.hostPassword() };
       u.playerNames = names;
       u.tunnel = { url: runtime && runtime.tunnel ? runtime.tunnel.url() : null };
@@ -514,17 +591,70 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     for (const w of list) w.cover = covers[w.id] || null;
     return sendJson(res, 200, list);
   }
+  // 建世界进度：GET /api/build-progress?cid=…（前端建世界弹窗每秒轮询一次画进度条）。
+  if (pathname === '/api/build-progress' && method === 'GET') {
+    const cid = searchParams ? searchParams.get('cid') : '';
+    if (!validClientId(cid)) return sendError(res, 400, 'cid 无效');
+    const snap = buildProgressFor(g).snapshot(player.id + ':' + cid);
+    if (!snap) return sendJson(res, 404, { error: '没有找到这次建世界', code: 'build_unknown' });
+    return sendJson(res, 200, snap);
+  }
   if (pathname === '/api/worlds' && method === 'POST') {
     const body = await readJsonBody(req);
-    const world = await g.buildWorld(body);
-    // 建世界成功后登记归属；无记录的老世界默认归 host。
-    accessMod.setOwner(dataDir, world.id, player.id);
-    // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
-    triggerImages(images, dataDir, world);
+    const input = Object.assign({}, body);
+    const cid = input.clientRequestId;
+    delete input.clientRequestId;
+    let llmRoute = null;
+    if (input.adultMode === true) {
+      // 成人模式：默认关；要玩家确认满 18 岁、主人开放（来客）、网关配好，三样缺一不可。
+      if (input.confirm18 !== true) return sendJson(res, 400, { error: '成人模式需要确认已年满 18 岁' });
+      if (!adultMode.playerAllowed(dataDir, player)) {
+        return sendJson(res, 403, { error: '主人还没有开放成人内容，不能建成人模式世界' });
+      }
+      if (!adultMode.isConfigured(cfg)) {
+        return sendJson(res, 503, { error: '成人模式还没配置好（服务器缺少 EXPLABS_API_KEY）' });
+      }
+      // 建世界的全部 LLM 调用（世界、大纲）都走成人模式网关。
+      llmRoute = adultMode.ROUTE;
+    } else {
+      input.adultMode = false;
+    }
+    // 带合法 clientRequestId 时：记进度（前端弹窗轮询），并且同一个 ID 只建一次——
+    // 手机切后台断了连接，前端用同一个 ID 再 POST 只会等到 / 拿到同一个世界，不会建出两个。
+    const key = validClientId(cid) ? player.id + ':' + cid : null;
+    const tracker = buildProgressFor(g);
+    const exec = async () => {
+      if (key) tracker.start(key, dataDir, cfg.NARRATIVE_STYLE === 'v3');
+      const hooks = key ? { onStage: (k) => tracker.stage(key, k), onProgress: (p) => tracker.progress(key, p) } : undefined;
+      try {
+        const run = () => g.buildWorld(input, hooks);
+        const world = llmRoute
+          ? await context.run({ playerId: player.id, llmRoute }, run)
+          : await run();
+        // 建世界成功后登记归属；无记录的老世界默认归 host。
+        accessMod.setOwner(dataDir, world.id, player.id);
+        // 建世界成功后、锁外异步排队起始物品 + 全部 bible.npcs。
+        triggerImages(images, dataDir, world);
+        if (key) {
+          const timings = tracker.finish(key, world.id);
+          if (timings) buildProgress.recordStats(dataDir, timings);
+        }
+        return world;
+      } catch (err) {
+        if (key) tracker.fail(key, err && err.expose && err.message ? err.message : '建世界失败，请重试');
+        throw err;
+      }
+    };
+    const world = key ? (await turnOnceFor(g).run('world:' + key, exec)).value : await exec();
     return sendJson(res, 201, world);
   }
 
   // ---- 带世界 ID 的接口 ----
+  // 成人模式世界：来客只有在主人开着成人内容总开关时才能进（删除除外）。
+  if (context.currentLlmRoute() === adultMode.ROUTE && method !== 'DELETE'
+    && !adultMode.playerAllowed(dataDir, player)) {
+    return sendJson(res, 403, { error: '主人已关闭成人内容，成人模式世界暂时不能进入' });
+  }
   // 流式回合：POST /api/worlds/:id/turn/stream（text/event-stream），须在通用路由前匹配。
   const streamMatch = pathname.match(/^\/api\/worlds\/([^/]+)\/turn\/stream$/);
   if (streamMatch) {
@@ -538,7 +668,7 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     if (!WORLD_ID_PATTERN.test(id)) return sendError(res, 400, '非法的世界 ID');
     // 校验归属必须在开流（startEventStream）之前，越权直接返回 404 JSON。
     if (!requireOwner(res, dataDir, id, player)) return;
-    return handleStreamTurn(req, res, g, id, images, dataDir);
+    return handleStreamTurn(req, res, g, id, images, dataDir, player);
   }
 
   // 导出：GET /api/worlds/:id/export（打包 state + events 的 JSON 附件）。
@@ -780,10 +910,14 @@ async function route(req, res, cfg, g, images, dataDir, access, player, runtime)
     }
     if (sub === 'turn' && method === 'POST') {
       const body = await readJsonBody(req);
-      const result = await g.takeTurn(id, body);
-      // 结果写入后、锁外异步排队本回合新增物品 / 新出现的 NPC。
-      triggerImages(images, dataDir, result && result.state);
-      if (result) result.sceneKey = triggerScene(images, dataDir, result);
+      // 只取回（刷新页面后找回上一回合）：认识这个 ID 就等它 / 返回它，不认识 404，绝不执行。
+      if (body && body.attachOnly === true) {
+        if (!validClientId(body.clientTurnId)) return sendError(res, 400, 'clientTurnId 无效');
+        const found = await turnOnceFor(g).attach(turnKey(player, id, body.clientTurnId));
+        if (found === undefined) return sendJson(res, 404, { error: '没有找到这一回合', code: 'turn_unknown' });
+        return sendJson(res, 200, found);
+      }
+      const result = await runTurnOnce(g, images, dataDir, id, player, body, undefined, undefined);
       return sendJson(res, 200, result);
     }
     if (sub === 'rebirth' && method === 'POST') {

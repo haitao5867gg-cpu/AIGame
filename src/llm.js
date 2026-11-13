@@ -8,9 +8,14 @@
 //   建世界(world)、普通回合(turn)、事件开启/结算(turn 变体)、编年史(chapter)、新顶点(apex)。
 // - LLM_EXTRA_BODY：JSON 字符串，解析成对象后合并进请求体（如 {"thinking":{"type":"disabled"}} 提速）；
 //   解析失败或非 JSON 对象时忽略并告警。
+// - 成人模式（src/adult-mode.js）：opts.route 或请求上下文 llmRoute 为 'adult' 时，改走成人模式网关
+//   （ADULT_LLM_BASE + EXPLABS_API_KEY + ADULT_LLM_MODEL），用量记录带 route:'adult'，有自己的每日上限；
+//   流式、思考进度、JSON 模式等调用方式不变。
 
 const store = require('./store.js');
 const context = require('./context.js');
+const adultMode = require('./adult-mode.js');
+const prefs = require('./prefs.js');
 
 const PURPOSES = Object.freeze({
   WORLD: 'world',     // 建世界
@@ -72,6 +77,17 @@ function mergeExtraBody(globalBody, perCall) {
       else out[k] = perCall[k];
     }
   }
+  return out;
+}
+
+// 成人模式网关（Experiential）上的 deepseek-v4.1-flash-uncensored 认 DeepSeek 原生的 thinking:{type}
+// 和 reasoning_effort（2026-11-12 实测）；但不带任何思考参数时它默认要思考（强度 high），
+// 带了 max_tokens 的短调用可能被思考吃光额度。所以调用方没指定时补一个 thinking disabled，其余原样透传。
+function adaptAdultBody(body) {
+  const out = Object.assign({}, body || {});
+  const hasThinking = out.thinking && typeof out.thinking === 'object';
+  const hasEffort = typeof out.reasoning_effort === 'string' && out.reasoning_effort;
+  if (!hasThinking && !hasEffort) out.thinking = { type: 'disabled' };
   return out;
 }
 
@@ -723,14 +739,21 @@ function rowPlayerId(r) {
   return r && typeof r.playerId === 'string' && r.playerId ? r.playerId : 'host';
 }
 
+// 用量记录走的网关：成人模式记录带 route:'adult'，其余（含老记录）都算默认网关。
+function rowRoute(r) {
+  return r && r.route === adultMode.ROUTE ? adultMode.ROUTE : 'default';
+}
+
 // playerId 为空时统计全部记录；传了就只统计该玩家（无 playerId 的记录归 host）。
-function sumUsage(rows, filterDay, playerId) {
+// route：'default' 只算默认网关，'adult' 只算成人模式，不传则两边都算。
+function sumUsage(rows, filterDay, playerId, route) {
   let pt = 0;
   let ct = 0;
   for (const r of rows) {
     if (!r || typeof r !== 'object') continue;
     if (filterDay && dayKey(r.ts) !== filterDay) continue;
     if (playerId && rowPlayerId(r) !== playerId) continue;
+    if (route && rowRoute(r) !== route) continue;
     pt += Number(r.prompt_tokens) || 0;
     ct += Number(r.completion_tokens) || 0;
   }
@@ -742,7 +765,8 @@ function sumUsage(rows, filterDay, playerId) {
 // limit 由调用方按「全局 / 每人」选好传入；不传 playerId 则保持原行为（全局）。
 function summarizeToday(rows, now, limit, playerId) {
   const day = dayKey(now);
-  const t = sumUsage(rows, day, playerId);
+  // 「今日对话 token」只算默认网关（朋友的网关）；成人模式另见 summarizeAdult。
+  const t = sumUsage(rows, day, playerId, 'default');
   const lim = Number(limit) || 0;
   const byProvider = {};
   const total = { ok: 0, fail: 0 };
@@ -769,19 +793,38 @@ function summarizeToday(rows, now, limit, playerId) {
 }
 
 // 今日每个玩家的 token 用量（无 playerId 的记录算 host），按 total 降序，保证包含 host。
-// 纯函数，供 /api/usage/today 的 host 专属 players 字段使用。
+// total 只算默认网关，adult 是成人模式（单独记账）。纯函数，供 /api/usage/today 的 host 专属 players 字段使用。
 function summarizePlayers(rows, now) {
   const day = dayKey(now);
   const map = new Map();
-  map.set('host', 0);
+  map.set('host', { total: 0, adult: 0 });
   for (const r of rows) {
     if (!r || typeof r !== 'object' || dayKey(r.ts) !== day) continue;
     const id = rowPlayerId(r);
     const n = (Number(r.prompt_tokens) || 0) + (Number(r.completion_tokens) || 0);
-    map.set(id, (map.get(id) || 0) + n);
+    const cur = map.get(id) || { total: 0, adult: 0 };
+    if (rowRoute(r) === adultMode.ROUTE) cur.adult += n;
+    else cur.total += n;
+    map.set(id, cur);
   }
-  return Array.from(map, ([id, total]) => ({ id, total }))
-    .sort((a, b) => b.total - a.total || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return Array.from(map, ([id, v]) => ({ id, total: v.total, adult: v.adult }))
+    .sort((a, b) => (b.total + b.adult) - (a.total + a.adult) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+// 成人模式的 token 账本（纯函数）：今日 + 累计；传 playerId 只算该玩家。limit 由调用方按全局 / 每人选好传入。
+function summarizeAdult(rows, now, limit, playerId) {
+  const day = dayKey(now);
+  const t = sumUsage(rows, day, playerId, adultMode.ROUTE);
+  const all = sumUsage(rows, null, playerId, adultMode.ROUTE);
+  const lim = Number(limit) || 0;
+  return {
+    date: day,
+    tokens: {
+      prompt: t.prompt_tokens, completion: t.completion_tokens, total: t.total,
+      limit: lim, remaining: lim > 0 ? Math.max(0, lim - t.total) : null,
+    },
+    cumulative: { prompt: all.prompt_tokens, completion: all.completion_tokens, total: all.total },
+  };
 }
 
 function createClient(cfg, dataDir) {
@@ -789,24 +832,66 @@ function createClient(cfg, dataDir) {
   const timeout = cfg.LLM_TIMEOUT_MS > 0 ? cfg.LLM_TIMEOUT_MS : 90000;
   const dailyLimit = Number(cfg.LLM_DAILY_TOKEN_LIMIT) || 0;
   const playerDailyLimit = Number(cfg.LLM_PLAYER_DAILY_TOKEN_LIMIT) || 0;
-  const base = String(cfg.LLM_BASE || '').replace(/\/+$/, '');
-  const apiKey = String(cfg.LLM_API_KEY || '');
-  const extraBody = parseExtraBody(cfg.LLM_EXTRA_BODY);
+  const adultDailyLimit = Number(cfg.ADULT_LLM_DAILY_TOKEN_LIMIT) || 0;
+  const adultPlayerDailyLimit = Number(cfg.ADULT_LLM_PLAYER_DAILY_TOKEN_LIMIT) || 0;
+  // 两个网关：默认（朋友的网关）和成人模式（Experiential）。Key 只进请求头，绝不进日志或用量记录。
+  const gateways = {
+    default: {
+      route: 'default',
+      base: String(cfg.LLM_BASE || '').replace(/\/+$/, ''),
+      apiKey: String(cfg.LLM_API_KEY || ''),
+      extraBody: parseExtraBody(cfg.LLM_EXTRA_BODY),
+      missing: '未配置 LLM_BASE，无法调用真实模型',
+    },
+    adult: {
+      route: adultMode.ROUTE,
+      base: String(cfg.ADULT_LLM_BASE || '').replace(/\/+$/, ''),
+      apiKey: String(cfg.EXPLABS_API_KEY || '').trim(),
+      extraBody: parseExtraBody(cfg.ADULT_LLM_EXTRA_BODY),
+      model: String(cfg.ADULT_LLM_MODEL || '').trim() || 'deepseek-v4.1-flash-uncensored',
+      missing: '成人模式还没配置好：服务器缺少 EXPLABS_API_KEY（在 Experiential 后台 Settings → API Keys 创建后写进 .env）',
+    },
+  };
+
+  // opts.route 显式给出（含 null）时以它为准，否则看请求上下文；只认 'adult'，其余都走默认网关。
+  function routeFor(o) {
+    const r = Object.prototype.hasOwnProperty.call(o, 'route') ? o.route : context.currentLlmRoute();
+    return r === adultMode.ROUTE ? adultMode.ROUTE : 'default';
+  }
 
   function rows() {
     return store.readJsonl(store.usagePath(dataDir));
   }
 
-  function todayTokens(now) {
-    return sumUsage(rows(), dayKey(now)).total;
+  function todayTokens(now, route) {
+    return sumUsage(rows(), dayKey(now), null, route || 'default').total;
   }
 
   // 某玩家今天的 token 用量（无 playerId 的老记录算 host）。
-  function playerTodayTokens(now, playerId) {
-    return sumUsage(rows(), dayKey(now), playerId).total;
+  function playerTodayTokens(now, playerId, route) {
+    return sumUsage(rows(), dayKey(now), playerId, route || 'default').total;
   }
 
-  function assertLimit(now) {
+  // 成人模式单独一套上限，和默认网关互不占用。
+  function assertAdultLimit(now) {
+    if (adultDailyLimit > 0 && todayTokens(now, adultMode.ROUTE) >= adultDailyLimit) {
+      const err = new Error(`成人模式今日 token 用量已达上限 ${adultDailyLimit}，明天再来吧`);
+      err.status = 429;
+      err.expose = true;
+      throw err;
+    }
+    const playerId = context.currentPlayerId();
+    if (adultPlayerDailyLimit > 0 && playerId && playerId !== 'host'
+      && playerTodayTokens(now, playerId, adultMode.ROUTE) >= adultPlayerDailyLimit) {
+      const err = new Error(`你今天的成人模式 token 用量已达上限 ${adultPlayerDailyLimit}，明天再来吧`);
+      err.status = 429;
+      err.expose = true;
+      throw err;
+    }
+  }
+
+  function assertLimit(now, route) {
+    if (route === adultMode.ROUTE) return assertAdultLimit(now);
     // 全局上限：逻辑保持不变。
     if (dailyLimit > 0 && todayTokens(now) >= dailyLimit) {
       const err = new Error(`今日 token 用量已达上限 ${dailyLimit}，拒绝调用 LLM`);
@@ -824,8 +909,16 @@ function createClient(cfg, dataDir) {
     }
   }
 
-  function appendUsage(rec) {
-    store.appendUsage(dataDir, rec);
+  function appendUsage(rec, route) {
+    // 成人模式记录带 route:'adult'（单独记账）；默认网关的记录形状保持不变。
+    store.appendUsage(dataDir, route === adultMode.ROUTE ? Object.assign({}, rec, { route }) : rec);
+  }
+
+  function missingGateway(gw) {
+    const err = new Error(gw.missing);
+    err.status = gw.route === adultMode.ROUTE ? 503 : 500;
+    err.expose = true;
+    return err;
   }
 
   function fakeTokens(messages, content) {
@@ -839,17 +932,14 @@ function createClient(cfg, dataDir) {
     };
   }
 
-  async function httpChat(model, messages, responseFormat, requestOptions) {
+  async function httpChat(gw, model, messages, responseFormat, requestOptions) {
     const ro = requestOptions || {};
     const requestTimeout = Number.isSafeInteger(ro.timeoutMs) && ro.timeoutMs > 0 ? Math.min(timeout, ro.timeoutMs) : timeout;
-    if (!base) {
-      const err = new Error('未配置 LLM_BASE，无法调用真实模型');
-      err.status = 500;
-      err.expose = true;
-      throw err;
-    }
+    const { base, apiKey } = gw;
+    if (!base || (gw.route === adultMode.ROUTE && !apiKey)) throw missingGateway(gw);
     // extraBody 的键合并进请求体；model/messages/response_format 由本层决定，不被外部覆盖。
-    const payload = Object.assign(mergeExtraBody(extraBody, ro.extraBody), {
+    const merged = mergeExtraBody(gw.extraBody, ro.extraBody);
+    const payload = Object.assign(gw.route === adultMode.ROUTE ? adaptAdultBody(merged) : merged, {
       model,
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
@@ -924,15 +1014,12 @@ function createClient(cfg, dataDir) {
   // ro（可选）：{ extraBody, plainText, onThinking }。plainText 时不走叙事解码器，正文片段原样回调；
   // onThinking(累计思考字数) 在流里出现 reasoning_content 时回调（首次立即，之后最多每 800ms 一次），
   // 思考内容本身不返回、不记录（可能含作者大纲，绝不能给玩家看）。
-  async function httpChatStream(model, messages, responseFormat, onDelta, ro) {
+  async function httpChatStream(gw, model, messages, responseFormat, onDelta, ro) {
     const sro = ro || {};
-    if (!base) {
-      const err = new Error('未配置 LLM_BASE，无法调用真实模型');
-      err.status = 500;
-      err.expose = true;
-      throw err;
-    }
-    const payload = Object.assign(mergeExtraBody(extraBody, sro.extraBody), {
+    const { base, apiKey } = gw;
+    if (!base || (gw.route === adultMode.ROUTE && !apiKey)) throw missingGateway(gw);
+    const merged = mergeExtraBody(gw.extraBody, sro.extraBody);
+    const payload = Object.assign(gw.route === adultMode.ROUTE ? adaptAdultBody(merged) : merged, {
       model,
       messages: Array.isArray(messages) ? messages : [{ role: 'user', content: String(messages || '') }],
       response_format: { type: responseFormat === false ? 'text' : 'json_object' },
@@ -981,33 +1068,70 @@ function createClient(cfg, dataDir) {
     let completion_tokens = 0;
     let thinkChars = 0;
     let thinkAt = 0;
-    await readSSE(resp.body, (dataLine) => {
-      if (!dataLine || dataLine === '[DONE]') return;
-      let chunk;
-      try { chunk = JSON.parse(dataLine); } catch (_) { return; }
-      // 部分实现把用量放在最后一个 chunk（需 stream_options.include_usage，这里被动接收）。
-      if (chunk && chunk.usage) {
-        prompt_tokens = Number(chunk.usage.prompt_tokens) || prompt_tokens;
-        completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
-      }
-      const choices = chunk && chunk.choices;
-      const d = choices && choices[0] && choices[0].delta;
-      const reasoning = d && d.reasoning_content;
-      if (typeof reasoning === 'string' && reasoning && typeof sro.onThinking === 'function') {
-        const first = thinkChars === 0;
-        thinkChars += reasoning.length;
-        const nowMs = Date.now();
-        if (first || nowMs - thinkAt >= 800) {
-          thinkAt = nowMs;
-          try { sro.onThinking(thinkChars); } catch (_) { /* 回调出错不影响读流 */ }
+    let progressAt = 0;
+    // idleTimeoutMs（可选，建世界用）：连接上之后这么久一个字节都没收到，就当流停住了，中止并报 504。
+    // 不传时和原来一样（回合流式有前端看门狗兜底）。
+    const idleMs = Number.isSafeInteger(sro.idleTimeoutMs) && sro.idleTimeoutMs > 0 ? sro.idleTimeoutMs : 0;
+    let idleTimer = null;
+    let stalled = false;
+    const kick = () => {
+      if (!idleMs) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { stalled = true; controller.abort(); }, idleMs);
+    };
+    kick();
+    try {
+      await readSSE(resp.body, (dataLine) => {
+        kick();
+        if (!dataLine || dataLine === '[DONE]') return;
+        let chunk;
+        try { chunk = JSON.parse(dataLine); } catch (_) { return; }
+        // 部分实现把用量放在最后一个 chunk（需 stream_options.include_usage，这里被动接收）。
+        if (chunk && chunk.usage) {
+          prompt_tokens = Number(chunk.usage.prompt_tokens) || prompt_tokens;
+          completion_tokens = Number(chunk.usage.completion_tokens) || completion_tokens;
         }
+        const choices = chunk && chunk.choices;
+        const d = choices && choices[0] && choices[0].delta;
+        // DeepSeek 原生叫 reasoning_content；OpenRouter 风格的网关叫 reasoning。
+        const reasoning = d && (typeof d.reasoning_content === 'string' ? d.reasoning_content : d.reasoning);
+        if (typeof reasoning === 'string' && reasoning) {
+          const first = thinkChars === 0;
+          thinkChars += reasoning.length;
+          const nowMs = Date.now();
+          if (typeof sro.onThinking === 'function' && (first || nowMs - thinkAt >= 800)) {
+            thinkAt = nowMs;
+            try { sro.onThinking(thinkChars); } catch (_) { /* 回调出错不影响读流 */ }
+          }
+        }
+        const delta = d && d.content;
+        if (typeof delta === 'string' && delta) {
+          fullContent += delta;
+          decoder.push(delta);
+        }
+        // onProgress({chars, think})：已写字数 / 已思考字数（建世界进度条用），最多每 500ms 一次。
+        if (typeof sro.onProgress === 'function' && (delta || reasoning)) {
+          const nowMs = Date.now();
+          if (nowMs - progressAt >= 500) {
+            progressAt = nowMs;
+            try { sro.onProgress({ chars: fullContent.length, think: thinkChars }); } catch (_) { /* 忽略 */ }
+          }
+        }
+      });
+    } catch (err) {
+      if (stalled) {
+        const e = new Error(`LLM 流式输出停住了（${idleMs} ms 没有新内容）`);
+        e.status = 504;
+        e.expose = true;
+        throw e;
       }
-      const delta = d && d.content;
-      if (typeof delta === 'string' && delta) {
-        fullContent += delta;
-        decoder.push(delta);
-      }
-    });
+      throw err;
+    } finally {
+      clearTimeout(idleTimer);
+    }
+    if (typeof sro.onProgress === 'function') {
+      try { sro.onProgress({ chars: fullContent.length, think: thinkChars }); } catch (_) { /* 忽略 */ }
+    }
     // 用量缺失时按文本估算，保证 events.jsonl 的 usage 聚合不为 0。
     if (prompt_tokens === 0 && completion_tokens === 0) {
       const est = fakeTokens(messages, fullContent);
@@ -1021,13 +1145,30 @@ function createClient(cfg, dataDir) {
   }
 
   // 返回 { content, model, usage:{prompt_tokens,completion_tokens}, ms, ok }
+  // 本次调用走哪个网关、用哪个模型、发哪些消息。成人模式：所有用途都用 ADULT_LLM_MODEL，
+  // 并在第一条 system 末尾追加成人模式规则（出图翻译等传 adultPolicy:false 的调用不追加）。
+  // 写正文（purpose=story）那一次调用再叠上玩家在菜单里选的思考强度 / 发挥（prefs.adultLlm）。
+  function prepare(o) {
+    const route = routeFor(o);
+    const gw = gateways[route];
+    const model = route === adultMode.ROUTE ? gw.model : (o.model || cfg.LLM_MODEL);
+    const raw = o.messages || [];
+    const messages = route === adultMode.ROUTE && o.adultPolicy !== false ? adultMode.withPolicy(raw) : raw;
+    let opts = o;
+    if (route === adultMode.ROUTE && o.purpose === PURPOSES.STORY) {
+      let settings = null;
+      try { settings = prefs.getPrefs(dataDir, context.currentPlayerId() || 'host').adultLlm; } catch (_) { settings = null; }
+      opts = Object.assign({}, o, { extraBody: mergeExtraBody(o.extraBody, adultMode.storyParams(settings)) });
+    }
+    return { route, gw, model, messages, opts };
+  }
+
   async function complete(opts) {
     const o = opts || {};
     const now = Date.now();
-    assertLimit(now);
+    const { route, gw, model, messages, opts: ro } = prepare(o);
+    assertLimit(now, route);
     const purpose = o.purpose || PURPOSES.TURN;
-    const model = o.model || cfg.LLM_MODEL;
-    const messages = o.messages || [];
 
     if (mock) {
       const content = JSON.stringify(mockFor(purpose, o.mock));
@@ -1037,24 +1178,24 @@ function createClient(cfg, dataDir) {
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         ms: 1, ok: true,
-      });
+      }, route);
       return { content, model, usage, ms: 1, ok: true };
     }
 
     const t0 = Date.now();
     try {
-      const r = await httpChat(model, messages, o.responseFormat, o);
+      const r = await httpChat(gw, model, messages, o.responseFormat, ro);
       const ms = Date.now() - t0;
       appendUsage({
         ts: now, model, purpose,
         prompt_tokens: r.usage.prompt_tokens,
         completion_tokens: r.usage.completion_tokens,
         ms, ok: true,
-      });
+      }, route);
       return { content: r.content, model, usage: r.usage, ms, ok: true };
     } catch (err) {
       const ms = Date.now() - t0;
-      appendUsage({ ts: now, model, purpose, prompt_tokens: 0, completion_tokens: 0, ms, ok: false });
+      appendUsage({ ts: now, model, purpose, prompt_tokens: 0, completion_tokens: 0, ms, ok: false }, route);
       throw err;
     }
   }
@@ -1065,10 +1206,9 @@ function createClient(cfg, dataDir) {
   async function completeStream(opts, onDelta) {
     const o = opts || {};
     const now = Date.now();
-    assertLimit(now);
+    const { route, gw, model, messages, opts: ro } = prepare(o);
+    assertLimit(now, route);
     const purpose = o.purpose || PURPOSES.TURN;
-    const model = o.model || cfg.LLM_MODEL;
-    const messages = o.messages || [];
 
     if (mock) {
       const mocked = mockFor(purpose, o.mock);
@@ -1086,6 +1226,14 @@ function createClient(cfg, dataDir) {
       if (typeof o.onThinking === 'function') {
         try { o.onThinking(1); } catch (_) { /* 忽略 */ }
       }
+      // 建世界进度：分 8 步报告已写字数；LLM_MOCK_DELAY_MS 给界面检查放慢（默认不等）。
+      if (typeof o.onProgress === 'function') {
+        const delay = Number(process.env.LLM_MOCK_DELAY_MS) || 0;
+        for (let k = 1; k <= 8; k++) {
+          if (delay) await new Promise((r) => setTimeout(r, delay / 8));
+          try { o.onProgress({ chars: Math.round(content.length * k / 8), think: 0 }); } catch (_) { /* 忽略 */ }
+        }
+      }
       // 把假叙事切成小块，每块间隔约 30ms 回调，模拟流式。
       const size = 6;
       for (let i = 0; i < narration.length; i += size) {
@@ -1099,36 +1247,42 @@ function createClient(cfg, dataDir) {
         prompt_tokens: usage.prompt_tokens,
         completion_tokens: usage.completion_tokens,
         ms, ok: true,
-      });
+      }, route);
       return { content, model, usage, ms, ok: true };
     }
 
     const t0 = Date.now();
     try {
-      const r = await httpChatStream(model, messages, o.plainText ? false : o.responseFormat, onDelta, o);
+      const r = await httpChatStream(gw, model, messages, o.plainText ? false : o.responseFormat, onDelta, ro);
       const ms = Date.now() - t0;
       appendUsage({
         ts: now, model, purpose,
         prompt_tokens: r.usage.prompt_tokens,
         completion_tokens: r.usage.completion_tokens,
         ms, ok: true,
-      });
+      }, route);
       return { content: r.content, model, usage: r.usage, ms, ok: true };
     } catch (err) {
       const ms = Date.now() - t0;
-      appendUsage({ ts: now, model, purpose, prompt_tokens: 0, completion_tokens: 0, ms, ok: false });
+      appendUsage({ ts: now, model, purpose, prompt_tokens: 0, completion_tokens: 0, ms, ok: false }, route);
       throw err;
     }
   }
 
+  // GET /api/usage：today / cumulative 只算默认网关，成人模式单列在 adult 里。
   function summarizeUsage(now) {
     const ts = now == null ? Date.now() : now;
     const all = rows();
     return {
       date: dayKey(ts),
-      today: sumUsage(all, dayKey(ts)),
-      cumulative: sumUsage(all, null),
+      today: sumUsage(all, dayKey(ts), null, 'default'),
+      cumulative: sumUsage(all, null, null, 'default'),
       limit: dailyLimit,
+      adult: {
+        today: sumUsage(all, dayKey(ts), null, adultMode.ROUTE),
+        cumulative: sumUsage(all, null, null, adultMode.ROUTE),
+        limit: adultDailyLimit,
+      },
     };
   }
 
@@ -1139,10 +1293,18 @@ function createClient(cfg, dataDir) {
     return summarizeToday(rows(), now == null ? Date.now() : now, lim, playerId);
   }
 
-  return { complete, completeStream, summarizeUsage, usageToday, mock, PURPOSES };
+  // 成人模式账本：不传 playerId = 全局（全局上限），传了 = 该玩家（每人上限）。
+  function adultUsageToday(now, playerId) {
+    const lim = playerId ? adultPlayerDailyLimit : adultDailyLimit;
+    const out = summarizeAdult(rows(), now == null ? Date.now() : now, lim, playerId);
+    out.model = gateways.adult.model;
+    return out;
+  }
+
+  return { complete, completeStream, summarizeUsage, usageToday, adultUsageToday, mock, PURPOSES };
 }
 
 module.exports = {
-  createClient, PURPOSES, parseExtraBody, summarizeToday, summarizePlayers, cloudflareNeuronsToday,
-  createNarrationDecoder, decodeNarration, readSSE,
+  createClient, PURPOSES, parseExtraBody, summarizeToday, summarizePlayers, summarizeAdult, cloudflareNeuronsToday,
+  createNarrationDecoder, decodeNarration, readSSE, adaptAdultBody,
 };
