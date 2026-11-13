@@ -40,8 +40,8 @@
 - 对话模型：网关 `https://aigw.telecomjs.com/v1`（OpenAI 兼容，用户朋友提供的 Key）。回合叙事 `deepseek-v4.1-flash`，建世界 `deepseek-v4-pro-0813`。
 - **成人模式网关**（只给建世界时勾了成人模式的世界用）：Experiential `https://api.experientiallabs.ai/v1`（OpenAI 兼容），模型 `deepseek-v4.1-flash-uncensored`，Key 是 `.env` 的 `EXPLABS_API_KEY`（用户 2026-11-12 已写进 Windows `.env`；Mac 上没有）。Windows 直连可用。该模型不传思考参数时默认 high（约 7 秒），代码里默认补 `thinking: disabled`；余额查 `GET https://api.experientiallabs.ai/api/v1/credits`。文档 https://platform.experientiallabs.ai/docs 。
 - 出图（全部免费额度）：`IMAGE_PROVIDER=cloudflare,siliconflow,zhipu,modelscope`，按顺序回退。服务本身出问题（429、超时、5xx）的一家冷却 5 分钟；只是这一张图的内容问题（翻译里带汉字、被安全审查误判）只让这一张换家，不冷却——否则同一个世界的头像会出自三家、画风对不上。
-  - Cloudflare Workers AI：文生图 flux-1-schnell；**场景参考图**用 `@cf/black-forest-labs/flux-2-klein-4b`（最多 4 张参考图：主角形象、在场 NPC 头像、物品图），让插图里的人和物与已有图对得上；只用 Cloudflare 画的无水印图做参考。每天 10,000 Neurons（UTC 零点重置），用超 7000 后物品/头像让给别家，额度留给场景图；收到「daily free allocation」429 时冷却到下一个 UTC 零点。
-  - 硅基流动 Kolors、智谱 cogview-3-flash（两家的图都带「AI生成」水印，不能当场景参考图；智谱的 `watermark_enabled:false` 没签免责声明不生效）、魔搭 Z-Image-Turbo（慢）。
+  - Cloudflare Workers AI：文生图 flux-1-schnell；**场景参考图**用 `@cf/black-forest-labs/flux-2-klein-4b`（最多 4 张参考图：主角形象、在场 NPC 头像、物品图），让插图里的人和物与已有图对得上；哪一家画的图都能做参考。每天 10,000 Neurons（UTC 零点重置），用超 7000 后物品/头像让给别家，额度留给场景图；收到「daily free allocation」429 时冷却到下一个 UTC 零点。
+  - 硅基流动 Kolors、智谱 cogview-3-flash（两家的图都带「AI生成」水印；智谱的 `watermark_enabled:false` 没签免责声明不生效。用户 2026-11-13 定：水印不是问题，内容对得上才要紧，所以带水印的图也当场景参考图）、魔搭 Z-Image-Turbo（慢）。
   - 每个世界有统一画风（`data/images/styles.json`，有版本号；画风只写媒介和笔触，不写光线和题材）。出图提示词翻译成英文：结果带汉字先重译一次，再不行去掉汉字，实在不行这一张换中文提供方。
   - 提示词写法（2026-11-13 改，背景和线上反例见本地 `reports/image-mismatch-20261113/`）：中文提示词把要画的东西放最前、画风放最后，不带世界标题，不写「不要 / 无」（图像模型会把这些词画出来），不想要的放负面提示词（只有硅基支持）。物品图照着介绍画（缓存 key 带介绍，没介绍的等介绍补出来再画，老图不重画）。人物头像优先用「看得见的外貌」：建世界时模型给主角 `hero.look`、每个 NPC `npcs[].look`，中途出场的人物用人物档案里写到的外貌。场景参考图只放画面描述里真的出现的物品。
 - 朗读：Azure 语音 F0 免费档（eastasia）。默认旁白晓晓 HD（`zh-CN-Xiaoxiao:DragonHDFlashLatestNeural`，不加 style/pitch，只调语速），NPC 各自音色 + 情绪风格；一回合几段合并成两三次请求；缓存在 `data/tts/`。每月 50 万字，用到 45 万自动改用浏览器朗读；朋友每人每天 1 万字；成人段落只走浏览器朗读。

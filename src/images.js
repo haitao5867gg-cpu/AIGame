@@ -608,10 +608,9 @@ function collectRefs(dataDir, worldId, style, heroId, castNames, itemNames, item
   const idx = readIndex(dataDir);
   const usable = (e) => {
     if (!e || e.status !== 'ready' || typeof e.file !== 'string' || !e.file) return null;
-    // 参考图不能带水印：硅基流动、智谱（及 provider 缺失的老记录）的图右下角有「AI生成」水印，
-    // 会被带进场景图；只收 cloudflare / local 生成的图作参考。
-    const prov = String(e.provider || '');
-    if (prov !== 'cloudflare' && prov !== 'local') return null;
+    // 哪一家画的都能当参考图。硅基流动、智谱的图右下角有「AI生成」水印，可能被带进场景图；
+    // 用户 2026-11-13 定：水印不是问题，内容对得上才要紧——以前只收 cloudflare / local 的图，
+    // 约七成 NPC 头像当不了参考图，场景里的人常被画丢。
     const p = path.join(imagesDir(dataDir), e.file);
     if (!fs.existsSync(p)) return null;
     return { p, e };
